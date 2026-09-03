@@ -5,7 +5,7 @@
 // 手札を選手の上へ置く（ドラッグ、またはカード→選手のタップ）と、その選手が強化される。
 // 置いた札＝捨てる札なので、置ける枚数は 1ラウンド `MAX_DISCARDS` 枚まで。
 import { POKER_OPTS } from "../config";
-import { ROSTER, STARTERS } from "../roster";
+import { ROSTER, ROSTER_SIZE, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
 import type { Player } from "../objects/player/player";
 import { PokerMatch, POKER_ROUNDS } from "../poker/state";
@@ -125,8 +125,8 @@ UI.prototype.renderPoker = function(): void {
   }
   p.appendChild(rankRow);
 
-  // ---- コートに見立てた盤 ----
-  p.appendChild(courtBoard(this, m, user));
+  // ---- コートに見立てた盤 + 控え ----
+  p.appendChild(boardArea(this, m, user));
 
   // ---- 手札（置いていない札だけ）----
   const handRow = document.createElement("div");
@@ -228,89 +228,121 @@ function cpuHomeDecides(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void
   }
 }
 
-/** ハーフコートの盤。上がゴール側で、先発5人が立ち位置に並ぶ。 */
-function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
+/**
+ * ハーフコートの盤（先発5人が立ち位置に並ぶ）と、その横に控え8人。
+ * 13人の誰にでも札を置ける。狭い画面では控えが盤の下へ回り込む。
+ */
+function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
+  const narrow = window.innerWidth < 660;
+
+  const area = document.createElement("div");
+  Object.assign(area.style, {
+    display: "flex", gap: "10px", alignItems: "center", justifyContent: "center",
+    flexWrap: narrow ? "wrap" : "nowrap", width: "100%",
+  } as Partial<CSSStyleDeclaration>);
+
   const board = document.createElement("div");
   Object.assign(board.style, {
-    position: "relative", width: "min(430px, 88vw)", aspectRatio: "15 / 14",
+    position: "relative", width: narrow ? "min(330px, 84vw)" : "330px", aspectRatio: "15 / 14",
     background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
     border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px", overflow: "hidden",
     flexShrink: "0",
   } as Partial<CSSStyleDeclaration>);
   board.innerHTML = COURT_SVG;
-
-  const players: Player[] = ui.game ? ui.game.roster[team] : [];
   for (let i = 0; i < STARTERS; i++) {
-    const spot = SPOT[i];
-    const cell = document.createElement("div");
+    const cell = playerCell(ui, m, team, i, 40);
     Object.assign(cell.style, {
-      position: "absolute", left: `${spot.x}%`, top: `${spot.y}%`, transform: "translate(-50%,-50%)",
-      display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
-      pointerEvents: "auto", cursor: "pointer",
+      position: "absolute", left: `${SPOT[i].x}%`, top: `${SPOT[i].y}%`,
+      transform: "translate(-50%,-50%)",
     } as Partial<CSSStyleDeclaration>);
-
-    const face = document.createElement("div");
-    Object.assign(face.style, {
-      position: "relative", width: "44px", height: "44px", borderRadius: "50%", overflow: "hidden",
-      border: `2px solid ${colorOf(team)}`, boxShadow: "0 2px 8px rgba(0,0,0,0.55)",
-      background: "rgba(20,24,34,0.9)",
-    } as Partial<CSSStyleDeclaration>);
-    const pl = players[i];
-    if (pl) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 44; canvas.height = 44;
-      Object.assign(canvas.style, { width: "44px", height: "44px", display: "block" } as Partial<CSSStyleDeclaration>);
-      ui.drawFace(canvas, pl);
-      face.appendChild(canvas);
-    }
-    cell.appendChild(face);
-
-    const name = document.createElement("div");
-    name.textContent = `${ROSTER[team][i].role} ${ROSTER[team][i].name}`;
-    Object.assign(name.style, {
-      fontSize: "10px", fontWeight: "700", maxWidth: "94px", whiteSpace: "nowrap",
-      overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 3px rgba(0,0,0,0.9)",
-    } as Partial<CSSStyleDeclaration>);
-    cell.appendChild(name);
-
-    // この選手に置かれている札とその効果
-    for (const [handIdx, target] of ui.pokerTargets) {
-      if (target !== i) continue;
-      const card = m.teams[team].hand[handIdx];
-      const eff = discardEffect(card, ROSTER[team][i].attr);
-      const chip = document.createElement("div");
-      Object.assign(chip.style, {
-        display: "flex", alignItems: "center", gap: "4px", pointerEvents: "auto",
-        background: "rgba(12,15,22,0.92)", border: "1px solid rgba(255,255,255,0.3)",
-        borderRadius: "7px", padding: "1px 5px", fontSize: "10px", fontWeight: "800",
-      } as Partial<CSSStyleDeclaration>);
-      const mark = document.createElement("span");
-      mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
-      mark.style.color = SUIT_RED[card.suit] ? "#ff6b72" : "#e6e9f0";
-      const gain = document.createElement("span");
-      gain.textContent = eff.amount > 0 ? `${ATTR_SHORT.get(eff.key) ?? ""}+${eff.amount}` : "上限";
-      gain.style.color = "rgb(120,225,140)";
-      chip.append(mark, gain);
-      chip.onclick = (e) => {            // 置いた札はタップで手札へ戻す
-        e.stopPropagation();
-        ui.pokerTargets.delete(handIdx);
-        ui.renderPoker();
-      };
-      cell.appendChild(chip);
-    }
-
-    if (ui.pokerStage === "exchange") {
-      ui.pokerSpots.push({ idx: i, el: cell });
-      cell.onclick = () => {             // タップ操作: 札を選んでから選手を叩く
-        if (ui.pokerPicked < 0) return;
-        placeCard(ui, ui.pokerPicked, i);
-        ui.pokerPicked = -1;
-        ui.renderPoker();
-      };
-    }
     board.appendChild(cell);
   }
-  return board;
+  area.appendChild(board);
+
+  // コート横のベンチ。広い画面は2列×4段、狭い画面は盤の下に4列×2段。
+  const bench = document.createElement("div");
+  Object.assign(bench.style, {
+    display: "grid", gridTemplateColumns: `repeat(${narrow ? 4 : 2}, auto)`,
+    gap: "6px 8px", justifyContent: "center", alignContent: "center",
+    background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: "10px", padding: "8px", flexShrink: "0",
+  } as Partial<CSSStyleDeclaration>);
+  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 32));
+  area.appendChild(bench);
+
+  return area;
+}
+
+/** 札を落とせる選手ひとり分（先発も控えも同じ作り）。 */
+function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number): HTMLDivElement {
+  const cell = document.createElement("div");
+  Object.assign(cell.style, {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
+    pointerEvents: "auto", cursor: "pointer",
+  } as Partial<CSSStyleDeclaration>);
+
+  const face = document.createElement("div");
+  Object.assign(face.style, {
+    position: "relative", width: `${size}px`, height: `${size}px`, borderRadius: "50%",
+    overflow: "hidden", border: `2px solid ${colorOf(team)}`,
+    boxShadow: "0 2px 8px rgba(0,0,0,0.55)", background: "rgba(20,24,34,0.9)",
+  } as Partial<CSSStyleDeclaration>);
+  const pl: Player | undefined = ui.game?.roster[team][idx];
+  if (pl) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    Object.assign(canvas.style, { width: `${size}px`, height: `${size}px`, display: "block" } as Partial<CSSStyleDeclaration>);
+    ui.drawFace(canvas, pl);
+    face.appendChild(canvas);
+  }
+  cell.appendChild(face);
+
+  const def = ROSTER[team][idx];
+  const name = document.createElement("div");
+  name.textContent = `${def.role} ${def.name}`;
+  Object.assign(name.style, {
+    fontSize: size >= 40 ? "10px" : "9px", fontWeight: "700",
+    maxWidth: size >= 40 ? "94px" : "78px", whiteSpace: "nowrap",
+    overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+  } as Partial<CSSStyleDeclaration>);
+  cell.appendChild(name);
+
+  // この選手に置かれている札とその効果
+  for (const [handIdx, target] of ui.pokerTargets) {
+    if (target !== idx) continue;
+    const card = m.teams[team].hand[handIdx];
+    const eff = discardEffect(card, def.attr);
+    const chip = document.createElement("div");
+    Object.assign(chip.style, {
+      display: "flex", alignItems: "center", gap: "4px", pointerEvents: "auto",
+      background: "rgba(12,15,22,0.92)", border: "1px solid rgba(255,255,255,0.3)",
+      borderRadius: "7px", padding: "1px 5px", fontSize: "10px", fontWeight: "800",
+    } as Partial<CSSStyleDeclaration>);
+    const mark = document.createElement("span");
+    mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
+    mark.style.color = SUIT_RED[card.suit] ? "#ff6b72" : "#e6e9f0";
+    const gain = document.createElement("span");
+    gain.textContent = eff.amount > 0 ? `${ATTR_SHORT.get(eff.key) ?? ""}+${eff.amount}` : "上限";
+    gain.style.color = "rgb(120,225,140)";
+    chip.append(mark, gain);
+    chip.onclick = (e) => {            // 置いた札はタップで手札へ戻す
+      e.stopPropagation();
+      ui.pokerTargets.delete(handIdx);
+      ui.renderPoker();
+    };
+    cell.appendChild(chip);
+  }
+
+  if (ui.pokerStage === "exchange") {
+    ui.pokerSpots.push({ idx, el: cell });
+    cell.onclick = () => {             // タップ操作: 札を選んでから選手を叩く
+      if (ui.pokerPicked < 0) return;
+      placeCard(ui, ui.pokerPicked, idx);
+      ui.pokerPicked = -1;
+      ui.renderPoker();
+    };
+  }
+  return cell;
 }
 
 /** 手札の1枚。ドラッグして選手へ落とす / タップで選んでから選手を叩く。 */
