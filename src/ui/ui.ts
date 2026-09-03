@@ -85,6 +85,10 @@ export class UI {
   layoutMode = "";                // "desktop" | "phone" — リサイズ時に再計算
 
   phase: Phase = "pregame";
+  // 3Dの実体（main.ts が組み終えたら差す）。ポーカー画面が試合状態へ触るのに使う。
+  game: Game | null = null;
+  // ポーカー画面などでシムを止める（描画とカメラは動かす）。
+  simPaused = false;
   playerCard!: HTMLDivElement;  // 試合前の浮遊詳細カード（ヘックスチャート）
   vsBoard: HTMLDivElement | null = null;  // VS 戦力ボード（重ならないようにする）
   vsPreviewActive = false;                // 交代/ロールのプレビューがボード上に表示中

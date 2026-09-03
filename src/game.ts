@@ -49,6 +49,7 @@ import { resolveCollisions } from "./core/collision";
 import { benchSeat, seatOnBench, updateBenchCheer } from "./core/bench";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "./roster";
 import { TACTICS, AbilityKey } from "./attributes";
+import type { PokerMatch } from "./poker/state";
 
 export type BallMode = "held" | "charge" | "pass" | "shot" | "loose" | "inbound" | "tipoff" | "freethrow" | "pause" | "subs" | "finale";
 
@@ -214,6 +215,14 @@ export class Game {
   ballFxY0 = 0;                          // 得点演出の開始時のボール高さ(減衰の基準)
   readonly ballFxColor = new Color3();   // 発光色
   ballLooseT = 0;                        // ルーズボール中の白い明滅の位相
+
+  // ═════════ ポーカー強化 ═════════
+  /** 進行中のポーカー。UI が試合開始時に作る（無ければポーカー無しで進む）。 */
+  poker: PokerMatch | null = null;
+  /** ポーカーの解決待ち。UI が resumeFromPoker() を呼ぶまで次のフェーズへ進まない。 */
+  pokerGate: (() => void) | null = null;
+  /** ポーカーのラウンドに入ったことを UI へ知らせる。null ならポーカーを挟まない。 */
+  onPokerRound: ((round: number) => void) | null = null;
 
   constructor(scene: Scene) {
     for (let t = 0; t < 2; t++) {
@@ -393,6 +402,7 @@ export class Game {
       || text === "SHOT CLOCK VIOLATION"   // ショットクロック違反(攻撃側)
       || text.includes(" BALL")            // どちらのボールか明示する再開バナー
       || text.startsWith("THROW-IN")       // スローイン再開 — どちらのボールか
+      || text.startsWith("POKER")        // 役が確定したことの通知
       || text === "TIP-OFF"
       || text === "HALFTIME"
       || text === "2ND HALF"
@@ -461,6 +471,24 @@ export class Game {
       const back = -this.attackSign(t);
       for (const p of this.roster[t]) p.setNumberSide(back);
     }
+  }
+
+  /**
+   * ポーカーのラウンドを挟んでから `next` を実行する。挟む必要が無ければ即実行。
+   * 待っている間、ボールは "pause" のまま（クロックは止まったまま）。
+   */
+  awaitPoker(round: number, next: () => void): void {
+    if (!this.onPokerRound || !this.poker || !this.poker.active) { next(); return; }
+    this.pokerGate = next;
+    this.ballMode = "pause";
+    this.onPokerRound(round);
+  }
+
+  /** ポーカー画面が閉じたら呼ぶ。保留していた次のフェーズへ進む。 */
+  resumeFromPoker(): void {
+    const gate = this.pokerGate;
+    this.pokerGate = null;
+    if (gate) gate();
   }
 
   /** ロスターのロール/優先度/派生値を再適用する（試合前画面から呼ぶ）。 */

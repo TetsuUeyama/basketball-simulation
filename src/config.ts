@@ -52,6 +52,12 @@ export const HUD_OPTS: {
   staminaOn: "name" | "icon"; courtNames: "ball" | "all"; benchNames: boolean; rev: number;
 } = { staminaOn: "icon", courtNames: "ball", benchNames: false, rev: 0 };
 
+// ポーカー強化の設定。
+//   userTeam: 手札を自分で打つチーム。null = CPU同士（観戦、自動で進む）
+//   home:     役を確定させるタイミングを決める権利を持つチーム
+export const POKER_OPTS: { userTeam: number | null; home: number } =
+  { userTeam: 0, home: 0 };
+
 export const PLAYER_SPEED = 6.2;  // オフェンス時の走行速度
 export const DEF_SPEED = 6.5;     // 守備がリカバーできるよう少しだけ速い
 export const BURST_SPEED = 7.5;   // 抜き去りバーストの想定速度

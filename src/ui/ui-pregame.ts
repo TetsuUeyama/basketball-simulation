@@ -95,7 +95,11 @@ UI.prototype.tipOffButton = function(): HTMLButtonElement {
       background: "rgba(232,235,242,0.96)", color: "#10131a",
       border: "1px solid rgba(255,255,255,0.5)",
     } as Partial<CSSStyleDeclaration>);
-    b.onclick = () => { this.setPhase("playing"); this.onStart(); };
+    b.onclick = () => {
+      this.setPhase("playing");
+      this.onStart();
+      this.beginPoker();   // ティップオフ前にポーカーのラウンド1
+    };
     return b;
 };
 
@@ -129,7 +133,7 @@ UI.prototype.refreshEditors = function(): void {
       fontSize: "12px", padding: "8px 20px", justifySelf: "end", marginRight: "14px",
     } as Partial<CSSStyleDeclaration>);
     backBtn.onclick = () => this.setPhase("title");
-    bottomBar.append(backBtn, this.tipOffButton());
+    bottomBar.append(backBtn, this.tipOffButton(), this.pokerModeButton());
 
     this.vsBoard = this.buildVsBoard();
     if (sideBySide) {

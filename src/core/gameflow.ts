@@ -50,8 +50,8 @@ export function endQuarter(game: Game, ): void {
 
     // ボールがまだ飛んでいるなら、弾み終わるまで見せてから引き上げにかかる
     game.pauseThen(speed > 1.5 ? BALL_SETTLE : 1.2, () => quarterWalkOff(game, () => {
-      // ベンチで短いハドル、その後に次のピリオド
-      game.pauseThen(1.0, () => {
+      // ベンチで短いハドル → ポーカーのラウンド（未確定なら）→ 次のピリオド
+      game.pauseThen(1.0, () => game.awaitPoker(ended + 1, () => {
         game.quarter = ended + 1;
         game.gameClock = QUARTER_TIME;
         game.shotClock = SHOT_CLOCK;
@@ -60,7 +60,7 @@ export function endQuarter(game: Game, ): void {
         const team = quarterStartTeam(game, game.quarter);
         // ピリオド間は全員がベンチから入場するので、配置移動はしない(null)
         withSubs(game, () => quarterWalkOn(game, team), null, null);
-      });
+      }));
     }));
   }
 

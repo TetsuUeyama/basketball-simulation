@@ -20,6 +20,7 @@ import "./ui/ui-pregame";
 import "./ui/ui-pickers";
 import "./ui/ui-result";
 import "./ui/ui-hud";
+import "./ui/ui-poker";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 // preserveDrawingBuffer は意図的にOFF（モバイルGPUのちらつき防止。スクショ時のみ有効化）。
@@ -45,6 +46,7 @@ function buildWorld(): void {
   addShadows(sun, g);   // 影は選手/ボールのメッシュに依存するので game 生成後
   intro = new IntroTour(g, camera);
   game = g;
+  ui.game = g;             // ポーカー画面が試合状態へ触れるように
   purgeVoxelPrototypes(scene);
 }
 
@@ -62,8 +64,19 @@ function flushUniforms(): void {
 
 const ui = new UI();
 ui.onNeedWorld = () => buildWorld();                     // タイトルを離れる＝チーム決定済み
-ui.onRestart = () => game?.reset();                      // 現在の試合を再スタート
-ui.onBack = () => game?.reset();                         // 結果 → きれいな試合前へ戻る
+ui.onRestart = () => {                                   // 現在の試合を再スタート
+  game?.reset();
+  ui.beginPoker();                                       // ポーカーも引き直し
+};
+ui.onBack = () => {                                      // 結果 → きれいな試合前へ戻る
+  if (game) {
+    game.poker?.revert();      // ポーカーの強化を能力値から抜く（defは使い回される）
+    game.poker = null;
+    game.applyRoster();
+    game.reset();
+  }
+  ui.simPaused = false;
+};
 ui.onSetupLineups = () => optimizeLineups();             // マッチアップ確定時、相手を考慮したデフォルト5人
 ui.onUniformToggle = () => {                             // ホーム ⇄ アウェイのユニフォームを全員へ
   uniformsDirty = true;                                  // コート上の26人は flushUniforms() で反映
@@ -179,11 +192,11 @@ engine.runRenderLoop(() => {
   idleT = 0;
   // ここから先はプレー中のみ。シムを進める
   if (intro!.active()) {
-    intro!.step(dt);            // イントロツアー中はカメラ・字幕を進め、試合は止める
+    if (!ui.simPaused) intro!.step(dt);   // イントロツアー中はカメラ・字幕を進め、試合は止める
   } else {
     intro!.clear();             // ツアーが終わった直後でなければ何もしない
-    // `speed` 個の整数サブステップを走らせ、早送りが数値的に安定するようにする
-    for (let i = 0; i < ui.speed; i++) g.update(dt);
+    // ポーカー画面が出ている間はシムを止める（描画とカメラは動かす）
+    if (!ui.simPaused) for (let i = 0; i < ui.speed; i++) g.update(dt);
   }
   ui.update(g);
   // ティップオフでボールが投げられ、しばらくしたら放送アングルを90°回す(ベンチを奥・やや見下ろし)。
