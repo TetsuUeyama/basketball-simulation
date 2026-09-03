@@ -3,7 +3,8 @@
 //
 // 画面は「現在の役」「コートに見立てた盤の上の先発5人」「手札」「ボタン」だけで構成する。
 // 手札を選手の上へ置く（ドラッグ、またはカード→選手のタップ）と、その選手が強化される。
-// 置いた札＝捨てる札なので、置ける枚数は 1ラウンド `MAX_DISCARDS` 枚まで。
+// 置いた札＝捨てる札。**1人1枚まで**（同じ選手へ置くと前の札は手札へ戻る）で、
+// 1ラウンドに置ける総数は `MAX_DISCARDS` 枚まで。
 import { POKER_OPTS } from "../config";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
@@ -250,7 +251,7 @@ function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
   } as Partial<CSSStyleDeclaration>);
   board.innerHTML = COURT_SVG;
   for (let i = 0; i < STARTERS; i++) {
-    const cell = playerCell(ui, m, team, i, 40, SPOT[i].x >= 55);
+    const cell = playerCell(ui, m, team, i, 40);
     Object.assign(cell.style, {
       position: "absolute", left: `${SPOT[i].x}%`, top: `${SPOT[i].y}%`,
       transform: "translate(-50%,-50%)",
@@ -267,24 +268,19 @@ function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "10px", padding: "8px", flexShrink: "0",
   } as Partial<CSSStyleDeclaration>);
-  const cols = narrow ? 4 : 2;
-  for (let i = STARTERS; i < ROSTER_SIZE; i++) {
-    bench.appendChild(playerCell(ui, m, team, i, 32, (i - STARTERS) % cols >= cols / 2));
-  }
+  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 32));
   area.appendChild(bench);
 
   return area;
 }
 
-/**
- * 札を落とせる選手ひとり分（先発も控えも同じ作り）。
- * `flip` = 置いた札をアイコンの左横に出す（右寄りに居る選手用）。
- */
-function playerCell(ui: UI, m: PokerMatch, team: number, idx: number,
-                    size: number, flip = false): HTMLDivElement {
+/** 置いた札の1行ぶんの高さ。札が無くても同じ高さを空けておく。 */
+const CHIP_H = 13;
+
+/** 札を落とせる選手ひとり分（先発も控えも同じ作り）。 */
+function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number): HTMLDivElement {
   const cell = document.createElement("div");
   Object.assign(cell.style, {
-    position: "relative",   // 置かれた札を浮かせる基準（箱の大きさを変えないため）
     display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
     pointerEvents: "auto", cursor: "pointer",
   } as Partial<CSSStyleDeclaration>);
@@ -315,21 +311,16 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number,
   } as Partial<CSSStyleDeclaration>);
   cell.appendChild(name);
 
-  // 置かれた札はアイコンの真横に「浮かせて」出す。セルの箱を大きくしないので札を
-  // 置いてもアイコンはずれず、下に積まないので他の選手も隠れない。
-  // 右寄りの選手は左横へ反転させ、盤やベンチ枠からはみ出しにくくする。
-  const chips = document.createElement("div");
-  Object.assign(chips.style, {
-    position: "absolute", top: `${size / 2}px`,
-    ...(flip ? { right: "100%", marginRight: "3px", alignItems: "flex-end" }
-             : { left: "100%", marginLeft: "3px", alignItems: "flex-start" }),
-    transform: "translateY(-50%)",
-    display: "flex", flexDirection: "column", gap: "2px", width: "max-content",
-    zIndex: "3", pointerEvents: "none",
+  // 置かれた札は名前の下に出す。1人1枚なので必ず1行に収まり、その1行分の高さは
+  // 札が無くても**最初から確保しておく**（置いても配置がずれず、控えの行間も詰まらない）。
+  const slot = document.createElement("div");
+  Object.assign(slot.style, {
+    height: `${CHIP_H}px`, marginTop: "1px",
+    display: "flex", alignItems: "center", justifyContent: "center",
   } as Partial<CSSStyleDeclaration>);
-  cell.appendChild(chips);
+  cell.appendChild(slot);
 
-  // この選手に置かれている札とその効果
+  // この選手に置かれている札とその効果（1人1枚）
   for (const [handIdx, target] of ui.pokerTargets) {
     if (target !== idx) continue;
     const card = m.teams[team].hand[handIdx];
@@ -338,7 +329,8 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number,
     Object.assign(chip.style, {
       display: "flex", alignItems: "center", gap: "3px", pointerEvents: "auto",
       background: "rgba(12,15,22,0.92)", border: "1px solid rgba(255,255,255,0.3)",
-      borderRadius: "6px", padding: "0 4px", fontSize: "8.5px", fontWeight: "800",
+      borderRadius: "6px", padding: "0 4px", fontSize: "9px", fontWeight: "800",
+      height: `${CHIP_H}px`, lineHeight: "1", whiteSpace: "nowrap",
     } as Partial<CSSStyleDeclaration>);
     const mark = document.createElement("span");
     mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
@@ -352,7 +344,7 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number,
       ui.pokerTargets.delete(handIdx);
       ui.renderPoker();
     };
-    chips.appendChild(chip);
+    slot.appendChild(chip);
   }
 
   if (ui.pokerStage === "exchange") {
@@ -386,8 +378,14 @@ function handCard(ui: UI, card: Card, i: number): HTMLDivElement {
   return el;
 }
 
-/** 札を選手へ置く（＝捨てて強化する予約）。上限に達していたら何もしない。 */
+/**
+ * 札を選手へ置く（＝捨てて強化する予約）。**1人1枚**なので、既にその選手へ置いてある
+ * 札は手札へ戻して置き換える。全体の枚数上限に達していたら何もしない。
+ */
 function placeCard(ui: UI, handIdx: number, target: number): void {
+  for (const [other, t] of ui.pokerTargets) {
+    if (t === target && other !== handIdx) ui.pokerTargets.delete(other);
+  }
   if (!ui.pokerTargets.has(handIdx) && ui.pokerTargets.size >= MAX_DISCARDS) return;
   ui.pokerTargets.set(handIdx, target);
 }
