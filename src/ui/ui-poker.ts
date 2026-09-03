@@ -1,17 +1,22 @@
 // UI: ポーカー強化の画面。両チーム確定の直後（選手紹介・ティップオフより前）と、
 // 各クォーター開始前に挟まる。
 //
-// 画面は「現在の役」「コートに見立てた盤の上の先発5人」「手札」「ボタン」だけで構成する。
-// 手札を選手の上へ置く（ドラッグ、またはカード→選手のタップ）と、その選手が強化される。
+// 手番:
+//   1. **相手（CPU）が先に手を決める** — 捨てる札と、誰を強化/妨害するかまで確定させる。
+//      その結果は選手アイコンの下にチップで出るので、ユーザーはそれを見てから決められる。
+//   2. ユーザーが「捨てる札」と「置き先の選手」を選んで交換する。
+//   3. **ホームが「役を確定する / 持ち越す」を決める**（ホームの特権）。
+//   ⚠️ 将来は監督(ヘッドコーチ)の能力で先攻後攻を決める予定。当面は相手が先で固定。
+//
 // 置いた札＝捨てる札。**1人1枚まで**（同じ選手へ置くと前の札は手札へ戻る）で、
-// 1ラウンドに置ける総数は `MAX_DISCARDS` 枚まで。
+// 1ラウンドに置ける総数は `MAX_DISCARDS` 枚まで。自軍へ置けば強化、相手へ置けば妨害。
 import { POKER_OPTS } from "../config";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
 import type { Player } from "../objects/player/player";
 import { PokerMatch, POKER_ROUNDS, type DiscardTarget } from "../poker/state";
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
-import { discardEffect, hinderEffect, MAX_DISCARDS } from "../poker/effects";
+import { discardEffect, hinderEffect, MAX_DISCARDS, type AttrKey } from "../poker/effects";
 import { cpuExchange, cpuWantsConfirm } from "../poker/ai";
 import { UI, colorOf, INK } from "./ui";
 
@@ -311,6 +316,21 @@ function benchGrid(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
 /** 置いた札の1行ぶんの高さ。札が無くても同じ高さを空けておく。 */
 const CHIP_H = 13;
 
+/** 既に適用された増減（相手が先に打った手／自分の交換の結果）。枠線が打った側の色。 */
+function doneChip(by: number, key: AttrKey, amount: number): HTMLDivElement {
+  const el = document.createElement("div");
+  Object.assign(el.style, {
+    display: "flex", alignItems: "center",
+    background: "rgba(12,15,22,0.8)", border: "1px solid " + colorOf(by),
+    borderRadius: "6px", padding: "0 4px", fontSize: "9px", fontWeight: "800",
+    height: `${CHIP_H}px`, lineHeight: "1", whiteSpace: "nowrap", opacity: "0.9",
+    color: amount < 0 ? "rgb(255,120,120)" : "rgb(120,225,140)",
+  } as Partial<CSSStyleDeclaration>);
+  const label = ATTR_SHORT.get(key) ?? "";
+  el.textContent = amount >= 0 ? `${label}+${amount}` : `${label}${amount}`;
+  return el;
+}
+
 /**
  * 札を落とせる選手ひとり分（先発・控え・相手選手すべて同じ作り）。
  * `team` が操作中のチームなら強化、相手チームなら妨害になる。
@@ -350,14 +370,26 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
   } as Partial<CSSStyleDeclaration>);
   cell.appendChild(name);
 
-  // 置かれた札は名前の下に出す。1人1枚なので必ず1行に収まり、その1行分の高さは
-  // 札が無くても**最初から確保しておく**（置いても配置がずれず、控えの行間も詰まらない）。
+  // 名前の下の1行。高さは札が無くても最初から確保し、中身は絶対配置にして
+  // セルの幅にも影響させない（置いても・相手が動いても配置がずれない）。
   const slot = document.createElement("div");
   Object.assign(slot.style, {
-    height: `${CHIP_H}px`, marginTop: "1px",
-    display: "flex", alignItems: "center", justifyContent: "center",
+    height: `${CHIP_H}px`, marginTop: "1px", position: "relative", width: "100%",
   } as Partial<CSSStyleDeclaration>);
+  const chipRow = document.createElement("div");
+  Object.assign(chipRow.style, {
+    position: "absolute", top: "0", left: "50%", transform: "translateX(-50%)",
+    display: "flex", gap: "3px", whiteSpace: "nowrap",
+  } as Partial<CSSStyleDeclaration>);
+  slot.appendChild(chipRow);
   cell.appendChild(slot);
+
+  // このラウンドで**既に適用された**増減（相手が先に打った手、および自分の交換の結果）。
+  for (const d of m.applied) {
+    if (d.source !== "discard" || d.round !== m.round) continue;
+    if (d.team !== team || d.idx !== idx) continue;
+    chipRow.appendChild(doneChip(d.by, d.key, d.amount));
+  }
 
   // この選手に置かれている札とその効果（1人1枚）。自軍なら強化、相手なら妨害。
   for (const [handIdx, target] of ui.pokerTargets) {
@@ -385,7 +417,7 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
       ui.pokerTargets.delete(handIdx);
       ui.renderPoker();
     };
-    slot.appendChild(chip);
+    chipRow.appendChild(chip);
   }
 
   if (ui.pokerStage === "exchange") {

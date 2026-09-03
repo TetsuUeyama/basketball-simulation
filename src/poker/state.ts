@@ -24,11 +24,13 @@ export interface DiscardTarget {
 
 /** 実際に能力値へ乗った増減1件（試合後に巻き戻すために全て記録する）。 */
 export interface AppliedDelta {
-  team: number;
+  team: number;         // 増減を受けた選手のチーム
   idx: number;          // ロスター番号
   key: AttrKey;
   amount: number;       // 上限/下限で切った後の実効量（妨害は負）
   source: "discard" | "hand";
+  by: number;           // その手を打ったチーム（誰の仕業か）
+  round: number;        // 何ラウンド目の手か（UI が「今ラウンドの動き」を出すのに使う）
 }
 
 export interface PokerTeamState {
@@ -104,7 +106,8 @@ export class PokerMatch {
         const own = tg.team === team;
         const eff = own ? discardEffect(d.card, def.attr) : hinderEffect(d.card, def.attr);
         const got = addAttr(def.attr, eff.key, eff.amount);
-        out.push({ team: tg.team, idx: tg.idx, key: eff.key, amount: got, source: "discard" });
+        out.push({ team: tg.team, idx: tg.idx, key: eff.key, amount: got,
+                   source: "discard", by: team, round: this.round });
         st.log.push(got !== 0
           ? `${cardLabel(d.card)} → ${own ? "" : "相手の "}${def.name} の ${attrName(eff.key)} ${got > 0 ? "+" : ""}${got}`
           : `${cardLabel(d.card)} → ${def.name} は限界で動かず`);
@@ -136,7 +139,8 @@ export class PokerMatch {
       for (const eff of handEffects(st.rank)) {
         for (let i = 0; i < this.roster[t].length; i++) {
           const got = addAttr(this.roster[t][i].attr, eff.key, eff.amount);
-          if (got > 0) out.push({ team: t, idx: i, key: eff.key, amount: got, source: "hand" });
+          if (got > 0) out.push({ team: t, idx: i, key: eff.key, amount: got,
+                                  source: "hand", by: t, round: this.round });
         }
       }
       st.log.push(`役確定: ${st.rank.name} → ${handSummary(st.rank)}`);
