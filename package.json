@@ -1,0 +1,20 @@
+{
+  "name": "basketball-simulation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ヘッドレスのバスケットボールシミュレーション（Node + TypeScript）",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/index.ts",
+    "dev": "node --watch --disable-warning=ExperimentalWarning src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}
