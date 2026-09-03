@@ -250,6 +250,9 @@ function opponentArea(ui: UI, m: PokerMatch, opp: number): HTMLDivElement {
   }
   area.appendChild(hand);
 
+  // 相手の控え8人。ここにも札を置いて妨害できる（自分側と対称の並び）。
+  area.appendChild(benchGrid(ui, m, opp));
+
   return area;
 }
 
