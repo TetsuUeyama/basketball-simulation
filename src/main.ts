@@ -1,0 +1,223 @@
+import {
+  Engine, Scene, Color4, Color3, Vector3,
+  HemisphericLight, DirectionalLight,
+  UniversalCamera, Viewport, MeshBuilder,
+} from "@babylonjs/core";
+import { buildCourt } from "./objects/court";
+import { makeMat } from "./objects/materials";
+import { addLights, addShadows } from "./scene-setup";
+import { BroadcastCamera } from "./camera";
+import { Game } from "./game";
+import { optimizeLineups } from "./ai/lineups";
+import { Player } from "./objects/player/player";
+import { purgeVoxelPrototypes } from "./objects/player/player-voxel";
+import { ROSTER } from "./roster";
+import { UI } from "./ui/ui";
+import { IntroTour } from "./intro";
+import "./ui/ui-title";
+import "./ui/ui-eval";
+import "./ui/ui-pregame";
+import "./ui/ui-pickers";
+import "./ui/ui-result";
+import "./ui/ui-hud";
+
+const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
+// preserveDrawingBuffer は意図的にOFF（モバイルGPUのちらつき防止。スクショ時のみ有効化）。
+const engine = new Engine(canvas, true, { stencil: true });
+
+const scene = new Scene(engine);
+scene.clearColor = new Color4(0.04, 0.05, 0.07, 1);
+
+const { sun } = addLights(scene);
+
+const camera = new BroadcastCamera(scene, canvas);
+
+// ---- 3Dの実体はチーム決定後に組む -----------------------------------------
+// タイトル/クラブ選択の間はコートも選手も作らない。26人ぶんのボクセル生成と、その
+// 常時描画がボタンの反応を鈍らせるため。試合前画面へ入る直前に一度だけ組む。
+let game: Game | null = null;
+let intro: IntroTour | null = null;
+function buildWorld(): void {
+  if (game) return;
+  const hoops = buildCourt(scene);
+  const g = new Game(scene);
+  g.attachHoops(hoops);
+  addShadows(sun, g);   // 影は選手/ボールのメッシュに依存するので game 生成後
+  intro = new IntroTour(g, camera);
+  game = g;
+  purgeVoxelPrototypes(scene);
+}
+
+// ---- 26人ぶんの着替えは、メインシーンを描く直前まで遅らせる -----------------
+// クラブ選択中はプレビューだけを描いていてコート上の26人は見えない。それでも従来は
+// クラブを押すたびに26人ぶんのユニフォームメッシュを同期で作り直していたため、
+// 2試合目以降(game が生きている)はボタンの反応が数秒止まっていた。
+let uniformsDirty = false;
+function flushUniforms(): void {
+  if (!uniformsDirty || !game) return;
+  uniformsDirty = false;
+  game.applyUniforms();
+  purgeVoxelPrototypes(scene);
+}
+
+const ui = new UI();
+ui.onNeedWorld = () => buildWorld();                     // タイトルを離れる＝チーム決定済み
+ui.onRestart = () => game?.reset();                      // 現在の試合を再スタート
+ui.onBack = () => game?.reset();                         // 結果 → きれいな試合前へ戻る
+ui.onSetupLineups = () => optimizeLineups();             // マッチアップ確定時、相手を考慮したデフォルト5人
+ui.onUniformToggle = () => {                             // ホーム ⇄ アウェイのユニフォームを全員へ
+  uniformsDirty = true;                                  // コート上の26人は flushUniforms() で反映
+  if (previewPlayers) { previewPlayers[0].applyUniform(); previewPlayers[1].applyUniform(); }
+};
+// クラブ選択中、選んでいるチームの先発5人をコート上で大写しにする（null=通常の広角へ戻す）
+ui.onShowcaseTeam = (team) => {
+  if (team === null) camera.endShowcase();
+  else if (game) camera.showcaseTeam(game.allPlayers(team).slice(0, 5));
+};
+
+// ---- 専用の3Dユニフォームプレビュー(クラブ選択) -------------------------
+// 2体の選手モデル(ホーム/アウェイ)だけの別シーン。各自ビューポートカメラで固定表示。
+// クラブウィザード表示中はメインシーンの代わりにこれをレンダリングする。
+let previewScene: Scene | null = null;
+let previewPlayers: [Player, Player] | null = null;
+let previewCams: [UniversalCamera, UniversalCamera] | null = null;
+let previewActive = false;
+
+function rectToViewport(r: DOMRect): Viewport {
+  const cr = canvas.getBoundingClientRect();
+  const x = (r.left - cr.left) / cr.width;
+  const w = r.width / cr.width;
+  const h = r.height / cr.height;
+  const y = 1 - (r.top - cr.top + r.height) / cr.height;   // Babylonのビューポート: 原点は左下
+  return new Viewport(x, y, w, h);
+}
+function buildPreviewScene(): void {
+  const ps = new Scene(engine);
+  // クリア色は暗色（UIオーバーレイに合わせる）。明るい背景は選手の後ろの平面で作る。
+  ps.clearColor = new Color4(0.031, 0.039, 0.059, 1);
+  const backdrop = MeshBuilder.CreatePlane("pv_bg", { width: 40, height: 18 }, ps);
+  backdrop.position.set(3, 5, -4);
+  backdrop.material = makeMat(ps, "pv_bgmat",
+    { emissive: new Color3(0.80, 0.83, 0.88), unlit: true, cull: false });   // 均一な明るさ、ライティングを無視
+  const ph = new HemisphericLight("pv_hemi", new Vector3(0, 1, 0), ps);
+  ph.intensity = 0.95;
+  ph.groundColor = new Color3(0.45, 0.43, 0.4);
+  const pd = new DirectionalLight("pv_dir", new Vector3(0.25, -0.5, -1), ps);
+  pd.intensity = 0.7;
+  // 2体を離して立たせる。各モデルは +Z(forward)を向くので +Z 側カメラが前面を見る。
+  const home = new Player(ps, 0, 0, ROSTER[0][0]);
+  const away = new Player(ps, 1, 0, ROSTER[1][0]);
+  home.setNameTagVisible(false);
+  away.setNameTagVisible(false);
+  home.root.position.set(0, 0, 0);
+  away.root.position.set(6, 0, 0);
+  const camL = new UniversalCamera("pv_L", new Vector3(0, 1.3, 3.1), ps);
+  const camR = new UniversalCamera("pv_R", new Vector3(6, 1.3, 3.1), ps);
+  for (const c of [camL, camR]) { c.fov = 0.85; c.inputs.clear(); }
+  camL.setTarget(new Vector3(0, 1.0, 0));
+  camR.setTarget(new Vector3(6, 1.0, 0));
+  ps.activeCameras = [camL, camR];
+  previewScene = ps;
+  previewPlayers = [home, away];
+  previewCams = [camL, camR];
+}
+ui.onUniformPreview = (cfg) => {
+  if (!cfg) { previewActive = false; return; }   // 停止 → メインシーンを再びレンダリング
+  if (!previewScene) buildPreviewScene();
+  previewCams![0].viewport = rectToViewport(cfg.left);
+  previewCams![1].viewport = rectToViewport(cfg.right);
+  previewPlayers![0].applyUniform();             // 現在選択中のキットを反映
+  previewPlayers![1].applyUniform();
+  previewActive = true;
+};
+
+// ティップオフ後の放送アングル自動回転(一度きり)。camTipDone=済み / camTipArmT=ティップ終了後の経過
+let camTipDone = true;
+let camTipArmT = -1;
+
+ui.onStart = () => {
+  buildWorld();
+  if (!game) return;
+  game.applyRoster();
+  flushUniforms();         // 持ち越していた着替えをここで確定させる
+  purgeVoxelPrototypes(scene);
+  game.reset();            // 選手はティップオフの位置 / ベンチの座席につく
+  intro?.begin();
+  camera.cancelAutoAngle();
+  camTipDone = false; camTipArmT = -1;   // 新しい試合 → ティップオフ後の自動アングルを予約
+};
+
+canvas.addEventListener("pointerdown", () => {
+  intro?.skip();           // イントロ中はタップで即座に次のショットへ進む
+  camera.cancelAutoAngle(); // ユーザーが触れたら自動アングル回転を止める(好みの角度を保持)
+});
+canvas.addEventListener("wheel", () => camera.cancelAutoAngle());
+
+// 試合中以外はシムが凍結していて動くものが無いので、描画を間引いて CPU をボタン操作へ回す。
+// コート/選手がまだ無いタイトル/クラブ選択はさらに粗く（プレビューの2体は固定カメラ）。
+const IDLE_STEP = 1 / 30, EMPTY_STEP = 1 / 20;
+let idleT = 0;
+
+engine.runRenderLoop(() => {
+  // dt をクランプし、停止/再フォーカスされたタブがシムを飛躍させないようにする
+  const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
+  const g = game;
+  if (!g || !ui.playing) {
+    idleT += dt;
+    if (idleT < (g ? IDLE_STEP : EMPTY_STEP)) return;
+    const acc = idleT;   // 間引いたぶんをまとめて渡す（カメラの寄りが遅れない）
+    idleT = 0;
+    if (g) {
+      if (intro!.active()) intro!.abort();   // ツアーの途中で試合前へ戻る: 中止してカメラを解放
+      ui.update(g);
+      camera.update(acc, g.ball.pos.x, g.ball.pos.z, g.ball.pos.y, g.camFollowBall, g.attackGoalZ);
+    }
+    if (previewActive && previewScene) previewScene.render();
+    else { flushUniforms(); scene.render(); }
+    return;
+  }
+  idleT = 0;
+  // ここから先はプレー中のみ。シムを進める
+  if (intro!.active()) {
+    intro!.step(dt);            // イントロツアー中はカメラ・字幕を進め、試合は止める
+  } else {
+    intro!.clear();             // ツアーが終わった直後でなければ何もしない
+    // `speed` 個の整数サブステップを走らせ、早送りが数値的に安定するようにする
+    for (let i = 0; i < ui.speed; i++) g.update(dt);
+  }
+  ui.update(g);
+  // ティップオフでボールが投げられ、しばらくしたら放送アングルを90°回す(ベンチを奥・やや見下ろし)。
+  // ティップオフが終わってライブになってから一定時間で一度だけ発火。
+  if (!intro!.active() && !camTipDone) {
+    if (camTipArmT < 0) { if (g.mode !== "tipoff") camTipArmT = 0; }
+    else { camTipArmT += dt; if (camTipArmT >= 1.0) { camera.orientBroadcast(); camTipDone = true; } }
+  }
+  camera.update(dt, g.ball.pos.x, g.ball.pos.z, g.ball.pos.y, g.camFollowBall, g.attackGoalZ);
+  // クラブウィザードのユニフォームプレビューが出ている間は、専用のプレビューシーン
+  // (孤立した選手、コートなし)だけをレンダリングする。それ以外はメインシーン。
+  if (previewActive && previewScene) previewScene.render();
+  else { flushUniforms(); scene.render(); }
+});
+
+window.addEventListener("resize", () => engine.resize());
+
+// ---- 画面を起こしたままにする(モバイル) -----------------------------------
+// Screen Wake Lock で表示中はディスプレイを点けたままにする。タブが隠れると解放される
+// ので可視化・ポインタダウンで再要求。非対応環境では何もしない。
+type WakeSentinel = { release: () => Promise<void>; addEventListener: (t: "release", cb: () => void) => void };
+let wakeLock: WakeSentinel | null = null;
+async function requestWakeLock(): Promise<void> {
+  const wl = (navigator as unknown as { wakeLock?: { request: (t: "screen") => Promise<WakeSentinel> } }).wakeLock;
+  if (!wl || wakeLock || document.visibilityState !== "visible") return;
+  try {
+    wakeLock = await wl.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {
+    wakeLock = null;   // まだ操作なし / 非対応 — タップか可視状態の変化で再試行する
+  }
+}
+void requestWakeLock();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void requestWakeLock();
+});
+window.addEventListener("pointerdown", () => { void requestWakeLock(); }, { passive: true });
