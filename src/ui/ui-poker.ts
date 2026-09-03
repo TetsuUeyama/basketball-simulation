@@ -36,14 +36,17 @@ declare module "./ui" {
 
 const ATTR_SHORT = new Map(ATTR_META.map((m) => [m.key, m.label]));
 
-/** 盤上の立ち位置（%）。上がゴール側。 */
-const SPOT: { x: number; y: number }[] = [
-  { x: 50, y: 74 },   // 0 PG — トップ
-  { x: 85, y: 56 },   // 1 SG — 右ウイング
-  { x: 15, y: 56 },   // 2 SF — 左ウイング
-  { x: 31, y: 29 },   // 3 PF — 左ローポスト
-  { x: 63, y: 25 },   // 4 C  — ゴール下
+// フルコートの盤（横長）の立ち位置（%）。左半分が相手、右半分が自分。
+/** 自分の先発5人（右のリムを攻める並び）。 */
+const OWN_SPOT: { x: number; y: number }[] = [
+  { x: 60, y: 50 },   // 0 PG — トップ
+  { x: 71, y: 16 },   // 1 SG — 上のウイング
+  { x: 71, y: 84 },   // 2 SF — 下のウイング
+  { x: 84, y: 26 },   // 3 PF — ローポスト
+  { x: 87, y: 68 },   // 4 C  — ゴール下
 ];
+/** 相手の先発5人（左右を反転させた鏡像）。 */
+const OPP_SPOT: { x: number; y: number }[] = OWN_SPOT.map((s) => ({ x: 100 - s.x, y: s.y }));
 
 /** 試合の頭で新しいポーカーを始める。`then` はラウンド1が終わったら一度だけ走る。 */
 UI.prototype.beginPoker = function(then?: () => void): void {
@@ -103,15 +106,37 @@ UI.prototype.renderPoker = function(): void {
   const opp = 1 - user;
   const placed = this.pokerTargets;
 
-  // ---- 相手（上段）: 伏せた手札 と、妨害を置ける相手の先発5人 ----
+  // ---- 相手の伏せた手札（最上段） ----
   p.appendChild(opponentArea(this, m, opp));
 
-  // ---- 現在の役 ----
+  // ---- コート盤: 左半分が相手の先発5人（妨害）/ 右半分が自分の先発5人（強化） ----
+  p.appendChild(courtBoard(this, m, user));
+
+  // ---- 手札（置いていない札だけ）----
+  const handRow = document.createElement("div");
+  Object.assign(handRow.style, {
+    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap", minHeight: "76px",
+  } as Partial<CSSStyleDeclaration>);
+  const hand = m.teams[user].hand;
+  hand.forEach((card, i) => {
+    if (placed.has(i)) return;
+    handRow.appendChild(handCard(this, card, i));
+  });
+  p.appendChild(handRow);
+
+  // ---- 控え8人（手札の下） ----
+  p.appendChild(benchGrid(this, m, user));
+
+  // ---- 現在の役 + ボタン ----
+  const btns = document.createElement("div");
+  Object.assign(btns.style, {
+    display: "flex", gap: "12px", justifyContent: "center", alignItems: "center", flexWrap: "wrap",
+  } as Partial<CSSStyleDeclaration>);
   const rank = m.peek(user);
   const rankRow = document.createElement("div");
   Object.assign(rankRow.style, {
-    display: "flex", alignItems: "baseline", gap: "10px", justifyContent: "center",
-    fontSize: "clamp(15px,3.8vw,21px)", fontWeight: "800", letterSpacing: "1px",
+    display: "flex", alignItems: "baseline", gap: "8px",
+    fontSize: "clamp(14px,3.4vw,19px)", fontWeight: "800", letterSpacing: "1px",
     color: colorOf(user),
   } as Partial<CSSStyleDeclaration>);
   const mine = document.createElement("span");
@@ -127,26 +152,7 @@ UI.prototype.renderPoker = function(): void {
     Object.assign(theirs.style, { color: colorOf(opp) });
     rankRow.append(vs, theirs);
   }
-  p.appendChild(rankRow);
-
-  // ---- コートに見立てた盤 + 控え ----
-  p.appendChild(boardArea(this, m, user));
-
-  // ---- 手札（置いていない札だけ）----
-  const handRow = document.createElement("div");
-  Object.assign(handRow.style, {
-    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap", minHeight: "76px",
-  } as Partial<CSSStyleDeclaration>);
-  const hand = m.teams[user].hand;
-  hand.forEach((card, i) => {
-    if (placed.has(i)) return;
-    handRow.appendChild(handCard(this, card, i));
-  });
-  p.appendChild(handRow);
-
-  // ---- ボタン ----
-  const btns = document.createElement("div");
-  Object.assign(btns.style, { display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" });
+  btns.appendChild(rankRow);
   const accent = (b: HTMLButtonElement): void => {
     Object.assign(b.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
   };
@@ -244,12 +250,6 @@ function opponentArea(ui: UI, m: PokerMatch, opp: number): HTMLDivElement {
   }
   area.appendChild(hand);
 
-  const row = document.createElement("div");
-  Object.assign(row.style, {
-    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap",
-  } as Partial<CSSStyleDeclaration>);
-  for (let i = 0; i < STARTERS; i++) row.appendChild(playerCell(ui, m, opp, i, 30));
-  area.appendChild(row);
   return area;
 }
 
@@ -269,45 +269,40 @@ function cardBack(w: number, h: number, team: number): HTMLDivElement {
  * ハーフコートの盤（先発5人が立ち位置に並ぶ）と、その横に控え8人。
  * 13人の誰にでも札を置ける。狭い画面では控えが盤の下へ回り込む。
  */
-function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
-  const narrow = window.innerWidth < 660;
-
-  const area = document.createElement("div");
-  Object.assign(area.style, {
-    display: "flex", gap: "10px", alignItems: "center", justifyContent: "center",
-    flexWrap: narrow ? "wrap" : "nowrap", width: "100%",
-  } as Partial<CSSStyleDeclaration>);
-
+function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
+  const opp = 1 - team;
   const board = document.createElement("div");
   Object.assign(board.style, {
-    position: "relative", width: narrow ? "min(330px, 84vw)" : "330px", aspectRatio: "15 / 14",
+    position: "relative", width: "min(470px, 94vw)", aspectRatio: "28 / 15",
     background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
     border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px",
-    flexShrink: "0",
+    flexShrink: "0", margin: "2px 0 14px",
   } as Partial<CSSStyleDeclaration>);
   board.innerHTML = COURT_SVG;
-  for (let i = 0; i < STARTERS; i++) {
-    const cell = playerCell(ui, m, team, i, 40);
+  const put = (t: number, i: number, spot: { x: number; y: number }): void => {
+    const cell = playerCell(ui, m, t, i, 34);
     Object.assign(cell.style, {
-      position: "absolute", left: `${SPOT[i].x}%`, top: `${SPOT[i].y}%`,
+      position: "absolute", left: `${spot.x}%`, top: `${spot.y}%`,
       transform: "translate(-50%,-50%)",
     } as Partial<CSSStyleDeclaration>);
     board.appendChild(cell);
-  }
-  area.appendChild(board);
+  };
+  for (let i = 0; i < STARTERS; i++) put(opp, i, OPP_SPOT[i]);   // 相手は左半分
+  for (let i = 0; i < STARTERS; i++) put(team, i, OWN_SPOT[i]);  // 自分は右半分
+  return board;
+}
 
-  // コート横のベンチ。広い画面は2列×4段、狭い画面は盤の下に4列×2段。
+/** 控え8人。手札の下に4列×2段で並べる。 */
+function benchGrid(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
   const bench = document.createElement("div");
   Object.assign(bench.style, {
-    display: "grid", gridTemplateColumns: `repeat(${narrow ? 4 : 2}, auto)`,
-    gap: "6px 8px", justifyContent: "center", alignContent: "center",
+    display: "grid", gridTemplateColumns: "repeat(4, auto)", gap: "4px 10px",
+    justifyContent: "center", alignContent: "center",
     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
-    borderRadius: "10px", padding: "8px", flexShrink: "0",
+    borderRadius: "10px", padding: "6px 8px",
   } as Partial<CSSStyleDeclaration>);
-  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 32));
-  area.appendChild(bench);
-
-  return area;
+  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 30));
+  return bench;
 }
 
 /** 置いた札の1行ぶんの高さ。札が無くても同じ高さを空けておく。 */
@@ -522,17 +517,23 @@ function cardFace(card: Card, w: number, h: number): HTMLDivElement {
   return el;
 }
 
-// ハーフコートのライン（15m×14m を 150×140 で描く。上がゴール側）。
+// フルコートのライン（28m×15m を 280×150 で描く。横長、左右に1つずつリム）。
 const COURT_SVG = `
-<svg viewBox="0 0 150 140" preserveAspectRatio="none"
+<svg viewBox="0 0 280 150" preserveAspectRatio="none"
      style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
-  <g fill="none" stroke="rgba(255,255,255,0.42)" stroke-width="1.2">
-    <rect x="2" y="2" width="146" height="136"/>
-    <rect x="50.5" y="2" width="49" height="56"/>
-    <circle cx="75" cy="58" r="18"/>
-    <circle cx="75" cy="13" r="4.5"/>
-    <line x1="66" y1="6" x2="84" y2="6"/>
-    <path d="M 8,2 L 8,32 A 70 70 0 0 0 142,32 L 142,2"/>
-    <line x1="2" y1="138" x2="148" y2="138" stroke-width="2"/>
+  <g fill="none" stroke="rgba(255,255,255,0.40)" stroke-width="1.4">
+    <rect x="2" y="2" width="276" height="146"/>
+    <line x1="140" y1="2" x2="140" y2="148"/>
+    <circle cx="140" cy="75" r="18"/>
+    <rect x="2" y="50.5" width="58" height="49"/>
+    <rect x="220" y="50.5" width="58" height="49"/>
+    <circle cx="60" cy="75" r="18"/>
+    <circle cx="220" cy="75" r="18"/>
+    <circle cx="15" cy="75" r="4.5"/>
+    <circle cx="265" cy="75" r="4.5"/>
+    <line x1="8" y1="66" x2="8" y2="84"/>
+    <line x1="272" y1="66" x2="272" y2="84"/>
+    <path d="M 2,9 L 30,9 A 70 70 0 0 1 30,141 L 2,141"/>
+    <path d="M 278,9 L 250,9 A 70 70 0 0 0 250,141 L 278,141"/>
   </g>
 </svg>`;
