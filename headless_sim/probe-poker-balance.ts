@@ -6,6 +6,7 @@
 //   MODE=both   両チームがポーカー（実プレイの既定）
 //   MODE=one    team0 だけがポーカー（強化の総量を測る）
 //   MODE=max    team0 が毎回ロイヤルストレートフラッシュ（上振れの上限）
+//   MODE=dump   team0 が毎ラウンド手札5枚を全部捨てる（個人強化に全振りする打ち方）
 // 実行:
 //   npx esbuild headless_sim/probe-poker-balance.ts --bundle --platform=node --format=esm \
 //     --outfile=headless_sim/probe-poker-balance.mjs && MODE=one GAMES=200 node headless_sim/probe-poker-balance.mjs
@@ -19,7 +20,7 @@ import { ROSTER, ROSTER_SIZE, clubTeam } from "../src/roster";
 import { CLUBS } from "../src/data/club/clubdb";
 import { ATTR_META, type Attributes, type PlayerDef } from "../src/attributes";
 import { PokerMatch, POKER_ROUNDS } from "../src/poker/state";
-import { cpuExchange, cpuWantsConfirm } from "../src/poker/ai";
+import { cpuExchange, cpuWantsConfirm, pickTarget } from "../src/poker/ai";
 import type { Card } from "../src/poker/cards";
 
 const engine = new NullEngine();
@@ -56,6 +57,15 @@ function setupPoker(seed: number): PokerMatch | null {
 
 /** ラウンドを CPU で解決する（UI の代わり）。 */
 function driveRound(m: PokerMatch, roster: PlayerDef[][]): void {
+  if (MODE === "dump") {
+    // 役を捨てて個人強化に全振りする打ち方。役は最終ラウンドで自動確定する。
+    const hand = m.teams[0].hand;
+    const picks = hand.map((_, i) => i);
+    m.exchange(0, picks, picks.map((i) => pickTarget(hand[i], roster[0])));
+    cpuExchange(m, 1, roster);
+    m.carryOver();
+    return;
+  }
   if (MODE === "max") {
     // 上振れの上限を見るので交換せず、最初のラウンドで確定する
     m.confirm();

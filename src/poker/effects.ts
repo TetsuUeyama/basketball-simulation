@@ -50,8 +50,8 @@ export const SUIT_GROUP: Record<Suit, SuitGroup> = {
 };
 
 // ---- 調整ノブ -------------------------------------------------------------
-/** 1回の交換で捨てられる最大枚数（＝1回に得られる個人強化の上限）。 */
-export const MAX_DISCARDS = 3;
+/** 1回の交換で捨てられる最大枚数（＝1回に得られる個人強化の上限）。5 = 手札を全部捨てられる。 */
+export const MAX_DISCARDS = 5;
 /** 捨て札1枚の基礎量: A / 絵札 / 数札。 */
 export const DISCARD_BASE = { ace: 5, face: 3, number: 2 };
 /** 選手適性の倍率レンジ。能力0で LOW 倍、能力100で HIGH 倍。 */

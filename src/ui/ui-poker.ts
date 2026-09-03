@@ -37,7 +37,7 @@ const ATTR_SHORT = new Map(ATTR_META.map((m) => [m.key, m.label]));
 
 /** 盤上の立ち位置（%）。上がゴール側。 */
 const SPOT: { x: number; y: number }[] = [
-  { x: 50, y: 79 },   // 0 PG — トップ
+  { x: 50, y: 74 },   // 0 PG — トップ
   { x: 85, y: 56 },   // 1 SG — 右ウイング
   { x: 15, y: 56 },   // 2 SF — 左ウイング
   { x: 31, y: 29 },   // 3 PF — 左ローポスト
@@ -245,12 +245,12 @@ function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
   Object.assign(board.style, {
     position: "relative", width: narrow ? "min(330px, 84vw)" : "330px", aspectRatio: "15 / 14",
     background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
-    border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px", overflow: "hidden",
+    border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px",
     flexShrink: "0",
   } as Partial<CSSStyleDeclaration>);
   board.innerHTML = COURT_SVG;
   for (let i = 0; i < STARTERS; i++) {
-    const cell = playerCell(ui, m, team, i, 40);
+    const cell = playerCell(ui, m, team, i, 40, SPOT[i].x >= 55);
     Object.assign(cell.style, {
       position: "absolute", left: `${SPOT[i].x}%`, top: `${SPOT[i].y}%`,
       transform: "translate(-50%,-50%)",
@@ -267,16 +267,24 @@ function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "10px", padding: "8px", flexShrink: "0",
   } as Partial<CSSStyleDeclaration>);
-  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 32));
+  const cols = narrow ? 4 : 2;
+  for (let i = STARTERS; i < ROSTER_SIZE; i++) {
+    bench.appendChild(playerCell(ui, m, team, i, 32, (i - STARTERS) % cols >= cols / 2));
+  }
   area.appendChild(bench);
 
   return area;
 }
 
-/** 札を落とせる選手ひとり分（先発も控えも同じ作り）。 */
-function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number): HTMLDivElement {
+/**
+ * 札を落とせる選手ひとり分（先発も控えも同じ作り）。
+ * `flip` = 置いた札をアイコンの左横に出す（右寄りに居る選手用）。
+ */
+function playerCell(ui: UI, m: PokerMatch, team: number, idx: number,
+                    size: number, flip = false): HTMLDivElement {
   const cell = document.createElement("div");
   Object.assign(cell.style, {
+    position: "relative",   // 置かれた札を浮かせる基準（箱の大きさを変えないため）
     display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
     pointerEvents: "auto", cursor: "pointer",
   } as Partial<CSSStyleDeclaration>);
@@ -307,6 +315,20 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
   } as Partial<CSSStyleDeclaration>);
   cell.appendChild(name);
 
+  // 置かれた札はアイコンの真横に「浮かせて」出す。セルの箱を大きくしないので札を
+  // 置いてもアイコンはずれず、下に積まないので他の選手も隠れない。
+  // 右寄りの選手は左横へ反転させ、盤やベンチ枠からはみ出しにくくする。
+  const chips = document.createElement("div");
+  Object.assign(chips.style, {
+    position: "absolute", top: `${size / 2}px`,
+    ...(flip ? { right: "100%", marginRight: "3px", alignItems: "flex-end" }
+             : { left: "100%", marginLeft: "3px", alignItems: "flex-start" }),
+    transform: "translateY(-50%)",
+    display: "flex", flexDirection: "column", gap: "2px", width: "max-content",
+    zIndex: "3", pointerEvents: "none",
+  } as Partial<CSSStyleDeclaration>);
+  cell.appendChild(chips);
+
   // この選手に置かれている札とその効果
   for (const [handIdx, target] of ui.pokerTargets) {
     if (target !== idx) continue;
@@ -314,9 +336,9 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
     const eff = discardEffect(card, def.attr);
     const chip = document.createElement("div");
     Object.assign(chip.style, {
-      display: "flex", alignItems: "center", gap: "4px", pointerEvents: "auto",
+      display: "flex", alignItems: "center", gap: "3px", pointerEvents: "auto",
       background: "rgba(12,15,22,0.92)", border: "1px solid rgba(255,255,255,0.3)",
-      borderRadius: "7px", padding: "1px 5px", fontSize: "10px", fontWeight: "800",
+      borderRadius: "6px", padding: "0 4px", fontSize: "8.5px", fontWeight: "800",
     } as Partial<CSSStyleDeclaration>);
     const mark = document.createElement("span");
     mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
@@ -330,7 +352,7 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
       ui.pokerTargets.delete(handIdx);
       ui.renderPoker();
     };
-    cell.appendChild(chip);
+    chips.appendChild(chip);
   }
 
   if (ui.pokerStage === "exchange") {
@@ -373,29 +395,42 @@ function placeCard(ui: UI, handIdx: number, target: number): void {
 /** カードのドラッグ。指/カーソルに追従する影を出し、離した位置の選手へ置く。 */
 function beginCardDrag(ui: UI, card: Card, i: number, ev: PointerEvent): void {
   if (ev.button !== undefined && ev.button !== 0) return;
-  const ghost = cardFace(card, 52, 74);
-  Object.assign(ghost.style, {
-    position: "fixed", zIndex: "95", pointerEvents: "none", opacity: "0.92",
-    transform: "translate(-50%,-50%) rotate(-4deg)",
-  } as Partial<CSSStyleDeclaration>);
-  ghost.style.left = `${ev.clientX}px`;
-  ghost.style.top = `${ev.clientY}px`;
-  document.body.appendChild(ghost);
+  // 影は小さめ（指やカーソルの下を隠さない大きさ）。
+  const at = (x: number, y: number): string =>
+    `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) translate(-50%,-50%) rotate(-4deg)`;
+  // 影は最初に動いた時に作る（ただのタップでちらつかせない）。
+  let ghost: HTMLDivElement | null = null;
+  const showGhost = (x: number, y: number): void => {
+    if (ghost) return;
+    ghost = cardFace(card, 34, 48);
+    Object.assign(ghost.style, {
+      position: "fixed", left: "0", top: "0", zIndex: "95", pointerEvents: "none",
+      opacity: "0.95", willChange: "transform", transform: at(x, y),
+    } as Partial<CSSStyleDeclaration>);
+    document.body.appendChild(ghost);
+  };
+  // ポインタを捕捉して、指が要素の外へ出ても move が途切れないようにする。
+  const src = ev.currentTarget as Element | null;
+  try { src?.setPointerCapture(ev.pointerId); } catch { /* 未対応環境では無視 */ }
+
+  // ドロップ先の矩形はドラッグ中に動かないので、開始時に一度だけ測る
+  // （毎フレームの getBoundingClientRect はレイアウトを起こして追従を鈍らせる）。
+  const spots = ui.pokerSpots.map((s) => ({ ...s, r: s.el.getBoundingClientRect() }));
   let moved = false;
   let hot: HTMLElement | null = null;
 
   const hit = (x: number, y: number): { idx: number; el: HTMLElement } | null => {
-    for (const s of ui.pokerSpots) {
-      const r = s.el.getBoundingClientRect();
+    for (const s of spots) {
       // 落としやすいように判定を少し広く取る
-      if (x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12) return s;
+      if (x >= s.r.left - 12 && x <= s.r.right + 12 && y >= s.r.top - 12 && y <= s.r.bottom + 12) return s;
     }
     return null;
   };
   const move = (e: PointerEvent): void => {
     moved = true;
-    ghost.style.left = `${e.clientX}px`;
-    ghost.style.top = `${e.clientY}px`;
+    showGhost(e.clientX, e.clientY);
+    // transform だけを触る（再レイアウトが起きないので指に遅れずついてくる）
+    ghost!.style.transform = at(e.clientX, e.clientY);
     const s = hit(e.clientX, e.clientY);
     if (hot && hot !== s?.el) hot.style.filter = "";
     hot = s ? s.el : null;
@@ -404,7 +439,8 @@ function beginCardDrag(ui: UI, card: Card, i: number, ev: PointerEvent): void {
   const cleanup = (): void => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointercancel", cancel);
-    ghost.remove();
+    try { src?.releasePointerCapture(ev.pointerId); } catch { /* 既に解放済み */ }
+    ghost?.remove();
     if (hot) hot.style.filter = "";
   };
   const cancel = (): void => { cleanup(); ui.renderPoker(); };
