@@ -61,9 +61,8 @@ function driveRound(m: PokerMatch, roster: PlayerDef[][]): void {
     // 役を捨てて個人強化に全振りする打ち方。役は最終ラウンドで自動確定する。
     const hand = m.teams[0].hand;
     const picks = hand.map((_, i) => i);
-    m.exchange(0, picks, picks.map((i) => pickTarget(hand[i], roster[0])));
-    cpuExchange(m, 1, roster);
-    m.carryOver();
+    m.exchange(0, picks, picks.map((i) => pickTarget(hand[i], roster, 0)));
+    m.carryOver();   // team1 は打たない（team0 だけの効果を測る）
     return;
   }
   if (MODE === "max") {
@@ -72,7 +71,9 @@ function driveRound(m: PokerMatch, roster: PlayerDef[][]): void {
     return;
   }
   cpuExchange(m, 0, roster);
-  cpuExchange(m, 1, roster);
+  // "one"/"dump" は team0 だけの効果を測る条件なので team1 は打たせない。
+  // （妨害が入って以降、team1 に打たせると team0 の能力値へ直接効いてしまう）
+  if (MODE === "both") cpuExchange(m, 1, roster);
   if (cpuWantsConfirm(m)) m.confirm();
   else m.carryOver();
 }

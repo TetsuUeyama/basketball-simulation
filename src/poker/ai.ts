@@ -3,8 +3,8 @@ import type { PlayerDef } from "../attributes";
 import { STARTERS } from "../roster";
 import type { Card } from "./cards";
 import { evalHand } from "./hands";
-import { effectKey, MAX_DISCARDS } from "./effects";
-import type { PokerMatch } from "./state";
+import { discardEffect, hinderEffect, MAX_DISCARDS } from "./effects";
+import type { DiscardTarget, PokerMatch } from "./state";
 
 /** 手札から「残す札」の添字を選ぶ。標準的なドローポーカーの定石。 */
 export function keepIndexes(hand: Card[]): number[] {
@@ -46,14 +46,24 @@ export function discardIndexes(hand: Card[]): number[] {
 }
 
 /**
- * その捨て札の強化を誰に付けるか。伸びしろではなく長所を伸ばす側に賭ける
- * （`discardEffect` はその能力が高い選手ほど大きく乗るため）。先発5人から選ぶ。
+ * その捨て札を誰に置くか。「自軍の強化」と「相手の妨害」を同じ物差し（動く点数）で
+ * 比べて大きい方を選ぶ。同点なら自軍を選ぶ。どちらも先発5人が対象。
+ * 伸びしろではなく長所を伸ばす／相手の長所を削る側に賭ける（効果はその能力が
+ * 高い選手ほど大きいため）。
  */
-export function pickTarget(card: Card, roster: PlayerDef[]): number {
-  const key = effectKey(card);
-  let best = 0;
-  for (let i = 1; i < Math.min(STARTERS, roster.length); i++) {
-    if (roster[i].attr[key] > roster[best].attr[key]) best = i;
+export function pickTarget(card: Card, roster: PlayerDef[][], team: number): DiscardTarget {
+  let best: DiscardTarget = { team, idx: 0 };
+  let bestVal = -Infinity;
+  const own = roster[team] ?? [];
+  for (let i = 0; i < Math.min(STARTERS, own.length); i++) {
+    const gain = discardEffect(card, own[i].attr).amount;
+    if (gain > bestVal) { bestVal = gain; best = { team, idx: i }; }
+  }
+  const oppTeam = 1 - team;
+  const opp = roster[oppTeam] ?? [];
+  for (let i = 0; i < Math.min(STARTERS, opp.length); i++) {
+    const loss = -hinderEffect(card, opp[i].attr).amount;
+    if (loss > bestVal) { bestVal = loss; best = { team: oppTeam, idx: i }; }
   }
   return best;
 }
@@ -63,7 +73,17 @@ export function cpuExchange(match: PokerMatch, team: number, roster: PlayerDef[]
   if (!match.canExchange(team)) return;
   const hand = match.teams[team].hand;
   const picks = discardIndexes(hand);
-  const targets = picks.map((i) => pickTarget(hand[i], roster[team]));
+  // 1人1枚。同じ相手/味方に重ならないよう、既に埋まった枠は次善へ回す
+  const used = new Set<string>();
+  const targets = picks.map((i) => {
+    const t = pickTarget(hand[i], roster, team);
+    let pick = t;
+    for (let k = 0; k < STARTERS && used.has(`${pick.team}:${pick.idx}`); k++) {
+      pick = { team: t.team, idx: (t.idx + k + 1) % STARTERS };
+    }
+    used.add(`${pick.team}:${pick.idx}`);
+    return pick;
+  });
   match.exchange(team, picks, targets);
 }
 

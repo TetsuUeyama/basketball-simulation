@@ -10,18 +10,24 @@ import { ATTR_META, type PlayerDef } from "../attributes";
 import { createRng, type Rng } from "../rng";
 import { cardLabel, draw, freshDeck, type Card } from "./cards";
 import { evalHand, type HandRank } from "./hands";
-import { addAttr, discardEffect, handEffects, handSummary, MAX_DISCARDS, type AttrKey } from "./effects";
+import { addAttr, discardEffect, handEffects, handSummary, hinderEffect, MAX_DISCARDS, type AttrKey } from "./effects";
 
 /** ラウンド数 = クォーター数。Q1開始前 .. Q4開始前。 */
 export const POKER_ROUNDS = 4;
 export const HAND_SIZE = 5;
 
-/** 実際に能力値へ乗った強化1件（試合後に巻き戻すために全て記録する）。 */
+/** 捨て札の置き先。自軍なら強化、相手なら妨害になる。 */
+export interface DiscardTarget {
+  team: number;
+  idx: number;    // ロスター番号
+}
+
+/** 実際に能力値へ乗った増減1件（試合後に巻き戻すために全て記録する）。 */
 export interface AppliedDelta {
   team: number;
   idx: number;          // ロスター番号
   key: AttrKey;
-  amount: number;       // 上限で切った後の実効量
+  amount: number;       // 上限/下限で切った後の実効量（妨害は負）
   source: "discard" | "hand";
 }
 
@@ -73,7 +79,7 @@ export class PokerMatch {
    * 「そのカードの強化を受け取る選手のロスター番号」。捨てた瞬間に個人強化が乗る。
    * 空配列を渡せば「交換しない」（このラウンドの権利は消費する）。
    */
-  exchange(team: number, rawPicks: number[], targets: number[]): AppliedDelta[] {
+  exchange(team: number, rawPicks: number[], targets: DiscardTarget[]): AppliedDelta[] {
     const st = this.teams[team];
     if (!this.canExchange(team)) return [];
     st.usedThisRound = true;
@@ -83,22 +89,25 @@ export class PokerMatch {
       st.exchanges++;
       // 大きい添字から抜いて、残す札の位置がずれないようにする
       const order = picks.slice().sort((a, b) => b - a);
-      const discarded: { card: Card; target: number }[] = [];
+      const discarded: { card: Card; target: DiscardTarget }[] = [];
       for (const i of order) {
         const card = st.hand[i];
         if (!card) continue;
-        discarded.push({ card, target: targets[picks.indexOf(i)] ?? 0 });
+        discarded.push({ card, target: targets[picks.indexOf(i)] ?? { team, idx: 0 } });
         st.hand.splice(i, 1);
       }
       for (const d of discarded) {
-        const def = this.roster[team][d.target];
+        const tg = d.target;
+        const def = this.roster[tg.team]?.[tg.idx];
         if (!def) continue;
-        const eff = discardEffect(d.card, def.attr);
+        // 自軍へ置けば強化、相手へ置けば妨害
+        const own = tg.team === team;
+        const eff = own ? discardEffect(d.card, def.attr) : hinderEffect(d.card, def.attr);
         const got = addAttr(def.attr, eff.key, eff.amount);
-        out.push({ team, idx: d.target, key: eff.key, amount: got, source: "discard" });
-        st.log.push(got > 0
-          ? `${cardLabel(d.card)} → ${def.name} の ${attrName(eff.key)} +${got}`
-          : `${cardLabel(d.card)} → ${def.name} は上限で伸びず`);
+        out.push({ team: tg.team, idx: tg.idx, key: eff.key, amount: got, source: "discard" });
+        st.log.push(got !== 0
+          ? `${cardLabel(d.card)} → ${own ? "" : "相手の "}${def.name} の ${attrName(eff.key)} ${got > 0 ? "+" : ""}${got}`
+          : `${cardLabel(d.card)} → ${def.name} は限界で動かず`);
       }
       // 引き直し（デッキが尽きたら切り直す）
       const need = HAND_SIZE - st.hand.length;

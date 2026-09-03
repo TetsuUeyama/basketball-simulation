@@ -56,6 +56,8 @@ export const MAX_DISCARDS = 5;
 export const DISCARD_BASE = { ace: 5, face: 3, number: 2 };
 /** 選手適性の倍率レンジ。能力0で LOW 倍、能力100で HIGH 倍。 */
 export const FIT_MULT = { low: 0.6, high: 1.4 };
+/** 妨害（相手選手を下げる）の効率。1.0 で自軍強化と同等。 */
+export const HINDER_SCALE = 0.8;
 /**
  * 役ごとのチーム強化。group=系統の各能力へ / all=全能力へ。tier(0..9)で引く。
  *
@@ -113,6 +115,18 @@ export function discardEffect(card: Card, attr: Attributes): AttrEffect {
   const raw = Math.max(1, Math.round(effectBase(card) * mult));
   const room = Math.max(0, ATTR_CAP - attr[key]);
   return { key, amount: Math.min(raw, room) };
+}
+
+/**
+ * 妨害: 相手選手へ置いたときの能力低下。自軍の強化より少し効率を落とす（`HINDER_SCALE`）。
+ * 強化と同じく「その能力が高い相手ほど大きく下がる」＝主力を潰しにいく手になる。
+ * 戻り値の amount は負。
+ */
+export function hinderEffect(card: Card, attr: Attributes): AttrEffect {
+  const key = effectKey(card);
+  const mult = FIT_MULT.low + (FIT_MULT.high - FIT_MULT.low) * rate(attr[key]);
+  const raw = Math.max(1, Math.round(effectBase(card) * mult * HINDER_SCALE));
+  return { key, amount: -Math.min(raw, Math.max(0, attr[key])) };
 }
 
 /** 役が確定したときにチーム全員へ乗る強化（1人ぶん）。 */

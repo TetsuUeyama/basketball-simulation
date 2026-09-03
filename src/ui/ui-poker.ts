@@ -9,9 +9,9 @@ import { POKER_OPTS } from "../config";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
 import type { Player } from "../objects/player/player";
-import { PokerMatch, POKER_ROUNDS } from "../poker/state";
+import { PokerMatch, POKER_ROUNDS, type DiscardTarget } from "../poker/state";
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
-import { discardEffect, MAX_DISCARDS } from "../poker/effects";
+import { discardEffect, hinderEffect, MAX_DISCARDS } from "../poker/effects";
 import { cpuExchange, cpuWantsConfirm } from "../poker/ai";
 import { UI, colorOf, INK } from "./ui";
 
@@ -19,12 +19,12 @@ declare module "./ui" {
   interface UI {
     pokerPanel?: HTMLDivElement;
     pokerStage?: "exchange" | "confirm" | "reveal";
-    /** 手札の添字 → 置いた先のロスター番号。置く＝捨てる。 */
-    pokerTargets: Map<number, number>;
+    /** 手札の添字 → 置いた先（自軍なら強化 / 相手なら妨害）。置く＝捨てる。 */
+    pokerTargets: Map<number, DiscardTarget>;
     /** タップ操作で選択中の手札（ドラッグしない環境用）。-1 = なし */
     pokerPicked: number;
-    /** 盤上の選手アイコン（ドロップ判定に使う）。 */
-    pokerSpots: { idx: number; el: HTMLElement }[];
+    /** 札を置ける選手アイコン（ドロップ判定に使う）。 */
+    pokerSpots: { target: DiscardTarget; el: HTMLElement }[];
     /** ラウンド1が終わったあとに一度だけ走らせる処理（選手紹介 → ティップオフ）。 */
     pokerThen: (() => void) | null;
     beginPoker(then?: () => void): void;
@@ -103,6 +103,9 @@ UI.prototype.renderPoker = function(): void {
   const opp = 1 - user;
   const placed = this.pokerTargets;
 
+  // ---- 相手（上段）: 伏せた手札 と、妨害を置ける相手の先発5人 ----
+  p.appendChild(opponentArea(this, m, opp));
+
   // ---- 現在の役 ----
   const rank = m.peek(user);
   const rankRow = document.createElement("div");
@@ -154,7 +157,7 @@ UI.prototype.renderPoker = function(): void {
     if (n) accent(ex);
     ex.onclick = () => {
       const picks = [...placed.keys()].sort((a, b) => a - b);
-      const targets = picks.map((i) => placed.get(i)!);
+      const targets = picks.map((i) => placed.get(i)!);   // DiscardTarget（自軍/相手）
       m.exchange(user, picks, targets);
       g.applyRoster();                 // 能力値が動いたので派生値（走速など）を作り直す
       this.pokerTargets = new Map();
@@ -186,14 +189,6 @@ UI.prototype.renderPoker = function(): void {
     btns.appendChild(go);
   }
   p.appendChild(btns);
-
-  // 確定後は相手の手札も見せる
-  if (this.pokerStage === "reveal") {
-    const oppHand = document.createElement("div");
-    Object.assign(oppHand.style, { display: "flex", gap: "6px", justifyContent: "center", flexWrap: "wrap" });
-    for (const c of m.teams[opp].hand) oppHand.appendChild(cardFace(c, 32, 45));
-    p.appendChild(oppHand);
-  }
 };
 
 /** ラウンドを閉じて試合へ戻す。 */
@@ -227,6 +222,47 @@ function cpuHomeDecides(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void
     m.carryOver();
     ui.finishPokerRound();
   }
+}
+
+/**
+ * 相手の段（画面の一番上）。伏せた手札5枚と、妨害を置ける相手の先発5人。
+ * 役が確定したら伏せ札は表になる。
+ */
+function opponentArea(ui: UI, m: PokerMatch, opp: number): HTMLDivElement {
+  const area = document.createElement("div");
+  Object.assign(area.style, {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: "6px",
+    width: "100%", paddingBottom: "8px",
+    borderBottom: "1px solid rgba(255,255,255,0.14)",
+  } as Partial<CSSStyleDeclaration>);
+
+  const hand = document.createElement("div");
+  Object.assign(hand.style, { display: "flex", gap: "5px", justifyContent: "center" } as Partial<CSSStyleDeclaration>);
+  const revealed = m.teams[opp].locked;
+  for (const c of m.teams[opp].hand) {
+    hand.appendChild(revealed ? cardFace(c, 30, 42) : cardBack(30, 42, opp));
+  }
+  area.appendChild(hand);
+
+  const row = document.createElement("div");
+  Object.assign(row.style, {
+    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap",
+  } as Partial<CSSStyleDeclaration>);
+  for (let i = 0; i < STARTERS; i++) row.appendChild(playerCell(ui, m, opp, i, 30));
+  area.appendChild(row);
+  return area;
+}
+
+/** 伏せた札。相手チームカラーの裏模様。 */
+function cardBack(w: number, h: number, team: number): HTMLDivElement {
+  const el = document.createElement("div");
+  const c = colorOf(team);
+  Object.assign(el.style, {
+    width: `${w}px`, height: `${h}px`, borderRadius: "6px", flexShrink: "0",
+    background: `repeating-linear-gradient(45deg, ${c} 0 4px, rgba(12,15,22,0.9) 4px 8px)`,
+    border: "1px solid rgba(255,255,255,0.35)", boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+  } as Partial<CSSStyleDeclaration>);
+  return el;
 }
 
 /**
@@ -277,8 +313,13 @@ function boardArea(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
 /** 置いた札の1行ぶんの高さ。札が無くても同じ高さを空けておく。 */
 const CHIP_H = 13;
 
-/** 札を落とせる選手ひとり分（先発も控えも同じ作り）。 */
+/**
+ * 札を落とせる選手ひとり分（先発・控え・相手選手すべて同じ作り）。
+ * `team` が操作中のチームなら強化、相手チームなら妨害になる。
+ */
 function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number): HTMLDivElement {
+  const user = POKER_OPTS.userTeam ?? 0;
+  const own = team === user;
   const cell = document.createElement("div");
   Object.assign(cell.style, {
     display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
@@ -320,11 +361,11 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
   } as Partial<CSSStyleDeclaration>);
   cell.appendChild(slot);
 
-  // この選手に置かれている札とその効果（1人1枚）
+  // この選手に置かれている札とその効果（1人1枚）。自軍なら強化、相手なら妨害。
   for (const [handIdx, target] of ui.pokerTargets) {
-    if (target !== idx) continue;
-    const card = m.teams[team].hand[handIdx];
-    const eff = discardEffect(card, def.attr);
+    if (target.team !== team || target.idx !== idx) continue;
+    const card = m.teams[user].hand[handIdx];
+    const eff = own ? discardEffect(card, def.attr) : hinderEffect(card, def.attr);
     const chip = document.createElement("div");
     Object.assign(chip.style, {
       display: "flex", alignItems: "center", gap: "3px", pointerEvents: "auto",
@@ -336,8 +377,10 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
     mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
     mark.style.color = SUIT_RED[card.suit] ? "#ff6b72" : "#e6e9f0";
     const gain = document.createElement("span");
-    gain.textContent = eff.amount > 0 ? `${ATTR_SHORT.get(eff.key) ?? ""}+${eff.amount}` : "上限";
-    gain.style.color = "rgb(120,225,140)";
+    const label = ATTR_SHORT.get(eff.key) ?? "";
+    gain.textContent = eff.amount === 0 ? "限界"
+      : eff.amount > 0 ? `${label}+${eff.amount}` : `${label}${eff.amount}`;
+    gain.style.color = eff.amount < 0 ? "rgb(255,120,120)" : "rgb(120,225,140)";
     chip.append(mark, gain);
     chip.onclick = (e) => {            // 置いた札はタップで手札へ戻す
       e.stopPropagation();
@@ -348,10 +391,11 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
   }
 
   if (ui.pokerStage === "exchange") {
-    ui.pokerSpots.push({ idx, el: cell });
+    const target: DiscardTarget = { team, idx };
+    ui.pokerSpots.push({ target, el: cell });
     cell.onclick = () => {             // タップ操作: 札を選んでから選手を叩く
       if (ui.pokerPicked < 0) return;
-      placeCard(ui, ui.pokerPicked, idx);
+      placeCard(ui, ui.pokerPicked, target);
       ui.pokerPicked = -1;
       ui.renderPoker();
     };
@@ -382,9 +426,9 @@ function handCard(ui: UI, card: Card, i: number): HTMLDivElement {
  * 札を選手へ置く（＝捨てて強化する予約）。**1人1枚**なので、既にその選手へ置いてある
  * 札は手札へ戻して置き換える。全体の枚数上限に達していたら何もしない。
  */
-function placeCard(ui: UI, handIdx: number, target: number): void {
+function placeCard(ui: UI, handIdx: number, target: DiscardTarget): void {
   for (const [other, t] of ui.pokerTargets) {
-    if (t === target && other !== handIdx) ui.pokerTargets.delete(other);
+    if (t.team === target.team && t.idx === target.idx && other !== handIdx) ui.pokerTargets.delete(other);
   }
   if (!ui.pokerTargets.has(handIdx) && ui.pokerTargets.size >= MAX_DISCARDS) return;
   ui.pokerTargets.set(handIdx, target);
@@ -417,7 +461,7 @@ function beginCardDrag(ui: UI, card: Card, i: number, ev: PointerEvent): void {
   let moved = false;
   let hot: HTMLElement | null = null;
 
-  const hit = (x: number, y: number): { idx: number; el: HTMLElement } | null => {
+  const hit = (x: number, y: number): { target: DiscardTarget; el: HTMLElement } | null => {
     for (const s of spots) {
       // 落としやすいように判定を少し広く取る
       if (x >= s.r.left - 12 && x <= s.r.right + 12 && y >= s.r.top - 12 && y <= s.r.bottom + 12) return s;
@@ -446,7 +490,7 @@ function beginCardDrag(ui: UI, card: Card, i: number, ev: PointerEvent): void {
     const s = hit(e.clientX, e.clientY);
     cleanup();
     if (s) {
-      placeCard(ui, i, s.idx);
+      placeCard(ui, i, s.target);
       ui.pokerPicked = -1;
       ui.renderPoker();
     } else if (moved) {
