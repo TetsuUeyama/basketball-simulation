@@ -148,13 +148,20 @@ ui.onUniformPreview = (cfg) => {
 let camTipDone = true;
 let camTipArmT = -1;
 
-ui.onStart = () => {
+// チーム決定直後 — コートに26人を並べる。ここまでで一度止め、ポーカーの1手目を挟む。
+ui.onPrepare = () => {
   buildWorld();
   if (!game) return;
   game.applyRoster();
   flushUniforms();         // 持ち越していた着替えをここで確定させる
   purgeVoxelPrototypes(scene);
   game.reset();            // 選手はティップオフの位置 / ベンチの座席につく
+};
+
+// ポーカーの1手目が終わったあと — 選手紹介のツアー、そしてティップオフ。
+ui.onStart = () => {
+  if (!game) return;
+  game.applyRoster();      // ポーカーで動いた能力値を派生値へ反映
   intro?.begin();
   camera.cancelAutoAngle();
   camTipDone = false; camTipArmT = -1;   // 新しい試合 → ティップオフ後の自動アングルを予約

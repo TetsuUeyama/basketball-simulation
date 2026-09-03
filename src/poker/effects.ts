@@ -56,18 +56,24 @@ export const MAX_DISCARDS = 3;
 export const DISCARD_BASE = { ace: 5, face: 3, number: 2 };
 /** 選手適性の倍率レンジ。能力0で LOW 倍、能力100で HIGH 倍。 */
 export const FIT_MULT = { low: 0.6, high: 1.4 };
-/** 役ごとのチーム強化。group=系統の各能力へ / all=全能力へ。tier(0..9)で引く。 */
+/**
+ * 役ごとのチーム強化。group=系統の各能力へ / all=全能力へ。tier(0..9)で引く。
+ *
+ * ⚠️ `all` は25能力×13人に乗るので `group`(4〜5能力)の5倍効く。初版は上位役に `all` を
+ * 積んでいたが、実測でロイヤル固定の勝率が 75%（基準40%）まで跳ねたため、`all` を外して
+ * 系統への集中に振り直した。数字の根拠は work-record.md の実測表を参照。
+ */
 export const HAND_BUFF: { group: number; all: number }[] = [
-  { group: 0, all: 0 },   // 0 ハイカード — 役なし
-  { group: 1, all: 0 },   // 1 ワンペア
-  { group: 2, all: 0 },   // 2 ツーペア
-  { group: 2, all: 1 },   // 3 スリーカード
-  { group: 1, all: 2 },   // 4 ストレート
-  { group: 3, all: 1 },   // 5 フラッシュ
-  { group: 3, all: 2 },   // 6 フルハウス
-  { group: 4, all: 2 },   // 7 フォーカード
-  { group: 5, all: 3 },   // 8 ストレートフラッシュ
-  { group: 6, all: 4 },   // 9 ロイヤルストレートフラッシュ
+  { group: 0, all: 0 },    // 0 ハイカード — 役なし
+  { group: 2, all: 0 },    // 1 ワンペア
+  { group: 3, all: 0 },    // 2 ツーペア
+  { group: 4, all: 0 },    // 3 スリーカード
+  { group: 5, all: 0 },    // 4 ストレート
+  { group: 6, all: 0 },    // 5 フラッシュ
+  { group: 7, all: 0 },    // 6 フルハウス
+  { group: 9, all: 0 },    // 7 フォーカード
+  { group: 11, all: 0 },   // 8 ストレートフラッシュ
+  { group: 12, all: 0 },   // 9 ロイヤルストレートフラッシュ
 ];
 // ---------------------------------------------------------------------------
 

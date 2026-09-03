@@ -1,5 +1,5 @@
 // UI: タイトル画面・クラブ対戦ウィザード。
-import { TEAM_NAMES, TEAM_CLUB, teamAbbr } from "../config";
+import { TEAM_NAMES, TEAM_CLUB, teamAbbr, POKER_OPTS } from "../config";
 import { CLUB_ABBR } from "../data/club/clubabbr";
 import { CLUB_FLAGS } from "../data/club/clubflags";
 import { clubTeam, ROSTER, STARTERS } from "../roster";
@@ -56,6 +56,37 @@ UI.prototype.buildTitle = function(): void {
       return b;
     };
 
+    // 対戦相手の選択（クラブ/ランダムより先に決める）。ポーカーを自分で打つかが決まる。
+    const modeRow = document.createElement("div");
+    Object.assign(modeRow.style, {
+      display: "flex", gap: "8px", width: "min(320px,86vw)",
+    } as Partial<CSSStyleDeclaration>);
+    const modeBtns: HTMLButtonElement[] = [];
+    const paintMode = (): void => {
+      const user = POKER_OPTS.userTeam !== null;
+      modeBtns.forEach((b, i) => {
+        const on = (i === 1) === user;
+        Object.assign(b.style, {
+          background: on ? "rgba(70,120,220,0.92)" : BTN_BG,
+          borderColor: on ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)",
+          opacity: on ? "1" : "0.72",
+        } as Partial<CSSStyleDeclaration>);
+      });
+    };
+    for (const [i, label] of ["CPU 対 CPU", "あなた 対 CPU"].entries()) {
+      const b = document.createElement("button");
+      Object.assign(b.style, {
+        flex: "1", padding: "10px 8px", cursor: "pointer", color: "#fff",
+        borderRadius: "10px", border: "1px solid rgba(255,255,255,0.18)",
+        fontSize: "clamp(12px,3vw,15px)", fontWeight: "800",
+      } as Partial<CSSStyleDeclaration>);
+      b.textContent = label;
+      b.onclick = () => { POKER_OPTS.userTeam = i === 1 ? POKER_OPTS.home : null; paintMode(); };
+      modeBtns.push(b);
+      modeRow.appendChild(b);
+    }
+    paintMode();
+
     const clubBtn = bigBtn("クラブチーム対戦", "リーグとチームを選んで対戦", () => this.startClubMatchup());
     const randClubBtn = bigBtn("ランダムクラブ", "実クラブをランダムに選んで対戦", () => {
       // 実クラブから重複しない2つをランダムに選ぶ
@@ -74,7 +105,7 @@ UI.prototype.buildTitle = function(): void {
       this.setPhase("pregame");
     });
 
-    p.append(title, sub, clubBtn, randClubBtn, randBtn);
+    p.append(title, modeRow, sub, clubBtn, randClubBtn, randBtn);
     this.root.appendChild(p);
     this.titlePanel = p;
 };

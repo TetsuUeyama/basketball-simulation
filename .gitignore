@@ -9,3 +9,5 @@ headless_sim/*.mjs
 headless_sim/results.*
 headless_sim/progress.log
 _skeleton_backup/
+headless_sim/*.txt
+headless_sim/*.json

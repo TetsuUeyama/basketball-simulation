@@ -1,65 +1,62 @@
-// UI: ポーカー強化の画面。試合開始前と各クォーター開始前に挟まる。
+// UI: ポーカー強化の画面。両チーム確定の直後（選手紹介・ティップオフより前）と、
+// 各クォーター開始前に挟まる。
 //
-// 1ラウンドの流れ:
-//   CPU チームの交換を先に済ませる → ユーザーが「捨てる札」と「強化を受ける選手」を選ぶ
-//   → ホームが「役を確定する / 持ち越す」を選ぶ → 確定なら両チームの手を公開して強化を乗せる
-// ユーザー操作が無い設定（POKER_OPTS.userTeam = null）では画面を出さず、CPU 同士で自動進行する。
-import { POKER_OPTS, teamAbbr } from "../config";
+// 画面は「現在の役」「コートに見立てた盤の上の先発5人」「手札」「ボタン」だけで構成する。
+// 手札を選手の上へ置く（ドラッグ、またはカード→選手のタップ）と、その選手が強化される。
+// 置いた札＝捨てる札なので、置ける枚数は 1ラウンド `MAX_DISCARDS` 枚まで。
+import { POKER_OPTS } from "../config";
 import { ROSTER, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
+import type { Player } from "../objects/player/player";
 import { PokerMatch, POKER_ROUNDS } from "../poker/state";
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
-import { discardEffect, handSummary, MAX_DISCARDS } from "../poker/effects";
-import { cpuExchange, cpuWantsConfirm, pickTarget } from "../poker/ai";
-import { UI, colorOf, BTN_BG, INK } from "./ui";
+import { discardEffect, MAX_DISCARDS } from "../poker/effects";
+import { cpuExchange, cpuWantsConfirm } from "../poker/ai";
+import { UI, colorOf, INK } from "./ui";
 
 declare module "./ui" {
   interface UI {
     pokerPanel?: HTMLDivElement;
     pokerStage?: "exchange" | "confirm" | "reveal";
-    pokerSel: number[];                    // 選択中（＝捨てる）手札の添字
-    pokerTargets: Map<number, number>;     // 手札の添字 → 強化を受けるロスター番号
-    beginPoker(seed?: number): void;
-    pokerModeButton(): HTMLButtonElement;
+    /** 手札の添字 → 置いた先のロスター番号。置く＝捨てる。 */
+    pokerTargets: Map<number, number>;
+    /** タップ操作で選択中の手札（ドラッグしない環境用）。-1 = なし */
+    pokerPicked: number;
+    /** 盤上の選手アイコン（ドロップ判定に使う）。 */
+    pokerSpots: { idx: number; el: HTMLElement }[];
+    /** ラウンド1が終わったあとに一度だけ走らせる処理（選手紹介 → ティップオフ）。 */
+    pokerThen: (() => void) | null;
+    beginPoker(then?: () => void): void;
     openPoker(round: number): void;
     renderPoker(): void;
     finishPokerRound(): void;
   }
 }
 
-const ATTR_NAME = new Map(ATTR_META.map((m) => [m.key, m.name]));
+const ATTR_SHORT = new Map(ATTR_META.map((m) => [m.key, m.label]));
 
-/** 試合前バーの「ポーカー: 自分で打つ ⇄ CPU同士」トグル。 */
-UI.prototype.pokerModeButton = function(): HTMLButtonElement {
-  const b = this.button("");
-  Object.assign(b.style, {
-    fontSize: "12px", padding: "8px 14px", justifySelf: "start", marginLeft: "14px",
-  } as Partial<CSSStyleDeclaration>);
-  const label = (): void => {
-    b.textContent = POKER_OPTS.userTeam === null
-      ? "ポーカー: CPU同士"
-      : "ポーカー: 自分で打つ（" + teamAbbr(POKER_OPTS.userTeam) + "）";
-  };
-  b.onclick = () => {
-    POKER_OPTS.userTeam = POKER_OPTS.userTeam === null ? POKER_OPTS.home : null;
-    label();
-  };
-  label();
-  return b;
-};
+/** 盤上の立ち位置（%）。上がゴール側。 */
+const SPOT: { x: number; y: number }[] = [
+  { x: 50, y: 79 },   // 0 PG — トップ
+  { x: 85, y: 56 },   // 1 SG — 右ウイング
+  { x: 15, y: 56 },   // 2 SF — 左ウイング
+  { x: 31, y: 29 },   // 3 PF — 左ローポスト
+  { x: 63, y: 25 },   // 4 C  — ゴール下
+];
 
-/** 試合の頭で新しいポーカーを始める（TIP OFF から呼ばれる）。 */
-UI.prototype.beginPoker = function(seed?: number): void {
+/** 試合の頭で新しいポーカーを始める。`then` はラウンド1が終わったら一度だけ走る。 */
+UI.prototype.beginPoker = function(then?: () => void): void {
   const g = this.game;
   if (!g) return;
   g.poker?.revert();          // 前の試合の強化を能力値から抜く
-  g.poker = new PokerMatch(ROSTER, POKER_OPTS.home, seed ?? (Date.now() >>> 0));
+  g.poker = new PokerMatch(ROSTER, POKER_OPTS.home, Date.now() >>> 0);
   g.onPokerRound = (round) => this.openPoker(round);
   g.applyRoster();
-  this.openPoker(1);          // ラウンド1（試合開始前）
+  this.pokerThen = then ?? null;
+  this.openPoker(1);
 };
 
-/** そのラウンドを開く。ユーザーが打たない場合はここで自動解決する。 */
+/** そのラウンドを開く。ユーザーが打たない設定ならここで自動解決する。 */
 UI.prototype.openPoker = function(round: number): void {
   const g = this.game;
   const m = g?.poker;
@@ -70,7 +67,6 @@ UI.prototype.openPoker = function(round: number): void {
   for (const t of [0, 1]) if (t !== user) cpuExchange(m, t, ROSTER);
 
   if (user === null) {
-    // 観戦モード: ホーム CPU が確定タイミングを決める
     if (cpuWantsConfirm(m)) { m.confirm(); announceHands(m, g); }
     else m.carryOver();
     g.applyRoster();
@@ -79,18 +75,19 @@ UI.prototype.openPoker = function(round: number): void {
   }
 
   this.simPaused = true;
-  this.pokerSel = [];
   this.pokerTargets = new Map();
+  this.pokerPicked = -1;
+  this.pokerSpots = [];
   this.pokerStage = m.canExchange(user) ? "exchange" : "confirm";
   if (!this.pokerPanel) {
     const p = this.panel();
-    Object.assign(p.style, { zIndex: "70", width: "min(720px, 96vw)", gap: "12px" } as Partial<CSSStyleDeclaration>);
+    Object.assign(p.style, { zIndex: "70", gap: "10px", padding: "12px" } as Partial<CSSStyleDeclaration>);
     this.pokerPanel = p;
     this.root.appendChild(p);
   }
   this.pokerPanel.style.display = "flex";
   this.renderPoker();
-  void round;   // 表示するラウンドは match 側が持っている
+  void round;
 };
 
 UI.prototype.renderPoker = function(): void {
@@ -100,109 +97,74 @@ UI.prototype.renderPoker = function(): void {
   const user = POKER_OPTS.userTeam;
   if (!g || !m || !p || user === null) return;
   p.replaceChildren();
+  this.pokerSpots = [];
 
-  const isHome = user === m.home;
   const opp = 1 - user;
-
-  // ---- 見出し ----
-  const head = document.createElement("div");
-  Object.assign(head.style, { display: "flex", flexDirection: "column", gap: "2px", alignItems: "center" });
-  const title = document.createElement("div");
-  title.textContent = m.round === 1 ? "ポーカー — 試合開始前" : `ポーカー — 第${m.round}クォーター開始前`;
-  Object.assign(title.style, { fontSize: "clamp(15px,3.6vw,20px)", fontWeight: "800", letterSpacing: "1px" });
-  const sub = document.createElement("div");
-  sub.textContent = m.round >= POKER_ROUNDS
-    ? "最終ラウンド — このラウンドで役が確定する"
-    : `交換はこのラウンドで1回 / 残り ${POKER_ROUNDS - m.round} ラウンド持ち越せる`;
-  Object.assign(sub.style, { fontSize: "12px", opacity: "0.72" });
-  head.append(title, sub);
-  p.appendChild(head);
-
-  // ---- 相手の状況 ----
-  const oppRow = document.createElement("div");
-  Object.assign(oppRow.style, {
-    display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-    fontSize: "12px", opacity: "0.8",
-  });
-  const oppRank = m.teams[opp].rank;
-  oppRow.textContent = oppRank
-    ? `${teamAbbr(opp)}: ${oppRank.name}（${handSummary(oppRank)}）`
-    : `${teamAbbr(opp)}: 伏せ札 5枚 — 交換 ${m.teams[opp].exchanges} 回`;
-  p.appendChild(oppRow);
-
-  // ---- 自分の手札 ----
-  const handRow = document.createElement("div");
-  Object.assign(handRow.style, { display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap" });
-  const hand = m.teams[user].hand;
-  hand.forEach((card, i) => handRow.appendChild(cardEl(card, this, i)));
-  p.appendChild(handRow);
+  const placed = this.pokerTargets;
 
   // ---- 現在の役 ----
   const rank = m.peek(user);
   const rankRow = document.createElement("div");
-  rankRow.textContent = m.teams[user].locked
-    ? `確定した役: ${rank.name} → ${handSummary(rank)}`
-    : `いまの役: ${rank.name}（確定すれば ${handSummary(rank)}）`;
   Object.assign(rankRow.style, {
-    fontSize: "clamp(13px,3vw,15px)", fontWeight: "700", color: colorOf(user),
-  });
+    display: "flex", alignItems: "baseline", gap: "10px", justifyContent: "center",
+    fontSize: "clamp(15px,3.8vw,21px)", fontWeight: "800", letterSpacing: "1px",
+    color: colorOf(user),
+  } as Partial<CSSStyleDeclaration>);
+  const mine = document.createElement("span");
+  mine.textContent = rank.name;
+  rankRow.appendChild(mine);
+  const oppRank = m.teams[opp].rank;
+  if (oppRank) {
+    const vs = document.createElement("span");
+    vs.textContent = "vs";
+    Object.assign(vs.style, { fontSize: "12px", opacity: "0.6", color: "#fff", fontWeight: "600" });
+    const theirs = document.createElement("span");
+    theirs.textContent = oppRank.name;
+    Object.assign(theirs.style, { color: colorOf(opp) });
+    rankRow.append(vs, theirs);
+  }
   p.appendChild(rankRow);
 
-  // ---- 捨てる札の宛先 ----
-  if (this.pokerStage === "exchange" && this.pokerSel.length) {
-    const box = document.createElement("div");
-    Object.assign(box.style, {
-      display: "flex", flexDirection: "column", gap: "6px", width: "100%",
-      background: "rgba(255,255,255,0.04)", borderRadius: "10px", padding: "8px 10px", boxSizing: "border-box",
-    } as Partial<CSSStyleDeclaration>);
-    const cap = document.createElement("div");
-    cap.textContent = "捨てる札の強化を受け取る選手（先発5人から）";
-    Object.assign(cap.style, { fontSize: "11px", opacity: "0.7" });
-    box.appendChild(cap);
-    for (const i of this.pokerSel.slice().sort((a, b) => a - b)) {
-      box.appendChild(targetRow(this, m, user, i));
-    }
-    p.appendChild(box);
-  }
+  // ---- コートに見立てた盤 ----
+  p.appendChild(courtBoard(this, m, user));
 
-  // ---- ログ ----
-  const log = m.teams[user].log.slice(-4);
-  if (log.length) {
-    const logBox = document.createElement("div");
-    Object.assign(logBox.style, { fontSize: "11.5px", opacity: "0.78", lineHeight: "1.55", textAlign: "left", width: "100%" });
-    for (const line of log) {
-      const d = document.createElement("div");
-      d.textContent = `・${line}`;
-      logBox.appendChild(d);
-    }
-    p.appendChild(logBox);
-  }
+  // ---- 手札（置いていない札だけ）----
+  const handRow = document.createElement("div");
+  Object.assign(handRow.style, {
+    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap", minHeight: "76px",
+  } as Partial<CSSStyleDeclaration>);
+  const hand = m.teams[user].hand;
+  hand.forEach((card, i) => {
+    if (placed.has(i)) return;
+    handRow.appendChild(handCard(this, card, i));
+  });
+  p.appendChild(handRow);
 
   // ---- ボタン ----
   const btns = document.createElement("div");
   Object.assign(btns.style, { display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" });
+  const accent = (b: HTMLButtonElement): void => {
+    Object.assign(b.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
+  };
 
   if (this.pokerStage === "exchange") {
-    const ex = this.button(this.pokerSel.length ? `${this.pokerSel.length}枚 交換する` : "交換しない");
+    const n = placed.size;
+    const ex = this.button(n ? `${n}枚 交換` : "交換しない");
+    if (n) accent(ex);
     ex.onclick = () => {
-      const picks = this.pokerSel.slice().sort((a, b) => a - b);
-      const targets = picks.map((i) => this.pokerTargets.get(i) ?? pickTarget(hand[i], ROSTER[user]));
+      const picks = [...placed.keys()].sort((a, b) => a - b);
+      const targets = picks.map((i) => placed.get(i)!);
       m.exchange(user, picks, targets);
       g.applyRoster();                 // 能力値が動いたので派生値（走速など）を作り直す
-      this.pokerSel = [];
       this.pokerTargets = new Map();
-      if (isHome) { this.pokerStage = "confirm"; this.renderPoker(); }
-      else { cpuHomeDecides(this, m, g); }
+      this.pokerPicked = -1;
+      if (user === m.home) { this.pokerStage = "confirm"; this.renderPoker(); }
+      else cpuHomeDecides(this, m, g);
     };
     btns.appendChild(ex);
-    const hint = document.createElement("div");
-    hint.textContent = `捨てられるのは1回に ${MAX_DISCARDS} 枚まで`;
-    Object.assign(hint.style, { fontSize: "11px", opacity: "0.6", width: "100%" });
-    btns.appendChild(hint);
   } else if (this.pokerStage === "confirm") {
-    const last = m.round >= POKER_ROUNDS;
-    const lock = this.button(last ? "役を確定する（最終）" : "役を確定する");
-    Object.assign(lock.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
+    const lock = this.button("確定");
+    accent(lock);
     lock.onclick = () => {
       m.confirm();
       announceHands(m, g);
@@ -211,31 +173,24 @@ UI.prototype.renderPoker = function(): void {
       this.renderPoker();
     };
     btns.appendChild(lock);
-    if (!last) {
-      const carry = this.button("持ち越す");
-      Object.assign(carry.style, { background: BTN_BG } as Partial<CSSStyleDeclaration>);
+    if (m.round < POKER_ROUNDS) {
+      const carry = this.button("持ち越し");
       carry.onclick = () => { m.carryOver(); this.finishPokerRound(); };
       btns.appendChild(carry);
     }
-    const note = document.createElement("div");
-    note.textContent = isHome
-      ? "確定のタイミングはホームチームの権利。早く確定するほど長く効き、引っ張るほど強い役を狙える。"
-      : "確定のタイミングは相手（ホーム）が決める。";
-    Object.assign(note.style, { fontSize: "11px", opacity: "0.62", width: "100%", lineHeight: "1.5" });
-    btns.appendChild(note);
   } else {
     const go = this.button("試合へ");
-    Object.assign(go.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
+    accent(go);
     go.onclick = () => this.finishPokerRound();
     btns.appendChild(go);
   }
   p.appendChild(btns);
 
-  // 確定後は相手の手も見せる
+  // 確定後は相手の手札も見せる
   if (this.pokerStage === "reveal") {
     const oppHand = document.createElement("div");
-    Object.assign(oppHand.style, { display: "flex", gap: "6px", justifyContent: "center", flexWrap: "wrap", marginTop: "2px" });
-    for (const c of m.teams[opp].hand) oppHand.appendChild(cardFace(c, 34, 48));
+    Object.assign(oppHand.style, { display: "flex", gap: "6px", justifyContent: "center", flexWrap: "wrap" });
+    for (const c of m.teams[opp].hand) oppHand.appendChild(cardFace(c, 32, 45));
     p.appendChild(oppHand);
   }
 };
@@ -244,7 +199,11 @@ UI.prototype.renderPoker = function(): void {
 UI.prototype.finishPokerRound = function(): void {
   if (this.pokerPanel) this.pokerPanel.style.display = "none";
   this.simPaused = false;
+  this.game?.applyRoster();
   this.game?.resumeFromPoker();
+  const then = this.pokerThen;
+  this.pokerThen = null;
+  if (then) then();          // ラウンド1のあとだけ: 選手紹介 → ティップオフ
 };
 
 // ---- 部品 -----------------------------------------------------------------
@@ -259,6 +218,7 @@ function announceHands(m: PokerMatch, g: NonNullable<UI["game"]>): void {
 function cpuHomeDecides(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void {
   if (cpuWantsConfirm(m)) {
     m.confirm();
+    announceHands(m, g);
     g.applyRoster();
     ui.pokerStage = "reveal";
     ui.renderPoker();
@@ -268,45 +228,179 @@ function cpuHomeDecides(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void
   }
 }
 
-/** クリックで選べる手札の1枚。 */
-function cardEl(card: Card, ui: UI, i: number): HTMLDivElement {
+/** ハーフコートの盤。上がゴール側で、先発5人が立ち位置に並ぶ。 */
+function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
+  const board = document.createElement("div");
+  Object.assign(board.style, {
+    position: "relative", width: "min(430px, 88vw)", aspectRatio: "15 / 14",
+    background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
+    border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px", overflow: "hidden",
+    flexShrink: "0",
+  } as Partial<CSSStyleDeclaration>);
+  board.innerHTML = COURT_SVG;
+
+  const players: Player[] = ui.game ? ui.game.roster[team] : [];
+  for (let i = 0; i < STARTERS; i++) {
+    const spot = SPOT[i];
+    const cell = document.createElement("div");
+    Object.assign(cell.style, {
+      position: "absolute", left: `${spot.x}%`, top: `${spot.y}%`, transform: "translate(-50%,-50%)",
+      display: "flex", flexDirection: "column", alignItems: "center", gap: "2px",
+      pointerEvents: "auto", cursor: "pointer",
+    } as Partial<CSSStyleDeclaration>);
+
+    const face = document.createElement("div");
+    Object.assign(face.style, {
+      position: "relative", width: "44px", height: "44px", borderRadius: "50%", overflow: "hidden",
+      border: `2px solid ${colorOf(team)}`, boxShadow: "0 2px 8px rgba(0,0,0,0.55)",
+      background: "rgba(20,24,34,0.9)",
+    } as Partial<CSSStyleDeclaration>);
+    const pl = players[i];
+    if (pl) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 44; canvas.height = 44;
+      Object.assign(canvas.style, { width: "44px", height: "44px", display: "block" } as Partial<CSSStyleDeclaration>);
+      ui.drawFace(canvas, pl);
+      face.appendChild(canvas);
+    }
+    cell.appendChild(face);
+
+    const name = document.createElement("div");
+    name.textContent = `${ROSTER[team][i].role} ${ROSTER[team][i].name}`;
+    Object.assign(name.style, {
+      fontSize: "10px", fontWeight: "700", maxWidth: "94px", whiteSpace: "nowrap",
+      overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+    } as Partial<CSSStyleDeclaration>);
+    cell.appendChild(name);
+
+    // この選手に置かれている札とその効果
+    for (const [handIdx, target] of ui.pokerTargets) {
+      if (target !== i) continue;
+      const card = m.teams[team].hand[handIdx];
+      const eff = discardEffect(card, ROSTER[team][i].attr);
+      const chip = document.createElement("div");
+      Object.assign(chip.style, {
+        display: "flex", alignItems: "center", gap: "4px", pointerEvents: "auto",
+        background: "rgba(12,15,22,0.92)", border: "1px solid rgba(255,255,255,0.3)",
+        borderRadius: "7px", padding: "1px 5px", fontSize: "10px", fontWeight: "800",
+      } as Partial<CSSStyleDeclaration>);
+      const mark = document.createElement("span");
+      mark.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
+      mark.style.color = SUIT_RED[card.suit] ? "#ff6b72" : "#e6e9f0";
+      const gain = document.createElement("span");
+      gain.textContent = eff.amount > 0 ? `${ATTR_SHORT.get(eff.key) ?? ""}+${eff.amount}` : "上限";
+      gain.style.color = "rgb(120,225,140)";
+      chip.append(mark, gain);
+      chip.onclick = (e) => {            // 置いた札はタップで手札へ戻す
+        e.stopPropagation();
+        ui.pokerTargets.delete(handIdx);
+        ui.renderPoker();
+      };
+      cell.appendChild(chip);
+    }
+
+    if (ui.pokerStage === "exchange") {
+      ui.pokerSpots.push({ idx: i, el: cell });
+      cell.onclick = () => {             // タップ操作: 札を選んでから選手を叩く
+        if (ui.pokerPicked < 0) return;
+        placeCard(ui, ui.pokerPicked, i);
+        ui.pokerPicked = -1;
+        ui.renderPoker();
+      };
+    }
+    board.appendChild(cell);
+  }
+  return board;
+}
+
+/** 手札の1枚。ドラッグして選手へ落とす / タップで選んでから選手を叩く。 */
+function handCard(ui: UI, card: Card, i: number): HTMLDivElement {
   const el = cardFace(card, 52, 74);
-  const selected = ui.pokerSel.includes(i);
-  const locked = ui.pokerStage !== "exchange";
-  if (selected) {
+  el.style.pointerEvents = "auto";
+  if (ui.pokerStage !== "exchange") return el;
+  el.style.cursor = "grab";
+  if (ui.pokerPicked === i) {
     Object.assign(el.style, {
-      transform: "translateY(-6px)", outline: "3px solid rgba(255,90,80,0.95)", opacity: "0.85",
+      transform: "translateY(-6px)", outline: `3px solid ${colorOf(POKER_OPTS.userTeam ?? 0)}`,
     } as Partial<CSSStyleDeclaration>);
-    const tag = document.createElement("div");
-    tag.textContent = "捨";
-    Object.assign(tag.style, {
-      position: "absolute", top: "-9px", right: "-6px", background: "rgb(220,70,60)", color: "#fff",
-      fontSize: "10px", fontWeight: "800", borderRadius: "6px", padding: "1px 4px",
-    } as Partial<CSSStyleDeclaration>);
-    el.appendChild(tag);
   }
-  if (!locked) {
-    el.style.cursor = "pointer";
-    el.style.pointerEvents = "auto";
-    el.onclick = () => {
-      const at = ui.pokerSel.indexOf(i);
-      if (at >= 0) { ui.pokerSel.splice(at, 1); ui.pokerTargets.delete(i); }
-      else if (ui.pokerSel.length < MAX_DISCARDS) ui.pokerSel.push(i);
-      ui.renderPoker();
-    };
-  }
+  el.onclick = () => {
+    ui.pokerPicked = ui.pokerPicked === i ? -1 : i;
+    ui.renderPoker();
+  };
+  el.onpointerdown = (ev) => beginCardDrag(ui, card, i, ev);
   return el;
 }
 
-/** 札の見た目だけ（相手の公開手札にも使う）。 */
+/** 札を選手へ置く（＝捨てて強化する予約）。上限に達していたら何もしない。 */
+function placeCard(ui: UI, handIdx: number, target: number): void {
+  if (!ui.pokerTargets.has(handIdx) && ui.pokerTargets.size >= MAX_DISCARDS) return;
+  ui.pokerTargets.set(handIdx, target);
+}
+
+/** カードのドラッグ。指/カーソルに追従する影を出し、離した位置の選手へ置く。 */
+function beginCardDrag(ui: UI, card: Card, i: number, ev: PointerEvent): void {
+  if (ev.button !== undefined && ev.button !== 0) return;
+  const ghost = cardFace(card, 52, 74);
+  Object.assign(ghost.style, {
+    position: "fixed", zIndex: "95", pointerEvents: "none", opacity: "0.92",
+    transform: "translate(-50%,-50%) rotate(-4deg)",
+  } as Partial<CSSStyleDeclaration>);
+  ghost.style.left = `${ev.clientX}px`;
+  ghost.style.top = `${ev.clientY}px`;
+  document.body.appendChild(ghost);
+  let moved = false;
+  let hot: HTMLElement | null = null;
+
+  const hit = (x: number, y: number): { idx: number; el: HTMLElement } | null => {
+    for (const s of ui.pokerSpots) {
+      const r = s.el.getBoundingClientRect();
+      // 落としやすいように判定を少し広く取る
+      if (x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12) return s;
+    }
+    return null;
+  };
+  const move = (e: PointerEvent): void => {
+    moved = true;
+    ghost.style.left = `${e.clientX}px`;
+    ghost.style.top = `${e.clientY}px`;
+    const s = hit(e.clientX, e.clientY);
+    if (hot && hot !== s?.el) hot.style.filter = "";
+    hot = s ? s.el : null;
+    if (hot) hot.style.filter = "brightness(1.35)";
+  };
+  const cleanup = (): void => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointercancel", cancel);
+    ghost.remove();
+    if (hot) hot.style.filter = "";
+  };
+  const cancel = (): void => { cleanup(); ui.renderPoker(); };
+  const up = (e: PointerEvent): void => {
+    const s = hit(e.clientX, e.clientY);
+    cleanup();
+    if (s) {
+      placeCard(ui, i, s.idx);
+      ui.pokerPicked = -1;
+      ui.renderPoker();
+    } else if (moved) {
+      ui.renderPoker();      // どこにも落ちなかった: 影を消して描き直すだけ
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointercancel", cancel);
+  window.addEventListener("pointerup", up, { once: true });
+}
+
+/** 札の見た目。 */
 function cardFace(card: Card, w: number, h: number): HTMLDivElement {
   const el = document.createElement("div");
   Object.assign(el.style, {
     position: "relative", width: `${w}px`, height: `${h}px`, borderRadius: "8px",
     background: "#f3f5f9", color: SUIT_RED[card.suit] ? "#c8202a" : "#15181f",
     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-    fontWeight: "800", boxShadow: "0 3px 10px rgba(0,0,0,0.45)", transition: "transform 0.12s",
-    lineHeight: "1.05", flexShrink: "0",
+    fontWeight: "800", boxShadow: "0 3px 10px rgba(0,0,0,0.45)", lineHeight: "1.05",
+    flexShrink: "0", touchAction: "none", userSelect: "none",
   } as Partial<CSSStyleDeclaration>);
   const r = document.createElement("div");
   r.textContent = rankLabel(card.rank);
@@ -318,37 +412,17 @@ function cardFace(card: Card, w: number, h: number): HTMLDivElement {
   return el;
 }
 
-/** 捨てる1枚について「誰に付けるか」を選ぶ行。 */
-function targetRow(ui: UI, m: PokerMatch, team: number, i: number): HTMLDivElement {
-  const row = document.createElement("div");
-  Object.assign(row.style, { display: "flex", alignItems: "center", gap: "8px", pointerEvents: "auto" });
-  const card = m.teams[team].hand[i];
-
-  const chip = document.createElement("span");
-  chip.textContent = `${SUIT_MARK[card.suit]}${rankLabel(card.rank)}`;
-  Object.assign(chip.style, {
-    background: "#f3f5f9", color: SUIT_RED[card.suit] ? "#c8202a" : "#15181f",
-    borderRadius: "6px", padding: "2px 7px", fontWeight: "800", fontSize: "13px", flexShrink: "0",
-  } as Partial<CSSStyleDeclaration>);
-
-  const sel = document.createElement("select");
-  Object.assign(sel.style, {
-    background: BTN_BG, color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
-    borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
-  } as Partial<CSSStyleDeclaration>);
-  const cur = ui.pokerTargets.get(i) ?? pickTarget(card, ROSTER[team]);
-  ui.pokerTargets.set(i, cur);
-  for (let k = 0; k < STARTERS; k++) {
-    const def = ROSTER[team][k];
-    const eff = discardEffect(card, def.attr);
-    const o = document.createElement("option");
-    o.value = String(k);
-    o.textContent = `${def.role} ${def.name} — ${ATTR_NAME.get(eff.key) ?? eff.key} ${eff.amount > 0 ? `+${eff.amount}` : "上限"}`;
-    if (k === cur) o.selected = true;
-    sel.appendChild(o);
-  }
-  sel.onchange = () => { ui.pokerTargets.set(i, Number(sel.value)); ui.renderPoker(); };
-
-  row.append(chip, sel);
-  return row;
-}
+// ハーフコートのライン（15m×14m を 150×140 で描く。上がゴール側）。
+const COURT_SVG = `
+<svg viewBox="0 0 150 140" preserveAspectRatio="none"
+     style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+  <g fill="none" stroke="rgba(255,255,255,0.42)" stroke-width="1.2">
+    <rect x="2" y="2" width="146" height="136"/>
+    <rect x="50.5" y="2" width="49" height="56"/>
+    <circle cx="75" cy="58" r="18"/>
+    <circle cx="75" cy="13" r="4.5"/>
+    <line x1="66" y1="6" x2="84" y2="6"/>
+    <path d="M 8,2 L 8,32 A 70 70 0 0 0 142,32 L 142,2"/>
+    <line x1="2" y1="138" x2="148" y2="138" stroke-width="2"/>
+  </g>
+</svg>`;

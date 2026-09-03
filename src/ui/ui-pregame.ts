@@ -97,8 +97,8 @@ UI.prototype.tipOffButton = function(): HTMLButtonElement {
     } as Partial<CSSStyleDeclaration>);
     b.onclick = () => {
       this.setPhase("playing");
-      this.onStart();
-      this.beginPoker();   // ティップオフ前にポーカーのラウンド1
+      this.onPrepare();                    // 両チーム確定 → コートに並べる
+      this.beginPoker(() => this.onStart());  // ポーカー1手目 → 選手紹介 → ティップオフ
     };
     return b;
 };
@@ -133,7 +133,7 @@ UI.prototype.refreshEditors = function(): void {
       fontSize: "12px", padding: "8px 20px", justifySelf: "end", marginRight: "14px",
     } as Partial<CSSStyleDeclaration>);
     backBtn.onclick = () => this.setPhase("title");
-    bottomBar.append(backBtn, this.tipOffButton(), this.pokerModeButton());
+    bottomBar.append(backBtn, this.tipOffButton());
 
     this.vsBoard = this.buildVsBoard();
     if (sideBySide) {

@@ -117,6 +117,7 @@ export class UI {
   speed = 1;
   onRestart: () => void = () => {};
   onStart: () => void = () => {};
+  onPrepare: () => void = () => {};   // チーム決定直後（ポーカーの1手目より前）
   onBack: () => void = () => {};
   onSetupLineups: () => void = () => {};   // マッチアップが最初に決まったときの、相手を考慮した DEFAULT の5人
   // 3Dの実体（コート・選手）がまだ無ければ組ませる。タイトル/クラブ選択の間は作らせない。
