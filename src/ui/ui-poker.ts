@@ -17,13 +17,15 @@ import type { Player } from "../objects/player/player";
 import { PokerMatch, POKER_ROUNDS, type DiscardTarget } from "../poker/state";
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
 import { discardEffect, hinderEffect, MAX_DISCARDS, type AttrKey } from "../poker/effects";
-import { cpuExchange, cpuWantsConfirm } from "../poker/ai";
+import { cpuExchange, cpuPlan, cpuWantsConfirm } from "../poker/ai";
 import { UI, colorOf, INK } from "./ui";
 
 declare module "./ui" {
   interface UI {
     pokerPanel?: HTMLDivElement;
-    pokerStage?: "exchange" | "confirm" | "reveal";
+    pokerStage?: "cpu" | "exchange" | "confirm" | "reveal";
+    /** 直近の補充で入った枚数（その枚数だけ手札の末尾をアニメで出す）。 */
+    pokerFresh: number;
     /** 手札の添字 → 置いた先（自軍なら強化 / 相手なら妨害）。置く＝捨てる。 */
     pokerTargets: Map<number, DiscardTarget>;
     /** タップ操作で選択中の手札（ドラッグしない環境用）。-1 = なし */
@@ -71,11 +73,11 @@ UI.prototype.openPoker = function(round: number): void {
   const m = g?.poker;
   if (!g || !m || !m.active) { this.finishPokerRound(); return; }
   const user = POKER_OPTS.userTeam;
-
-  // 相手（CPU）の交換を先に済ませる。CPU 同士なら両方ここで打つ。
-  for (const t of [0, 1]) if (t !== user) cpuExchange(m, t, ROSTER);
+  const opp = user === null ? 1 : 1 - user;
 
   if (user === null) {
+    // 観戦モード: 画面を出さないので、両チームぶんを即座に解決する
+    for (const t of [0, 1]) cpuExchange(m, t, ROSTER);
     if (cpuWantsConfirm(m)) { m.confirm(); announceHands(m, g); }
     else m.carryOver();
     g.applyRoster();
@@ -87,7 +89,9 @@ UI.prototype.openPoker = function(round: number): void {
   this.pokerTargets = new Map();
   this.pokerPicked = -1;
   this.pokerSpots = [];
-  this.pokerStage = m.canExchange(user) ? "exchange" : "confirm";
+  this.pokerFresh = 0;
+  // まず相手の手番。画面を出してから思考 → 札を置く → 補充、の順に見せる。
+  this.pokerStage = m.canExchange(opp) ? "cpu" : (m.canExchange(user) ? "exchange" : "confirm");
   if (!this.pokerPanel) {
     const p = this.panel();
     Object.assign(p.style, { zIndex: "70", gap: "10px", padding: "12px" } as Partial<CSSStyleDeclaration>);
@@ -96,6 +100,12 @@ UI.prototype.openPoker = function(round: number): void {
   }
   this.pokerPanel.style.display = "flex";
   this.renderPoker();
+  if (this.pokerStage === "cpu") {
+    runCpuTurn(this, m, opp, () => {
+      this.pokerStage = m.canExchange(user) ? "exchange" : "confirm";
+      this.renderPoker();
+    });
+  }
   void round;
 };
 
@@ -193,12 +203,13 @@ UI.prototype.renderPoker = function(): void {
       carry.onclick = () => { m.carryOver(); this.finishPokerRound(); };
       btns.appendChild(carry);
     }
-  } else {
+  } else if (this.pokerStage === "reveal") {
     const go = this.button("試合へ");
     accent(go);
     go.onclick = () => this.finishPokerRound();
     btns.appendChild(go);
   }
+  // stage === "cpu" の間はボタンを出さない（相手が打ち終わるまで触れない）
   p.appendChild(btns);
 };
 
@@ -214,6 +225,77 @@ UI.prototype.finishPokerRound = function(): void {
 };
 
 // ---- 部品 -----------------------------------------------------------------
+
+/**
+ * 相手（CPU）の手番を見せる。
+ *   思考時間 → 捨てる札を1枚ずつ選手の上へ運ぶ → 交換を適用 → 補充した札が手札に入る
+ * 見せ終わったら `done` を呼ぶ。
+ */
+function runCpuTurn(ui: UI, m: PokerMatch, cpu: number, done: () => void): void {
+  const plan = cpuPlan(m, cpu, ROSTER);
+  const hand = m.teams[cpu].hand;
+  const cards = plan.picks.map((i) => hand[i]);
+
+  const apply = (): void => {
+    m.exchange(cpu, plan.picks, plan.targets);
+    ui.game?.applyRoster();
+    ui.pokerFresh = plan.picks.length;   // 補充ぶんをアニメで出す
+    ui.renderPoker();
+    ui.pokerFresh = 0;
+    // 補充が入り切ってから手番を渡す（すぐ再描画するとアニメが途中で消える）
+    window.setTimeout(done, POKER_OPTS.dealMs + plan.picks.length * 70);
+  };
+
+  if (!plan.picks.length) { window.setTimeout(apply, POKER_OPTS.thinkMs); return; }
+
+  // 思考時間のあいだ、相手の伏せ札を軽く上下させて「考えている」ことを見せる
+  const think = ui.pokerPanel?.querySelectorAll<HTMLElement>("[data-oppcard]") ?? [];
+  think.forEach((el, k) => {
+    el.animate(
+      [{ transform: "translateY(0)" }, { transform: "translateY(-5px)" }, { transform: "translateY(0)" }],
+      { duration: Math.max(300, POKER_OPTS.thinkMs), iterations: 1, delay: k * 60, easing: "ease-in-out" },
+    );
+  });
+
+  window.setTimeout(() => {
+    let k = 0;
+    const step = (): void => {
+      if (k >= cards.length) { apply(); return; }
+      flyCardToTarget(ui, cards[k], cpu, plan.targets[k], plan.picks[k]);
+      k++;
+      window.setTimeout(step, POKER_OPTS.stepMs);
+    };
+    step();
+  }, POKER_OPTS.thinkMs);
+}
+
+/** 相手の札1枚が、手札の位置から置き先の選手の上へ飛んでいく見せ方。 */
+function flyCardToTarget(ui: UI, card: Card, cpu: number, target: DiscardTarget, handSlot: number): void {
+  const panel = ui.pokerPanel;
+  if (!panel || !card) return;
+  const from = panel.querySelectorAll<HTMLElement>("[data-oppcard]")[handSlot]
+    ?? panel.querySelector<HTMLElement>("[data-oppcard]");
+  const spot = ui.pokerSpots.find((s) => s.target.team === target.team && s.target.idx === target.idx)
+    ?? { el: panel };
+  const a = (from ?? panel).getBoundingClientRect();
+  const b = spot.el.getBoundingClientRect();
+
+  const ghost = cardFace(card, 30, 42);   // 何を捨てたかは見せる（手札の中身は伏せたまま）
+  Object.assign(ghost.style, {
+    position: "fixed", left: "0", top: "0", zIndex: "96", pointerEvents: "none",
+    willChange: "transform", border: `1px solid ${colorOf(cpu)}`,
+    transform: `translate3d(${a.left + a.width / 2}px, ${a.top + a.height / 2}px, 0) translate(-50%,-50%)`,
+  } as Partial<CSSStyleDeclaration>);
+  document.body.appendChild(ghost);
+  const anim = ghost.animate([
+    { transform: `translate3d(${a.left + a.width / 2}px, ${a.top + a.height / 2}px, 0) translate(-50%,-50%) scale(1)` },
+    { transform: `translate3d(${b.left + b.width / 2}px, ${b.top + b.height / 2}px, 0) translate(-50%,-50%) scale(0.62)`, opacity: 0.15 },
+  ], { duration: Math.max(160, POKER_OPTS.stepMs - 60), easing: "cubic-bezier(0.2,0.7,0.3,1)", fill: "forwards" });
+  anim.onfinish = () => ghost.remove();
+  // 受け取った選手を一瞬光らせる
+  spot.el.animate([{ filter: "brightness(1)" }, { filter: "brightness(1.7)" }, { filter: "brightness(1)" }],
+    { duration: 420, delay: Math.max(120, POKER_OPTS.stepMs - 120) });
+}
 
 /** 役が確定したことをコート上のバナーで知らせる（プレー再開と同時に出る）。 */
 function announceHands(m: PokerMatch, g: NonNullable<UI["game"]>): void {
@@ -250,9 +332,18 @@ function opponentArea(ui: UI, m: PokerMatch, opp: number): HTMLDivElement {
   const hand = document.createElement("div");
   Object.assign(hand.style, { display: "flex", gap: "5px", justifyContent: "center" } as Partial<CSSStyleDeclaration>);
   const revealed = m.teams[opp].locked;
-  for (const c of m.teams[opp].hand) {
-    hand.appendChild(revealed ? cardFace(c, 30, 42) : cardBack(30, 42, opp));
-  }
+  const cards = m.teams[opp].hand;
+  const freshFrom = cards.length - ui.pokerFresh;   // これ以降が補充された札
+  cards.forEach((c, i) => {
+    const el = revealed ? cardFace(c, 30, 42) : cardBack(30, 42, opp);
+    el.dataset.oppcard = String(i);                 // 飛ばす札の始点に使う
+    if (ui.pokerFresh > 0 && i >= freshFrom) {      // 補充が入るところを見せる
+      el.animate([{ opacity: 0, transform: "translateY(-14px) rotate(-8deg)" },
+                  { opacity: 1, transform: "none" }],
+                 { duration: POKER_OPTS.dealMs, delay: (i - freshFrom) * 70, easing: "ease-out", fill: "backwards" });
+    }
+    hand.appendChild(el);
+  });
   area.appendChild(hand);
 
   // 相手の控え8人。ここにも札を置いて妨害できる（自分側と対称の並び）。
@@ -420,15 +511,19 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
     chipRow.appendChild(chip);
   }
 
-  if (ui.pokerStage === "exchange") {
+  if (ui.pokerStage === "exchange" || ui.pokerStage === "cpu") {
     const target: DiscardTarget = { team, idx };
-    ui.pokerSpots.push({ target, el: cell });
-    cell.onclick = () => {             // タップ操作: 札を選んでから選手を叩く
-      if (ui.pokerPicked < 0) return;
-      placeCard(ui, ui.pokerPicked, target);
-      ui.pokerPicked = -1;
-      ui.renderPoker();
-    };
+    ui.pokerSpots.push({ target, el: cell });   // 相手の札が飛んでくる先にも使う
+    if (ui.pokerStage === "exchange") {
+      cell.onclick = () => {           // タップ操作: 札を選んでから選手を叩く
+        if (ui.pokerPicked < 0) return;
+        placeCard(ui, ui.pokerPicked, target);
+        ui.pokerPicked = -1;
+        ui.renderPoker();
+      };
+    } else {
+      cell.style.cursor = "default";
+    }
   }
   return cell;
 }

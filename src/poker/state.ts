@@ -31,6 +31,7 @@ export interface AppliedDelta {
   source: "discard" | "hand";
   by: number;           // その手を打ったチーム（誰の仕業か）
   round: number;        // 何ラウンド目の手か（UI が「今ラウンドの動き」を出すのに使う）
+  card?: Card;          // その増減を生んだ捨て札（source="discard" のとき）
 }
 
 export interface PokerTeamState {
@@ -107,7 +108,7 @@ export class PokerMatch {
         const eff = own ? discardEffect(d.card, def.attr) : hinderEffect(d.card, def.attr);
         const got = addAttr(def.attr, eff.key, eff.amount);
         out.push({ team: tg.team, idx: tg.idx, key: eff.key, amount: got,
-                   source: "discard", by: team, round: this.round });
+                   source: "discard", by: team, round: this.round, card: d.card });
         st.log.push(got !== 0
           ? `${cardLabel(d.card)} → ${own ? "" : "相手の "}${def.name} の ${attrName(eff.key)} ${got > 0 ? "+" : ""}${got}`
           : `${cardLabel(d.card)} → ${def.name} は限界で動かず`);

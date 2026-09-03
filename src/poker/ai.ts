@@ -68,9 +68,12 @@ export function pickTarget(card: Card, roster: PlayerDef[][], team: number): Dis
   return best;
 }
 
-/** CPU の1手（交換）。ユーザー操作チームでは呼ばない。 */
-export function cpuExchange(match: PokerMatch, team: number, roster: PlayerDef[][]): void {
-  if (!match.canExchange(team)) return;
+/**
+ * CPU の1手を「決めるだけ」。適用しないので、UI が思考時間と札を置く動きを
+ * 見せてから exchange を呼べる。
+ */
+export function cpuPlan(match: PokerMatch, team: number, roster: PlayerDef[][]):
+    { picks: number[]; targets: DiscardTarget[] } {
   const hand = match.teams[team].hand;
   const picks = discardIndexes(hand);
   // 1人1枚。同じ相手/味方に重ならないよう、既に埋まった枠は次善へ回す
@@ -84,6 +87,13 @@ export function cpuExchange(match: PokerMatch, team: number, roster: PlayerDef[]
     used.add(`${pick.team}:${pick.idx}`);
     return pick;
   });
+  return { picks, targets };
+}
+
+/** CPU の1手を決めて即適用する（ヘッドレス計測など、見せる必要が無い場面用）。 */
+export function cpuExchange(match: PokerMatch, team: number, roster: PlayerDef[][]): void {
+  if (!match.canExchange(team)) return;
+  const { picks, targets } = cpuPlan(match, team, roster);
   match.exchange(team, picks, targets);
 }
 

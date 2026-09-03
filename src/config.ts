@@ -55,8 +55,12 @@ export const HUD_OPTS: {
 // ポーカー強化の設定。
 //   userTeam: 手札を自分で打つチーム。null = CPU同士（観戦、自動で進む）
 //   home:     役を確定させるタイミングを決める権利を持つチーム
-export const POKER_OPTS: { userTeam: number | null; home: number } =
-  { userTeam: 0, home: 0 };
+//   thinkMs:  相手の思考時間(ms)。手番が来てから札を置き始めるまでの間
+//   stepMs:   札を1枚ずつ選手へ乗せていく間隔(ms)
+//   dealMs:   補充した札が手札に入るアニメの長さ(ms)
+export const POKER_OPTS: {
+  userTeam: number | null; home: number; thinkMs: number; stepMs: number; dealMs: number;
+} = { userTeam: 0, home: 0, thinkMs: 900, stepMs: 420, dealMs: 260 };
 
 export const PLAYER_SPEED = 6.2;  // オフェンス時の走行速度
 export const DEF_SPEED = 6.5;     // 守備がリカバーできるよう少しだけ速い
