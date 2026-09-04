@@ -1,12 +1,23 @@
-// voxel-pipeline の出力（.vox + grid.json）を**そのまま**読んで描く。
+// voxel-pipeline の出力（.vox + grid.json + weights.json + skeleton.json）を**そのまま**描き、
+// **モデル自身のスケルトン**でモーションを当てる。
 //
-// ゲーム用に焼いた `body-*.json` は、ゲームのモデル体系に合わせて
-//   ・1.5cm へダウンサンプル（ユニフォームは元 2.5mm なので 6倍粗くなる）
-//   ・部位ごとの剛体メッシュへ分割し、骨が真下を向く向きへ揃える
-//   ・色をパレットの「役割」に畳んで、描画時にチームカラーで塗り替える
-// という加工を通す。**モデルが正確にボクセル化できているかの確認には使えない。**
-// ここはパイプラインの生の出力を、解像度も色もそのまま出す。
-import { Mesh, MeshBuilder, Scene, StandardMaterial, Color3, Matrix, Vector3 } from "@babylonjs/core";
+// ゲーム用の焼き込み（body-*.json）は通さない。あれは 15mm へのダウンサンプル、
+// 15部位への分割、キットの単色塗り替えという「今のゲームのモデル体系のルール」を
+// かけるので、モデルの正確さを見るのには使えない。
+//
+// 仕組み:
+//   1. skeleton.json（モデル自身の 52 骨）の rest 位置を標準ボーン名へ読み替えて RestPose を作る
+//   2. buildRig でリグを組む（＝モーションクリップが当てられる形）
+//   3. weights.json の**支配ボーン**で生ボクセルを標準ボーンごとに束ね、
+//      その骨のノードへ相対座標で thin instance として貼る
+//   4. applyMotion でリグを動かせば、貼ったボクセルがついてくる
+import {
+  Mesh, MeshBuilder, Scene, StandardMaterial, Color3, Matrix, Vector3, TransformNode,
+} from "@babylonjs/core";
+import { buildRig, type RigHandle } from "@objcts/player/rig";
+import { restPoseFrom } from "@objcts/player/restPose";
+import { MIXAMO_NO_PREFIX } from "@objcts/player/presets";
+import type { StandardBoneName } from "@objcts/player/standardSkeleton";
 
 export interface VoxChunk {
   vox_file: string;
@@ -18,10 +29,10 @@ export interface PartGrid {
   voxel_size: number;
   grid_origin: [number, number, number];
   gx: number; gy: number; gz: number;
-  scale_factor?: number;
-  parent_voxel_size?: number;
   chunks?: VoxChunk[];
 }
+interface PartWeights { bones: string[]; weights: [number, number][][] }
+interface SkeletonJson { bones: { name: string; head_rest: number[]; parent?: string | null }[] }
 
 /** MagicaVoxel .vox → { voxels: [x,y,z,colorIndex][], palette: [r,g,b][] }。 */
 export function parseVox(buf: ArrayBuffer): { voxels: Uint8Array[]; palette: number[][] } {
@@ -29,7 +40,7 @@ export function parseVox(buf: ArrayBuffer): { voxels: Uint8Array[]; palette: num
   const u8 = new Uint8Array(buf);
   const voxels: Uint8Array[] = [];
   let palette: number[][] | null = null;
-  let p = 8;   // "VOX " + version
+  let p = 8;
   const id = (at: number): string => String.fromCharCode(u8[at], u8[at + 1], u8[at + 2], u8[at + 3]);
   const walk = (end: number): void => {
     while (p < end) {
@@ -58,92 +69,133 @@ export function parseVox(buf: ArrayBuffer): { voxels: Uint8Array[]; palette: num
     }
   };
   walk(buf.byteLength);
-  // 既定パレット（RGBA チャンクが無い .vox 用）。ここでは灰色一色で代用する。
   return { voxels, palette: palette ?? Array.from({ length: 256 }, () => [180, 180, 180]) };
 }
 
-/**
- * Blender(Z-up, 右手) の座標を Babylon(Y-up) へ。objcts の焼き込みと同じ規約:
- *   (x, y, z) → (-x, z, -y)
- */
+/** Blender(Z-up, 右手) → Babylon(Y-up, 左手)。objcts の焼き込みと同じ規約。 */
 export const toBabylon = (x: number, y: number, z: number): [number, number, number] => [-x, z, -y];
 
-export interface RawPart {
-  name: string;
-  mesh: Mesh;
+/**
+ * モデルのボーン名 → 標準ボーン名。指・つま先は親の骨へ寄せる
+ * （リグに指の節が無いので、そこへ貼ると宙に浮く）。
+ */
+function standardOf(bone: string): StandardBoneName | null {
+  const b = bone.replace(/^mixamorig:?/i, "");
+  if (/^Hips$/i.test(b)) return "Hips";
+  if (/^Spine2$/i.test(b)) return "Chest";
+  if (/^Spine1?$/i.test(b)) return "Spine";
+  if (/^Neck/i.test(b)) return "Neck";
+  if (/^Head/i.test(b)) return "Head";
+  const s = /^Left/i.test(b) ? "Left" : (/^Right/i.test(b) ? "Right" : null);
+  if (!s) return null;
+  const rest = b.slice(5);
+  if (/^Hand/i.test(rest)) return `${s}Hand` as StandardBoneName;          // 指も手へ
+  if (/^Shoulder$/i.test(rest)) return `${s}Shoulder` as StandardBoneName;
+  if (/^ForeArm/i.test(rest)) return `${s}LowerArm` as StandardBoneName;
+  if (/^Arm$/i.test(rest)) return `${s}UpperArm` as StandardBoneName;
+  if (/^UpLeg$/i.test(rest)) return `${s}UpperLeg` as StandardBoneName;
+  if (/^Leg$/i.test(rest)) return `${s}LowerLeg` as StandardBoneName;
+  if (/^(Foot|ToeBase|Toe_End)/i.test(rest)) return `${s}Foot` as StandardBoneName;
+  return null;
+}
+
+export interface RawModel {
+  rig: RigHandle;
+  root: TransformNode;
+  meshes: Mesh[];
   voxelCount: number;
-  voxelSize: number;
+  height: number;
+  /** 骨ごとのボクセル数（貼り付け結果の確認用）。 */
+  perBone: Map<string, number>;
 }
 
 /**
- * 1パーツ（複数チャンク）を thin instance のキューブ群として描く。
- * 生の解像度・生の色のまま出す（役割への畳み込みも塗り替えもしない）。
+ * 生の出力を読み込み、モデル自身のスケルトンに貼り付けて返す。
+ * `applyMotion(model.rig, clip, t)` でそのまま動く。
  */
-export async function buildRawPart(
-  scene: Scene, baseUrl: string, name: string, grid: PartGrid,
-): Promise<RawPart | null> {
-  const chunks: VoxChunk[] = grid.chunks?.length
-    ? grid.chunks
-    : [{ vox_file: `${name}.vox`, grid_origin: grid.grid_origin, gx: grid.gx, gy: grid.gy, gz: grid.gz, voxel_count: 0 }];
+export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawModel> {
+  const get = async <T>(f: string): Promise<T> => (await fetch(`${baseUrl}/${f}`)).json() as Promise<T>;
+  const manifest = await get<{ parts: { prefix: string; grid: string; weights?: string }[] }>("manifest.json");
+  const skel = await get<SkeletonJson>("skeleton.json");
+  const rootGrid = await get<{ bb_min: number[]; bb_max: number[] }>("grid.json");
+  const height = rootGrid.bb_max[2] - rootGrid.bb_min[2];
 
-  const S = grid.voxel_size;
-  const mats: number[] = [];
-  const cols: number[] = [];
+  // --- 1. モデル自身の rest 位置 → 標準ボーン名の RestPose ---
+  const src: Record<string, [number, number, number]> = {};
+  for (const b of skel.bones) {
+    const [x, y, z] = toBabylon(b.head_rest[0], b.head_rest[1], b.head_rest[2]);
+    src[b.name] = [x, y, z];
+  }
+  const rest = restPoseFrom(src, MIXAMO_NO_PREFIX, "left", height);
+  const root = new TransformNode("rawRoot", scene);
+  const rig = buildRig(scene, rest, { name: "raw", parent: root, allowMissing: true });
+
+  // --- 2. 生ボクセルを支配ボーンごとに束ねる ---
+  const groups = new Map<StandardBoneName, { m: number[]; c: number[] }>();
+  const perBone = new Map<string, number>();
   let total = 0;
+  let voxelSize = 0;
 
-  for (const ch of chunks) {
-    const res = await fetch(`${baseUrl}/${ch.vox_file}`);
-    if (!res.ok) continue;
-    const { voxels, palette } = parseVox(await res.arrayBuffer());
-    const [ox, oy, oz] = ch.grid_origin;
-    for (const v of voxels) {
-      // .vox は原点がチャンクの角。セル中心へ +0.5 する。
-      const bx = ox + (v[0] + 0.5) * S;
-      const by = oy + (v[1] + 0.5) * S;
-      const bz = oz + (v[2] + 0.5) * S;
-      const [px, py, pz] = toBabylon(bx, by, bz);
-      const m = Matrix.Translation(px, py, pz);
-      for (let i = 0; i < 16; i++) mats.push(m.m[i]);
-      const c = palette[v[3] - 1] ?? [200, 200, 200];
-      cols.push(c[0] / 255, c[1] / 255, c[2] / 255, 1);
-      total++;
+  for (const part of manifest.parts) {
+    const grid = await get<PartGrid>(part.grid);
+    voxelSize = Math.max(voxelSize, grid.voxel_size);
+    const w = part.weights ? await get<PartWeights>(part.weights) : null;
+    const chunks = grid.chunks?.length ? grid.chunks
+      : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
+    const S = grid.voxel_size;
+    let wi = 0;
+    for (const ch of chunks) {
+      const res = await fetch(`${baseUrl}/${ch.vox_file}`);
+      if (!res.ok) continue;
+      const { voxels, palette } = parseVox(await res.arrayBuffer());
+      for (const v of voxels) {
+        // 支配ボーン（重みが最大のもの）を選ぶ。weights はチャンクをまたいで連番。
+        let bone: StandardBoneName | null = null;
+        const list = w?.weights[wi];
+        if (list && list.length) {
+          let best = list[0];
+          for (const e of list) if (e[1] > best[1]) best = e;
+          bone = standardOf(w!.bones[best[0]] ?? "");
+        }
+        wi++;
+        if (!bone) bone = "Hips";
+        const node = rig.node(bone);
+        if (!node) continue;
+        const p0 = rig.restPosition(bone);
+        if (!p0) continue;
+        const [px, py, pz] = toBabylon(
+          ch.grid_origin[0] + (v[0] + 0.5) * S,
+          ch.grid_origin[1] + (v[1] + 0.5) * S,
+          ch.grid_origin[2] + (v[2] + 0.5) * S);
+        let g = groups.get(bone);
+        if (!g) { g = { m: [], c: [] }; groups.set(bone, g); }
+        // 骨のノードからの相対位置で置く（ノードが回れば一緒に回る）
+        const mtx = Matrix.Translation(px - p0.x, py - p0.y, pz - p0.z);
+        for (let i = 0; i < 16; i++) g.m.push(mtx.m[i]);
+        const col = palette[v[3] - 1] ?? [200, 200, 200];
+        g.c.push(col[0] / 255, col[1] / 255, col[2] / 255, 1);
+        perBone.set(bone, (perBone.get(bone) ?? 0) + 1);
+        total++;
+      }
     }
   }
-  if (!total) return null;
 
-  const cube = MeshBuilder.CreateBox(`raw_${name}`, { size: S }, scene);
-  const mat = new StandardMaterial(`rawMat_${name}`, scene);
-  mat.diffuseColor = new Color3(1, 1, 1);
-  mat.specularColor = new Color3(0.06, 0.06, 0.06);
-  cube.material = mat;
-  cube.thinInstanceSetBuffer("matrix", new Float32Array(mats), 16, true);
-  cube.thinInstanceSetBuffer("color", new Float32Array(cols), 4, true);
-  cube.alwaysSelectAsActiveMesh = true;
-  return { name, mesh: cube, voxelCount: total, voxelSize: S };
-}
-
-/** manifest.json の parts を全部読み込む。 */
-export async function buildRawModel(
-  scene: Scene, baseUrl: string,
-): Promise<{ parts: RawPart[]; center: Vector3; height: number }> {
-  const manifest = await (await fetch(`${baseUrl}/manifest.json`)).json() as
-    { parts: { prefix: string; grid: string }[] };
-  const parts: RawPart[] = [];
-  let lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
-  for (const p of manifest.parts) {
-    const grid = await (await fetch(`${baseUrl}/${p.grid}`)).json() as PartGrid;
-    const built = await buildRawPart(scene, baseUrl, p.prefix, grid);
-    if (!built) continue;
-    parts.push(built);
-    const bi = built.mesh.getBoundingInfo().boundingBox;
-    for (let i = 0; i < 3; i++) {
-      lo[i] = Math.min(lo[i], bi.minimumWorld.asArray()[i]);
-      hi[i] = Math.max(hi[i], bi.maximumWorld.asArray()[i]);
-    }
+  // --- 3. 骨ごとに1メッシュ（thin instance） ---
+  const meshes: Mesh[] = [];
+  for (const [bone, g] of groups) {
+    const node = rig.node(bone);
+    if (!node || !g.m.length) continue;
+    const cube = MeshBuilder.CreateBox(`raw_${bone}`, { size: voxelSize }, scene);
+    const mat = new StandardMaterial(`rawMat_${bone}`, scene);
+    mat.diffuseColor = new Color3(1, 1, 1);
+    mat.specularColor = new Color3(0.05, 0.05, 0.05);
+    cube.material = mat;
+    cube.parent = node;
+    cube.thinInstanceSetBuffer("matrix", new Float32Array(g.m), 16, true);
+    cube.thinInstanceSetBuffer("color", new Float32Array(g.c), 4, true);
+    cube.alwaysSelectAsActiveMesh = true;
+    meshes.push(cube);
   }
-  // thin instance の境界は個々の行列を見ないので、grid.json から全体の高さを取る
-  const root = await (await fetch(`${baseUrl}/grid.json`)).json() as
-    { bb_min: number[]; bb_max: number[] };
-  const height = root.bb_max[2] - root.bb_min[2];
-  return { parts, center: new Vector3(0, height / 2, 0), height };
+
+  return { rig, root, meshes, voxelCount: total, height, perBone };
 }

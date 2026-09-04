@@ -1,29 +1,12 @@
-// モデル確認ページ。選手モデルの見た目とモーションを、**ゲームと同じ描画経路**で見る。
-// 目的は「現行モデル（male_avatar 由来の3体型）」と「新モデル（player_one をボクセル化）」を
-// 同じポーズ・同じモーションで並べて比べること。試合ロジックは一切動かさない。
+// モデル確認ページ。voxel-pipeline が出力した**生のボクセル**を、モデル自身のスケルトンで
+// 動かして見る。ゲーム用の焼き込み（body-*.json）は通さない。
 import {
   Engine, Scene, Color3, Color4, Vector3, ArcRotateCamera,
   HemisphericLight, DirectionalLight, MeshBuilder,
 } from "@babylonjs/core";
-import { Player } from "./objects/player/player";
 import { makeMat } from "./objects/materials";
-import { setVariantOverride, type BodyVariant } from "@objcts/player/voxel/voxelBody";
-import { setKitRecolor } from "./objects/player/player-voxel";
 import { MOTION_NAMES, motionClip, motionDuration, applyMotion } from "@objcts/player/motion/clip";
-import { ROSTER } from "./roster";
-import { buildRawModel, type RawPart } from "./voxraw";
-import "./objects/player/player-query";
-import "./objects/player/player-state";
-import "./objects/player/player-visual";
-import "./objects/player/player-roster";
-import "./move/basic/run";
-import "./move/basic/jump";
-import "./move/basic/turn";
-import "./animation/basic/arms";
-import "./animation/basic/torso";
-import "./animation/action/locomotion";
-import "./animation/action/hold";
-import "./animation/action/sit";
+import { buildRawModel, type RawModel } from "./voxraw";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const engine = new Engine(canvas, true, { stencil: true });
@@ -32,17 +15,16 @@ scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
 
 const camera = new ArcRotateCamera("cam", -Math.PI / 2, Math.PI / 2.35, 4.2, new Vector3(0, 1.0, 0), scene);
 camera.attachControl(canvas, true);
-camera.lowerRadiusLimit = 1.2;
+camera.lowerRadiusLimit = 0.8;
 camera.upperRadiusLimit = 12;
 camera.wheelDeltaPercentage = 0.02;
 
 const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
-hemi.intensity = 0.9;
+hemi.intensity = 0.95;
 hemi.groundColor = new Color3(0.35, 0.35, 0.4);
 const sun = new DirectionalLight("sun", new Vector3(0.3, -0.8, 0.5), scene);
-sun.intensity = 1.1;
+sun.intensity = 1.05;
 
-// 足元の目安（1m グリッド）
 const floor = MeshBuilder.CreateGround("floor", { width: 8, height: 8, subdivisions: 8 }, scene);
 floor.material = makeMat(scene, "floorMat", { diffuse: new Color3(0.16, 0.17, 0.2) });
 const grid = MeshBuilder.CreateGround("grid", { width: 8, height: 8, subdivisions: 8 }, scene);
@@ -51,92 +33,30 @@ gridMat.wireframe = true;
 grid.material = gridMat;
 grid.position.y = 0.002;
 
-// ---- 状態 -----------------------------------------------------------------
-type ModelKey = BodyVariant;
-const MODELS: { key: ModelKey; label: string }[] = [
-  { key: "p1", label: "新: player_one" },
-  { key: "normal", label: "現行: normal" },
-  { key: "skinny", label: "現行: skinny" },
-  { key: "muscle", label: "現行: muscle" },
-];
-// 表示モード:
-//   raw  = voxel-pipeline の出力をそのまま（生の解像度・生の色）＝ボクセル化の正確さを見る
-//   game = ゲーム用に焼いたもの（1.5cmへ縮小・部位分割・チームカラーで塗り替え）
-let mode: "raw" | "game" = "raw";
-let rawParts: RawPart[] = [];
-let rawInfo = "";
-let modelA: ModelKey = "p1";
-let modelB: ModelKey | null = "normal";   // null = 1体だけ表示
-// キットの塗り替え。切ると焼き込んだ元の色（背番号・ラインの柄）が出る。
-let kitRecolor = false;
+let model: RawModel | null = null;
 let motion = "idle";
 let playing = true;
 let speed = 1;
 let t = 0;
+let info = "読み込み中…";
 
-let players: Player[] = [];
-
-/** 現在の設定で選手を組み直す。variantFor の上書きを使うので1体ずつ作る。 */
-function rebuild(): void {
-  // Player 自体に dispose は無い。ルート配下のノード/メッシュごと畳む。
-  for (const p of players) p.root.dispose(false, true);
-  players = [];
-  for (const r of rawParts) r.mesh.dispose();
-  rawParts = [];
-  if (mode === "raw") { void buildRaw(); return; }
-  const defs = ROSTER[0];
-  setKitRecolor(kitRecolor);
-  const make = (key: ModelKey, x: number, team: number): Player => {
-    setVariantOverride(key);
-    const def = { ...defs[0], height: 1.95 };
-    const p = new Player(scene, team, 0, def);
-    p.applyUniform();
-    p.pos.set(x, 0, 0);
-    p.root.position.set(x, 0, 0);
-    p.setNameTagVisible(false);
-    setVariantOverride(null);
-    return p;
-  };
-  if (modelB === null) {
-    players = [make(modelA, 0, 0)];
-  } else {
-    players = [make(modelA, -0.65, 0), make(modelB, 0.65, 1)];
-  }
-  applyPose(0);
-}
-
-/**
- * 選んだモーションの t 秒地点のポーズを全員へ適用する。
- *
- * ⚠️ 順番が重要。`p.sync()` は内部で `syncVoxelPose()` を呼び、Player が持つ関節ノード
- * （腕・肘・腰・膝）から**リグ全体を書き直す**。先に applyMotion してから sync すると
- * そこで上書きされて動かない。sync を先に走らせ、その上へクリップを重ねる。
- * 服はスキニングなので、リグを触ったあとに `skel.prepare()` が要る。
- */
+/** 選んだクリップの t 秒地点をモデル自身のリグへ当てる。 */
 function applyPose(time: number): void {
+  if (!model) return;
   const clip = motionClip(motion);
-  for (const p of players) {
-    const vb = p.vox;
-    if (!vb) continue;
-    p.sync();                                   // ゲーム側の姿勢（リグを一度書き直す）
-    if (!clip) continue;
-    applyMotion(vb.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
-    vb.skel.prepare();                          // リグ → スケルトン（服へ反映）
-  }
+  if (!clip) return;
+  applyMotion(model.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
 }
 
-/** パイプラインの生出力を読み込んで並べる（加工なし＝ボクセル化の正確さを見るため）。 */
-async function buildRaw(): Promise<void> {
-  rawInfo = "読み込み中…";
-  const { parts, height } = await buildRawModel(scene, "/vox/player_one");
-  rawParts = parts;
-  camera.setTarget(new Vector3(0, height * 0.55, 0));
-  camera.radius = height * 2.0;
-  const total = parts.reduce((s, p) => s + p.voxelCount, 0);
-  const lines = parts.map((p) =>
-    p.name + " " + p.voxelCount.toLocaleString() + "個 @" + (p.voxelSize * 1000).toFixed(1) + "mm");
-  lines.push("合計 " + total.toLocaleString() + " ボクセル");
-  rawInfo = lines.join("\n");
+async function load(): Promise<void> {
+  model = await buildRawModel(scene, "/vox/player_one");
+  camera.setTarget(new Vector3(0, model.height * 0.55, 0));
+  camera.radius = model.height * 1.6;
+  const bones = [...model.perBone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([b, n]) => `${b} ${n.toLocaleString()}`);
+  info = `ボクセル ${model.voxelCount.toLocaleString()} / 骨ごとのメッシュ ${model.meshes.length}\n`
+    + `${bones.join("  ")}\n身長 ${model.height.toFixed(3)}m`;
+  applyPose(0);
 }
 
 // ---- UI -------------------------------------------------------------------
@@ -155,30 +75,11 @@ const row = (label: string): HTMLDivElement => {
   Object.assign(d.style, { display: "flex", alignItems: "center", gap: "8px" });
   const l = document.createElement("span");
   l.textContent = label;
-  Object.assign(l.style, { opacity: "0.7", minWidth: "72px", fontSize: "12px" });
+  Object.assign(l.style, { opacity: "0.7", minWidth: "64px", fontSize: "12px" });
   d.appendChild(l);
   ui.appendChild(d);
   return d;
 };
-
-const select = (parent: HTMLElement, options: { value: string; label: string }[],
-                cur: string, onChange: (v: string) => void): HTMLSelectElement => {
-  const s = document.createElement("select");
-  Object.assign(s.style, {
-    background: "rgba(20,24,34,0.95)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
-    borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
-  } as Partial<CSSStyleDeclaration>);
-  for (const o of options) {
-    const el = document.createElement("option");
-    el.value = o.value; el.textContent = o.label;
-    if (o.value === cur) el.selected = true;
-    s.appendChild(el);
-  }
-  s.onchange = () => onChange(s.value);
-  parent.appendChild(s);
-  return s;
-};
-
 const button = (parent: HTMLElement, label: string, onClick: () => void): HTMLButtonElement => {
   const b = document.createElement("button");
   b.textContent = label;
@@ -192,27 +93,23 @@ const button = (parent: HTMLElement, label: string, onClick: () => void): HTMLBu
 };
 
 const title = document.createElement("div");
-title.textContent = "モデル確認";
+title.textContent = "モデル確認（生のボクセル）";
 Object.assign(title.style, { fontWeight: "800", fontSize: "15px", letterSpacing: "1px" });
 ui.appendChild(title);
 
-select(row("表示"), [
-  { value: "raw", label: "生のボクセル（パイプライン出力）" },
-  { value: "game", label: "ゲーム用に焼いたもの" },
-], mode, (v) => { mode = v as "raw" | "game"; rebuild(); });
-
-const modelOpts = MODELS.map((m) => ({ value: m.key, label: m.label }));
-select(row("左 / 単体"), modelOpts, modelA, (v) => { modelA = v as ModelKey; rebuild(); });
-select(row("右"), [{ value: "", label: "（表示しない）" }, ...modelOpts], modelB ?? "",
-  (v) => { modelB = v === "" ? null : (v as ModelKey); rebuild(); });
-
-select(row("色"), [
-  { value: "orig", label: "元の色のまま（柄が出る）" },
-  { value: "kit", label: "チームカラーで塗り替え" },
-], kitRecolor ? "kit" : "orig", (v) => { kitRecolor = v === "kit"; rebuild(); });
-
-const motionOpts = MOTION_NAMES.slice().sort().map((n) => ({ value: n, label: n }));
-select(row("モーション"), motionOpts, motion, (v) => { motion = v; t = 0; applyPose(0); });
+const sel = document.createElement("select");
+Object.assign(sel.style, {
+  background: "rgba(20,24,34,0.95)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
+  borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
+} as Partial<CSSStyleDeclaration>);
+for (const n of MOTION_NAMES.slice().sort()) {
+  const o = document.createElement("option");
+  o.value = n; o.textContent = n;
+  if (n === motion) o.selected = true;
+  sel.appendChild(o);
+}
+sel.onchange = () => { motion = sel.value; t = 0; applyPose(0); };
+row("モーション").appendChild(sel);
 
 const ctl = row("再生");
 const playBtn = button(ctl, "⏸ 停止", () => {
@@ -225,26 +122,22 @@ button(ctl, "頭出し", () => { t = 0; applyPose(0); });
 const spd = row("速さ");
 for (const s of [0.25, 0.5, 1, 2]) button(spd, `${s}x`, () => { speed = s; });
 
-const info = document.createElement("div");
-Object.assign(info.style, { fontSize: "11px", opacity: "0.65", lineHeight: "1.6", maxWidth: "230px" });
-ui.appendChild(info);
+const infoEl = document.createElement("div");
+Object.assign(infoEl.style, {
+  fontSize: "11px", opacity: "0.7", lineHeight: "1.6", maxWidth: "240px", whiteSpace: "pre-line",
+});
+ui.appendChild(infoEl);
 
-// ---- ループ ---------------------------------------------------------------
-rebuild();
+void load();
 
 engine.runRenderLoop(() => {
   const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-  if (playing && mode === "game") { t += dt * speed; applyPose(t); }
+  if (playing && model) { t += dt * speed; applyPose(t); }
   const clip = motionClip(motion);
   const dur = clip ? motionDuration(clip) : 0;
-  let tris = 0;
-  for (const m of scene.meshes) if (m.isEnabled() && m.isVisible) tris += m.getTotalIndices() / 3;
-  info.textContent = mode === "raw"
-    ? rawInfo + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`
-    : `${motion}  ${dur ? (t % dur).toFixed(2) : "0.00"} / ${dur.toFixed(2)}s\n`
-      + `三角形 ${Math.round(tris).toLocaleString()}  メッシュ ${scene.meshes.length}\n`
-      + `${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
-  info.style.whiteSpace = "pre-line";
+  infoEl.textContent = info
+    + `\n${motion} ${dur ? (t % dur).toFixed(2) : "0.00"}/${dur.toFixed(2)}s`
+    + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   scene.render();
 });
 
