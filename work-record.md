@@ -340,5 +340,36 @@ LeftShoulder/LeftArm/LeftForeArm/LeftHand/…/LeftUpLeg/LeftLeg/LeftFoot/LeftToe
 - `vite.config.ts` に2つ目のエントリ（confirm.html）を追加。`npm run build` ✓。
 - ヘッドレスで p1 のメッシュ生成を確認（`probe-meshcost.ts` に `VARIANT` 環境変数を追加）。
 
+### 15. 【訂正】QM への移植をやめ、モデル本来のリグでボクセル化し直した
+
+ユーザー指摘: 「作り方を以前のモデルに寄せすぎ。ボーン設定があるはずだが設定していないのでは」。
+**指摘のとおりだった。**
+
+- 実測で確認: 移植版の `player_one/skeleton.json` は **male_avatar と完全に同一**
+  （303骨・座標まで一致）。`transplant` は設計上「ボーン構造を QM と完全一致させる」もので、
+  `--no-lbs` は**メッシュの形だけ**元のまま残す。つまり **肉は player_one・骨は QM** という
+  状態で焼いていた。前回「腕の長さはスケルトン側の性質」と書いたのは、**自分が選んだ工程の
+  結果**であって、モデルの性質ではなかった。検証を怠った。
+- 対処: `configs/player_one.json` を **`transplant: "none"`** にしてソースの Mixamo 52骨を保つ。
+  `voxelize.py` は blend 内の armature をそのまま skeleton.json に書くので、これで
+  **モデル本来の関節**が出る（`Mapped vertex groups -> bones: 52/52`）。
+- 焼き込み側を**リグ対応**にした（`segments.mjs` / `tools/buildParts.mjs`）:
+  `mixamoToSegment` / `MIXAMO_PIVOT_BONE` / `MIXAMO_CHILD_BONE` / `MIXAMO_FINGER_CHAINS` /
+  `MIXAMO_JOINT_BONE` を追加し、`detectRig()` で skeleton.json のボーン名からリグを判定して
+  `rigTables()` で切り替える。ARP 側の既存テーブルはそのまま（male_avatar は従来どおり焼ける）。
+
+**焼き直しの結果（モデル本来の寸法が出た）**
+
+| | player_one（自前リグ） | 現行 normal（QMリグ） |
+| --- | --- | --- |
+| 上腕 / 前腕 | **0.231 / 0.239（1:1.04）** | 0.262 / 0.204（1:0.78） |
+| 大腿 / 下腿 | **0.429 / 0.418** | 0.393 / 0.417 |
+| 腰 厚み/幅 | 0.85 | 0.95 |
+| 三角形/人 | 5,076 | 7,024 |
+
+→ 移植版では現行と**完全に同一だった**骨の寸法が、モデル固有の値になった。
+⚠️ ただし player_one 自身の比率は **前腕が上腕より長い（1:1.04）**。人体標準は 1:0.78 なので、
+　 このモデルは腕の見え方に癖がある。実機で確認して許容できるか判断が要る。
+
 ⚠️ ブラウザ実機（`npm run dev`）での見た目・操作感は未検証。ドラッグ＆ドロップと盤のレイアウトは
    実機でしか確認できない。
