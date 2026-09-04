@@ -279,6 +279,22 @@ LeftShoulder/LeftArm/LeftForeArm/LeftHand/…/LeftUpLeg/LeftLeg/LeftFoot/LeftToe
 - `configs/player_one.json` を作成し、`--dry-run` で工程解決を確認
   （cleanup skip → modifiers → transplant --no-lbs → voxelize → fill skip → morphs skip）。
 
+**V3 完了: ボクセル化に成功**（7部位・77.4秒・manifest conformant）。
+出力 `game-assets/vox-model/player_one/`。
+
+| | player_one | male_avatar（現行） |
+| --- | --- | --- |
+| voxel_size | 0.00746m | 0.00748m |
+| 身長 | 1.842m | 1.845m |
+| 腕を広げた幅 | 1.842m | 1.738m |
+| **奥行き（厚み）** | **0.402m** | **0.476m** |
+| body のボクセル数 | 104,534 | 195,824 |
+
+→ **新モデルの方が厚みが薄い（0.402/0.476 = 84%）**。「厚みが大きすぎる」の是正に有利。
+→ ボーン割当は ARP/QM 名で正しく付いた（c_spine_03_bend.x / head.x / c_arm_stretch.l/r /
+　 c_thigh_stretch / c_forearm_stretch / shoulder）＝ **transplant は成功**。
+　 body に c_leg_stretch がほぼ無いのは、すねが socks パーツ側にあるため（正しい）。
+
 ⚠️ **焼き込み（V5）で判明している要修正点**
 （`function-lab/objcts/player/voxel/tools/buildParts.mjs`）:
 - `VARIANTS` が `male_avatar{,_skinny,_muscle}` に**ハードコード**されている。
