@@ -10,10 +10,9 @@
    "grid": "body.grid.json",
    "weights": "body.weights.json",
    "chunks": [
-    "body_c1.vox",
-    "body_c2.vox"
+    "body.vox"
    ],
-   "voxel_count": 47519,
+   "voxel_count": 19220,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -28,7 +27,7 @@
    "chunks": [
     "eyes.vox"
    ],
-   "voxel_count": 1680,
+   "voxel_count": 716,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -43,7 +42,7 @@
    "chunks": [
     "hair.vox"
    ],
-   "voxel_count": 6430,
+   "voxel_count": 2653,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -58,7 +57,7 @@
    "chunks": [
     "jersey.vox"
    ],
-   "voxel_count": 102241,
+   "voxel_count": 43097,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -73,7 +72,7 @@
    "chunks": [
     "shoes.vox"
    ],
-   "voxel_count": 18759,
+   "voxel_count": 7817,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -88,7 +87,7 @@
    "chunks": [
     "shorts.vox"
    ],
-   "voxel_count": 64395,
+   "voxel_count": 27010,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -103,7 +102,7 @@
    "chunks": [
     "socks.vox"
    ],
-   "voxel_count": 52699,
+   "voxel_count": 22106,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],

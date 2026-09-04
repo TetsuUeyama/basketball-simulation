@@ -46,6 +46,7 @@ function applyPose(time: number): void {
   const clip = motionClip(motion);
   if (!clip) return;
   applyMotion(model.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
+  model.skel.prepare();   // リグ → スケルトン。GPU がウェイトでボクセルを変形する
 }
 
 async function load(): Promise<void> {
@@ -54,7 +55,7 @@ async function load(): Promise<void> {
   camera.radius = model.height * 1.6;
   const bones = [...model.perBone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
     .map(([b, n]) => `${b} ${n.toLocaleString()}`);
-  info = `ボクセル ${model.voxelCount.toLocaleString()} / 骨ごとのメッシュ ${model.meshes.length}\n`
+  info = `ボクセル ${model.voxelCount.toLocaleString()} / 三角形 ${model.triangles.toLocaleString()} / メッシュ ${model.meshes.length}\n`
     + `${bones.join("  ")}\n身長 ${model.height.toFixed(3)}m`;
   applyPose(0);
 }
