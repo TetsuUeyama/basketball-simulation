@@ -187,7 +187,55 @@ Babylon.js 製フルコート 5対5 の**バスケットボールゲーム**。
         現状も着替えで26人ぶんの服を作り直していて「ボタンの反応が数秒止まる」と
         `main.ts` に明記があるので、**統合前後で作り直しコストを実測してから決める**。
 
-### 検討: 外部モデル（`Downloads/player-one` = "Spanish footballer"）へ置き換えるか
+### 方針: 外部モデル（`Downloads/player-one`）を**ボクセル化して**現行モデルと差し替える
+
+⚠️ ポリゴンのまま使うのではなく、**既存のボクセル化パイプラインに通して現行と同じ形式にする**。
+これなら現行の仕組み（パレット役割による肌/髪/キットの塗り替え、身長のボクセル層挿入、
+部位別の剛体メッシュ、モーションクリップ）が**そのまま使える**。
+
+**必要な道具は全て揃っていることを確認した**:
+
+| 工程 | 実体 | 出力 |
+| --- | --- | --- |
+| 1. モデル → ボクセル | `developsecond/voxel-pipeline`（config駆動・uv/typer/Blender） | `game-assets/vox-model/<name>/*.vox` + `grid.json` + `weights.json` + `skeleton` + **`*.morph.json`（体型スライダー）** |
+| 2. ボクセル → ゲーム用JSON | `function-lab/objcts/player/voxel/tools/buildParts.mjs`（髪は `buildHair.mjs`） | `objcts/player/voxel/data/body-*.json` / `cloth-*.json` |
+| 3. 取り込み | `scripts/sync-objcts.mjs` | 本リポジトリの `vendor/objcts/` |
+
+- 現行の元アセットは `game-assets/vox-model/male_avatar{,_skinny,_muscle}`
+  （**Auto-Rig Pro 303ボーン・身長1.845m**）。`body.Body_Skinny/Muscle/Chubby.morph.json` が既にあり、
+  **体型モーフの仕組みは動いている**（Chubby は現行ゲームでは未使用）。
+- voxel-pipeline は **新キャラ = config 1個追加**が目標の作り。`bone_map` でソースのリグ名を
+  QM ボーン名へ移植（`--no-lbs` 必須＝ソース形状を保ったままボーン名だけ揃える）。
+
+`player-one` を通すための手順と、埋める必要がある穴:
+- [ ] V1: FBX を Blender で **A-pose の .blend** にする。⚠️ Babylon が読むわけではないので
+      glTF 変換は不要（工程1が Blender で完結する）。
+- [ ] V2: **`bone_maps/player-one.json` を作る**。このモデルは **LimbNode 55本**（3ds Max 系の
+      リグと思われる。ボーン名は未確認＝Blender に読み込んで実物を見る必要がある）。
+      現行は ARP 303ボーンなので、**ボーン数が大きく違う**。移植が素直に通るかはここで決まる。
+- [ ] V3: `configs/player-one.json` を書く。`parts` に body / head / hair / shirt / pants /
+      socks / shoes を列挙（OBJ のマテリアル分けと一致: Arms_Legs, Torso, face, eyes, lashes,
+      hair, scalp_hair, shirt, pants, Socks, shoes）。
+- [ ] V4: **体型モーフを自作する**。⚠️ このFBXは **BlendShape 0** なので、
+      Blender で痩せ/太りのシェイプキーを作り、config の `morphs` に指定する。
+      **ここが唯一の新規オーサリング作業**。W2〜W4（身長×体重で体格を決める）はこの上に載る。
+- [ ] V5: `buildParts.mjs` で焼き、`sync-objcts.mjs` で取り込み、実機で確認。
+
+引き継ぎ可否（ボクセル化する前提での結論）:
+- ✅ **肌の色**: パレット役割 `Skin` で現行どおり塗り替えられる。
+- ✅ **ユニフォームのチームカラー**: 役割 `Jersey`/`Shorts`/`Shoes` で現行どおり。
+- △ **髪型138種**: `hair.json` は male_avatar の頭に合わせて作られている。同じ QM リグへ移植すれば
+      頭の**位置**は揃うが、**頭の形状差ぶんの合わせ直しが要るか**は実物で確認が要る。
+- △ **顔**: 顔パーツの塗り込みは body JSON 側の定義なので仕組みは残るが、**塗る面の座標は
+      焼き直しが要る**。
+- ⚠️ **ライセンス**: 配布元の利用条件（ゲームへの組み込み可否）は要確認。ここは判断できない。
+
+参考（現行の三角形数。`function-lab/objcts/player/voxel/README.md` の実測）:
+1体（着衣・normal 1.85m）で **1cm格子=約150,000三角形 / 2cm格子=約41,000**。
+26人×2＋審判で **1cm=409万 / 2cm=107万**。⚠️ 格子の辺長がそのまま描画コストに効くので、
+**player-one を焼くときの辺長は現行と揃える**（現行データの `voxelSize` は 0.015）。
+
+### 参考: ポリゴンのまま使う案（不採用）
 
 調べた事実:
 - **FBX Binary・スキニング済み**（Skin 1 / Cluster 52 / LimbNode 55）＝ ボーン55本のリグ付き。
@@ -222,6 +270,9 @@ Babylon.js 製フルコート 5対5 の**バスケットボールゲーム**。
   リグのボーン名を調べてマッピング表を作る作業が要る。
 - ⚠️ **ライセンス**: 配布元の利用条件（ゲームへの組み込み可否）は要確認。ここは判断できない。
 
+ポリゴンのまま Babylon で使う案は**不採用**（上のボクセル化方針に置き換え）。
+理由: 1人 89,368三角形 = 現行素体(7,024)の約12.7倍、26人で約232万三角形。機能4と衝突する。
+また Babylon は FBX を読めないため glTF 変換が要り、髪型138種と顔の作り分けも失われる。
 - [ ] X1: **採用可否を決めるための PoC**（本実装の前に必ずやる）
       Blender で FBX → GLB 変換 → Babylon で読み込み → リグを標準ボーン名へリマップ →
       **26人並べて実機のフレームレートを測る**。ここで通らなければ減面か不採用を決める。
