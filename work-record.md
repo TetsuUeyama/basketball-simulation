@@ -304,5 +304,41 @@ LeftShoulder/LeftArm/LeftForeArm/LeftHand/…/LeftUpLeg/LeftLeg/LeftFoot/LeftToe
   skinny/normal/muscle の3つを要求するため、当面は同じものを3つに割り当てるか、
   シェイプキーを自作する（V4）まで1変種で動くようにするかの判断が要る。
 
+### 14. player_one をゲーム用データへ焼き、モデル確認ページを作成（V5）
+
+**焼き込み（`function-lab/objcts/player/voxel/tools/buildParts.mjs`）を汎用化**:
+- `VARIANTS` を環境変数で差し替え可能に（`VOX_VARIANTS` に JSON。先頭 `+` で既定へ追加）。
+- パーツ一覧を固定配列から**ディレクトリ実在チェック**へ（モデルで服の prefix が違うため）。
+- `PRIO` を未知 prefix でも「服」扱いになる Proxy に、`ROLE` に jersey→Jersey /
+  shorts→Shorts / socks→Shoes を追加。`segments.mjs` の `UNIFORM_PREFIXES` にも同3つを追加。
+- 実行: `VOX_VARIANTS='{"p1":"player_one"}' VOX_SIZE=0.015 node tools/buildParts.mjs`
+  → `data/body-p1.json`(484KB) / `cloth-p1.json`(538KB)。全パーツ **未割当0**。
+
+**焼き上がりの比較（同じ物差しで実測）**
+
+| | player_one | 現行 normal | 現行 muscle |
+| --- | --- | --- | --- |
+| 胴 厚み/幅 | 0.79 | 0.75 | 0.92 |
+| **腰 厚み/幅** | **0.80** | 0.95 | 1.18 |
+| 三角形/人 | **5,088** | 7,024 | 8,232 |
+| 26人ぶん | 132,288 | 182,624 | 214,032 |
+
+→ **腰の厚みが自然になり（0.95→0.80）、三角形は28%減った**。
+
+⚠️ **重要な発見: 腕の長さはモデルを変えても変わらない。**
+上腕 0.262m / 前腕 0.204m（比 1:0.78）は player_one でも現行と**完全に同一**だった。
+**関節位置は QM(ARP) スケルトンから来ている**ため、素体を差し替えても骨は変わらない。
+腕全体が身長比 25.8%（人体標準 33%）と短いのは**スケルトン側の性質**。
+→ 「前腕が長すぎ・上腕が短すぎ」に見える件は**モデル差し替えでは直らない**。
+　 直すならスケルトン（restPose / QM の骨長）か、腕の動かし方（M4 の IK/FK）を触る必要がある。
+
+**モデル確認ページ `/confirm.html`（`src/confirm.ts`）を新設**:
+- `voxelBody.ts` に variant `"p1"` と `setVariantOverride()` を追加（未設定なら従来どおり
+  `variantFor(balance)`＝ゲーム側の挙動は変わらない）。元の objcts で編集 → `sync-objcts.mjs` で取り込み。
+- 左右に別モデルを並べ、モーションを選んで 再生/停止/1コマ送り/速さ変更 ができる。
+  三角形数・メッシュ数・fps を常時表示。**ゲームと同じ `Player` / `applyMotion` を通す**。
+- `vite.config.ts` に2つ目のエントリ（confirm.html）を追加。`npm run build` ✓。
+- ヘッドレスで p1 のメッシュ生成を確認（`probe-meshcost.ts` に `VARIANT` 環境変数を追加）。
+
 ⚠️ ブラウザ実機（`npm run dev`）での見た目・操作感は未検証。ドラッグ＆ドロップと盤のレイアウトは
    実機でしか確認できない。
