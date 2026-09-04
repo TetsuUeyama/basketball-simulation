@@ -373,6 +373,11 @@ function makeNumberShell(scene: Scene, name: string, r: number, yTop: number, yB
 
 // ───────────────────────── 本体 ─────────────────────────
 
+// キットの色でユニフォームを塗り替えるか。false にすると**焼き込んだ元の色**のまま出る
+// （モデルの柄＝背番号・サイドラインが見える）。既定は従来どおり true。
+let KIT_RECOLOR = true;
+export function setKitRecolor(on: boolean): void { KIT_RECOLOR = on; }
+
 export interface VoxelBodyOptions {
   name: string;
   balance: number;      // ボディバランス能力値 → 体型3種
@@ -453,10 +458,14 @@ export function buildVoxelBody(scene: Scene, parent: TransformNode, o: VoxelBody
     kitKey = ck;
     for (const m of uniform) m.dispose();
     uniform = [];
-    const recolor: Recolor = (role) =>
-      role === VoxRole.Jersey ? [kit.top.r, kit.top.g, kit.top.b]
-        : role === VoxRole.Shorts ? [kit.bottom.r, kit.bottom.g, kit.bottom.b]
-          : role === VoxRole.Shoes ? [kit.shoes.r, kit.shoes.g, kit.shoes.b] : null;
+    // ⚠️ キットの塗り替えは「その役割のボクセルを**全部1色に潰す**」処理。
+    //    モデル本来の柄（背番号・ライン）はここで消える。確認ページは切って使う。
+    const recolor: Recolor = KIT_RECOLOR
+      ? (role) =>
+        role === VoxRole.Jersey ? [kit.top.r, kit.top.g, kit.top.b]
+          : role === VoxRole.Shorts ? [kit.bottom.r, kit.bottom.g, kit.bottom.b]
+            : role === VoxRole.Shoes ? [kit.shoes.r, kit.shoes.g, kit.shoes.b] : null
+      : () => null;
     if (skinned) {
       const remap = sd.bones.map((n) => boneIndex.get(n) ?? 0);
       const m = instanceOf(scene, `us|${variant}|${Math.round(height * 100)}|${ck}`, `voxu_${o.name}`,

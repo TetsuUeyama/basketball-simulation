@@ -8,6 +8,7 @@ import {
 import { Player } from "./objects/player/player";
 import { makeMat } from "./objects/materials";
 import { setVariantOverride, type BodyVariant } from "@objcts/player/voxel/voxelBody";
+import { setKitRecolor } from "./objects/player/player-voxel";
 import { MOTION_NAMES, motionClip, motionDuration, applyMotion } from "@objcts/player/motion/clip";
 import { ROSTER } from "./roster";
 import { buildRawModel, type RawPart } from "./voxraw";
@@ -66,6 +67,8 @@ let rawParts: RawPart[] = [];
 let rawInfo = "";
 let modelA: ModelKey = "p1";
 let modelB: ModelKey | null = "normal";   // null = 1体だけ表示
+// キットの塗り替え。切ると焼き込んだ元の色（背番号・ラインの柄）が出る。
+let kitRecolor = false;
 let motion = "idle";
 let playing = true;
 let speed = 1;
@@ -82,6 +85,7 @@ function rebuild(): void {
   rawParts = [];
   if (mode === "raw") { void buildRaw(); return; }
   const defs = ROSTER[0];
+  setKitRecolor(kitRecolor);
   const make = (key: ModelKey, x: number, team: number): Player => {
     setVariantOverride(key);
     const def = { ...defs[0], height: 1.95 };
@@ -201,6 +205,11 @@ const modelOpts = MODELS.map((m) => ({ value: m.key, label: m.label }));
 select(row("左 / 単体"), modelOpts, modelA, (v) => { modelA = v as ModelKey; rebuild(); });
 select(row("右"), [{ value: "", label: "（表示しない）" }, ...modelOpts], modelB ?? "",
   (v) => { modelB = v === "" ? null : (v as ModelKey); rebuild(); });
+
+select(row("色"), [
+  { value: "orig", label: "元の色のまま（柄が出る）" },
+  { value: "kit", label: "チームカラーで塗り替え" },
+], kitRecolor ? "kit" : "orig", (v) => { kitRecolor = v === "kit"; rebuild(); });
 
 const motionOpts = MOTION_NAMES.slice().sort().map((n) => ({ value: n, label: n }));
 select(row("モーション"), motionOpts, motion, (v) => { motion = v; t = 0; applyPose(0); });
