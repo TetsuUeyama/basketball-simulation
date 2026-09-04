@@ -13,8 +13,7 @@
 //      （剛体で骨ごとに切ると関節で裂ける。ウェイトを混ぜて GPU に変形させる）
 //   5. applyMotion → skel.prepare() で変形
 import {
-  Bone, Color4, Matrix, Mesh, Scene, Skeleton, StandardMaterial, TransformNode,
-  Vector3, VertexData,
+  Bone, Color3, Matrix, Mesh, Scene, Skeleton, StandardMaterial, TransformNode, VertexData,
 } from "@babylonjs/core";
 import { buildRig, type RigHandle } from "@objcts/player/rig";
 import { restPoseFrom } from "@objcts/player/restPose";
@@ -183,7 +182,10 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
   const { skel, index } = buildSkeleton(scene, rig, "raw");
 
   const mat = new StandardMaterial("rawMat", scene);
-  mat.specularColor = new Vector3(0.05, 0.05, 0.05) as unknown as StandardMaterial["specularColor"];
+  // ⚠️ specularColor は Color3。Vector3 を入れると r/g/b が undefined になって描画が壊れる。
+  mat.diffuseColor = new Color3(1, 1, 1);      // 色は頂点カラー（焼き込んだ元の色）が持つ
+  mat.specularColor = new Color3(0.05, 0.05, 0.05);
+  mat.backFaceCulling = true;
 
   const meshes: Mesh[] = [];
   const perBone = new Map<string, number>();
@@ -279,6 +281,5 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     meshes.push(mesh);
   }
 
-  void Color4;
   return { rig, root, skel, meshes, voxelCount, triangles, height, perBone };
 }

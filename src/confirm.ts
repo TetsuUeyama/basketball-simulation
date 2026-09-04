@@ -46,7 +46,8 @@ function applyPose(time: number): void {
   const clip = motionClip(motion);
   if (!clip) return;
   applyMotion(model.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
-  model.skel.prepare();   // リグ → スケルトン。GPU がウェイトでボクセルを変形する
+  // ⚠️ prepare() は同じ renderId 内だと即 return する。ここは描画前なので true で強制する。
+  model.skel.prepare(true);   // リグ → スケルトン。GPU がウェイトでボクセルを変形する
 }
 
 async function load(): Promise<void> {
