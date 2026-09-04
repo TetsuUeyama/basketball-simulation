@@ -259,5 +259,34 @@ CPU の打ち方では**ほぼ変化なし**。上限3が CPU の選択を縛る
 - `scripts/update-identity.cjs` は**再実行できる**（旧6要素・新8要素のどちらの行も受ける）。
   実行: `WRITE=1 NODE_PATH=<xlsxを入れた場所>/node_modules node scripts/update-identity.cjs`
 
+### 13. player-one のボクセル化に着手（V1/V2）
+
+**リグは Mixamo/Unity humanoid 命名の52骨**（Hips/Spine/Spine1/Spine2/Neck/Head/
+LeftShoulder/LeftArm/LeftForeArm/LeftHand/…/LeftUpLeg/LeftLeg/LeftFoot/LeftToeBase）。
+→ **既存の `bone_maps/player.json`（SportsAvatar_3 = 同じ命名の66骨）が52骨すべてをカバー**
+していたので、新規のマッピング作成は不要だった（余る14キーは指先/つま先で player-one 側は
+ボーンでなく EMPTY）。
+
+- 実測: メッシュ1個（47,116頂点 / 89,368ポリゴン / **シェイプキー0**）、マテリアル11、
+  身長 1.815m、rest は **T-pose**（上腕が水平から約6°下）。
+- ⚠️ **メッシュが1つしかなく部位分けが material にしか無い**。voxel-pipeline の `parts` は
+  mesh オブジェクト単位なので、前処理で material → 部位オブジェクトへ割り直した。
+  `blender_scripts/preprocess_player_one.py` を新規作成（`preprocess_player.py` が前例）。
+  body = Torso+Arms Legs+face / hair = hair+scalp hair / eyes = eyes+lashes。
+- 前処理の結果: T-pose を素に戻し、上腕を QM(ARP) の A-pose 方向へ **23.07°/22.95° 回転
+  （残差 0.0°）**。分割は body 11,499頂点 / jersey 10,272 / shorts 4,463 / socks 7,467 /
+  shoes 6,362 / hair 6,403 / eyes 802。
+- `configs/player_one.json` を作成し、`--dry-run` で工程解決を確認
+  （cleanup skip → modifiers → transplant --no-lbs → voxelize → fill skip → morphs skip）。
+
+⚠️ **焼き込み（V5）で判明している要修正点**
+（`function-lab/objcts/player/voxel/tools/buildParts.mjs`）:
+- `VARIANTS` が `male_avatar{,_skinny,_muscle}` に**ハードコード**されている。
+- `UNIFORM_PREFIXES = {tshirt, jeans, shoes}` で、player_one の prefix（jersey/shorts/socks/
+  shoes）と合わない。
+- player_one には**体型モーフが無い**ので変種が1つしか作れない。ゲーム側 `DATA` は
+  skinny/normal/muscle の3つを要求するため、当面は同じものを3つに割り当てるか、
+  シェイプキーを自作する（V4）まで1変種で動くようにするかの判断が要る。
+
 ⚠️ ブラウザ実機（`npm run dev`）での見た目・操作感は未検証。ドラッグ＆ドロップと盤のレイアウトは
    実機でしか確認できない。
