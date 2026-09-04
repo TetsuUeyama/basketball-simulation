@@ -88,7 +88,9 @@ function standardOf(bone: string): StandardBoneName | null {
   if (/^Head/i.test(b)) return "Head";
   const s = /^Left/i.test(b) ? "Left" : (/^Right/i.test(b) ? "Right" : null);
   if (!s) return null;
-  const rest = b.slice(5);
+  // ⚠️ "Left" は4文字・"Right" は5文字。固定長で切ると左側だけ全部ずれて
+  //    null → Hips 送りになり、左半身が動かなくなる（実際にやった）。
+  const rest = b.slice(s.length);
   if (/^Hand/i.test(rest)) return `${s}Hand` as StandardBoneName;          // 指も手へ
   if (/^Shoulder$/i.test(rest)) return `${s}Shoulder` as StandardBoneName;
   if (/^ForeArm/i.test(rest)) return `${s}LowerArm` as StandardBoneName;
@@ -98,6 +100,9 @@ function standardOf(bone: string): StandardBoneName | null {
   if (/^(Foot|ToeBase|Toe_End)/i.test(rest)) return `${s}Foot` as StandardBoneName;
   return null;
 }
+
+/** 検証用に公開（headless_sim/probe-bonesplit.ts）。 */
+export const standardOfForTest = standardOf;
 
 export interface RawModel {
   rig: RigHandle;
