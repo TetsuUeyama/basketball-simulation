@@ -114,7 +114,12 @@ export interface RawModel {
  * `applyMotion(model.rig, clip, t)` でそのまま動く。
  */
 export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawModel> {
-  const get = async <T>(f: string): Promise<T> => (await fetch(`${baseUrl}/${f}`)).json() as Promise<T>;
+  // ⚠️ 404 を握り潰すと「真っ黒だが例外も出ない」になる（実際にやった）。必ず落とす。
+  const get = async <T>(f: string): Promise<T> => {
+    const r = await fetch(`${baseUrl}/${f}`);
+    if (!r.ok) throw new Error(`${f} が読めない (HTTP ${r.status})。scripts/sync-voxraw.mjs を流したか？`);
+    return await r.json() as T;
+  };
   const manifest = await get<{ parts: { prefix: string; grid: string; weights?: string }[] }>("manifest.json");
   const skel = await get<SkeletonJson>("skeleton.json");
   const rootGrid = await get<{ bb_min: number[]; bb_max: number[] }>("grid.json");
@@ -139,7 +144,9 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
   for (const part of manifest.parts) {
     const grid = await get<PartGrid>(part.grid);
     voxelSize = Math.max(voxelSize, grid.voxel_size);
-    const w = part.weights ? await get<PartWeights>(part.weights) : null;
+    // weights が無ければ骨に貼れないので、その部位は Hips 直下の飾りになる（形は出る）
+    const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
+    if (part.weights && !w) console.warn(`${part.prefix}: weights が読めないので Hips へ寄せる`);
     const chunks = grid.chunks?.length ? grid.chunks
       : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
     const S = grid.voxel_size;

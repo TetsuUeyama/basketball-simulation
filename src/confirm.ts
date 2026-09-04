@@ -128,7 +128,10 @@ Object.assign(infoEl.style, {
 });
 ui.appendChild(infoEl);
 
-void load();
+load().catch((e: unknown) => {
+  info = "★ 読み込みに失敗: " + (e instanceof Error ? e.message : String(e));
+  console.error(e);
+});
 
 engine.runRenderLoop(() => {
   const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
