@@ -10,6 +10,7 @@ import { makeMat } from "./objects/materials";
 import { setVariantOverride, type BodyVariant } from "@objcts/player/voxel/voxelBody";
 import { MOTION_NAMES, motionClip, motionDuration, applyMotion } from "@objcts/player/motion/clip";
 import { ROSTER } from "./roster";
+import { buildRawModel, type RawPart } from "./voxraw";
 import "./objects/player/player-query";
 import "./objects/player/player-state";
 import "./objects/player/player-visual";
@@ -57,6 +58,12 @@ const MODELS: { key: ModelKey; label: string }[] = [
   { key: "skinny", label: "現行: skinny" },
   { key: "muscle", label: "現行: muscle" },
 ];
+// 表示モード:
+//   raw  = voxel-pipeline の出力をそのまま（生の解像度・生の色）＝ボクセル化の正確さを見る
+//   game = ゲーム用に焼いたもの（1.5cmへ縮小・部位分割・チームカラーで塗り替え）
+let mode: "raw" | "game" = "raw";
+let rawParts: RawPart[] = [];
+let rawInfo = "";
 let modelA: ModelKey = "p1";
 let modelB: ModelKey | null = "normal";   // null = 1体だけ表示
 let motion = "idle";
@@ -71,6 +78,9 @@ function rebuild(): void {
   // Player 自体に dispose は無い。ルート配下のノード/メッシュごと畳む。
   for (const p of players) p.root.dispose(false, true);
   players = [];
+  for (const r of rawParts) r.mesh.dispose();
+  rawParts = [];
+  if (mode === "raw") { void buildRaw(); return; }
   const defs = ROSTER[0];
   const make = (key: ModelKey, x: number, team: number): Player => {
     setVariantOverride(key);
@@ -100,6 +110,20 @@ function applyPose(time: number): void {
     if (clip) applyMotion(vb.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
     p.sync();
   }
+}
+
+/** パイプラインの生出力を読み込んで並べる（加工なし＝ボクセル化の正確さを見るため）。 */
+async function buildRaw(): Promise<void> {
+  rawInfo = "読み込み中…";
+  const { parts, height } = await buildRawModel(scene, "/vox/player_one");
+  rawParts = parts;
+  camera.setTarget(new Vector3(0, height * 0.55, 0));
+  camera.radius = height * 2.0;
+  const total = parts.reduce((s, p) => s + p.voxelCount, 0);
+  const lines = parts.map((p) =>
+    p.name + " " + p.voxelCount.toLocaleString() + "個 @" + (p.voxelSize * 1000).toFixed(1) + "mm");
+  lines.push("合計 " + total.toLocaleString() + " ボクセル");
+  rawInfo = lines.join("\n");
 }
 
 // ---- UI -------------------------------------------------------------------
@@ -159,6 +183,11 @@ title.textContent = "モデル確認";
 Object.assign(title.style, { fontWeight: "800", fontSize: "15px", letterSpacing: "1px" });
 ui.appendChild(title);
 
+select(row("表示"), [
+  { value: "raw", label: "生のボクセル（パイプライン出力）" },
+  { value: "game", label: "ゲーム用に焼いたもの" },
+], mode, (v) => { mode = v as "raw" | "game"; rebuild(); });
+
 const modelOpts = MODELS.map((m) => ({ value: m.key, label: m.label }));
 select(row("左 / 単体"), modelOpts, modelA, (v) => { modelA = v as ModelKey; rebuild(); });
 select(row("右"), [{ value: "", label: "（表示しない）" }, ...modelOpts], modelB ?? "",
@@ -187,15 +216,16 @@ rebuild();
 
 engine.runRenderLoop(() => {
   const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-  if (playing) { t += dt * speed; applyPose(t); }
+  if (playing && mode === "game") { t += dt * speed; applyPose(t); }
   const clip = motionClip(motion);
   const dur = clip ? motionDuration(clip) : 0;
   let tris = 0;
   for (const m of scene.meshes) if (m.isEnabled() && m.isVisible) tris += m.getTotalIndices() / 3;
-  info.textContent =
-    `${motion}  ${dur ? (t % dur).toFixed(2) : "0.00"} / ${dur.toFixed(2)}s\n`
-    + `三角形 ${Math.round(tris).toLocaleString()}  メッシュ ${scene.meshes.length}\n`
-    + `${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
+  info.textContent = mode === "raw"
+    ? rawInfo + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`
+    : `${motion}  ${dur ? (t % dur).toFixed(2) : "0.00"} / ${dur.toFixed(2)}s\n`
+      + `三角形 ${Math.round(tris).toLocaleString()}  メッシュ ${scene.meshes.length}\n`
+      + `${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   info.style.whiteSpace = "pre-line";
   scene.render();
 });

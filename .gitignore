@@ -11,3 +11,4 @@ headless_sim/progress.log
 _skeleton_backup/
 headless_sim/*.txt
 headless_sim/*.json
+public/vox/   # パイプライン出力の複製（確認用。再生成できる）

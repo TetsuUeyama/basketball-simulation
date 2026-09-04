@@ -1,0 +1,121 @@
+{
+ "schema_version": 2,
+ "name": "player_one",
+ "grid": "grid.json",
+ "skeleton": "skeleton.json",
+ "parts": [
+  {
+   "prefix": "body",
+   "kind": "body",
+   "grid": "body.grid.json",
+   "weights": "body.weights.json",
+   "chunks": [
+    "body_c1.vox",
+    "body_c2.vox",
+    "body_c3.vox",
+    "body_c4.vox"
+   ],
+   "voxel_count": 103597,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "eyes",
+   "kind": "eyes",
+   "grid": "eyes.grid.json",
+   "weights": "eyes.weights.json",
+   "chunks": [
+    "eyes.vox"
+   ],
+   "voxel_count": 3629,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hair",
+   "kind": "hair",
+   "grid": "hair.grid.json",
+   "weights": "hair.weights.json",
+   "chunks": [
+    "hair.vox"
+   ],
+   "voxel_count": 16187,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "jersey",
+   "kind": "cloth",
+   "grid": "jersey.grid.json",
+   "weights": "jersey.weights.json",
+   "chunks": [
+    "jersey_c1.vox",
+    "jersey_c2.vox",
+    "jersey_c3.vox",
+    "jersey_c4.vox"
+   ],
+   "voxel_count": 221762,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "shoes",
+   "kind": "cloth",
+   "grid": "shoes.grid.json",
+   "weights": "shoes.weights.json",
+   "chunks": [
+    "shoes.vox"
+   ],
+   "voxel_count": 41028,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "shorts",
+   "kind": "cloth",
+   "grid": "shorts.grid.json",
+   "weights": "shorts.weights.json",
+   "chunks": [
+    "shorts.vox"
+   ],
+   "voxel_count": 140518,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "socks",
+   "kind": "cloth",
+   "grid": "socks.grid.json",
+   "weights": "socks.weights.json",
+   "chunks": [
+    "socks.vox"
+   ],
+   "voxel_count": 114354,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  }
+ ],
+ "morphs": [],
+ "warnings": []
+}
