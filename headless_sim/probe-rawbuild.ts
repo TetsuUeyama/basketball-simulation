@@ -28,6 +28,7 @@ const scene = new Scene(engine);
 const m = await buildRawModel(scene, "/vox/player_one");
 
 console.log(`メッシュ ${m.meshes.length} / ボクセル ${m.voxelCount.toLocaleString()} / 三角形 ${m.triangles.toLocaleString()}`);
+console.log(`服に隠れて落とした肌: ${m.skinDropped.toLocaleString()} ボクセル`);
 let bad = 0;
 for (const mesh of m.meshes) {
   const v = mesh.getTotalVertices(), i = mesh.getTotalIndices();

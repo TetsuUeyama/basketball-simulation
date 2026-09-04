@@ -146,6 +146,62 @@ const FACES: { n: [number, number, number]; d: [number, number, number]; q: [num
   { n: [0, 0, -1], d: [0, 0, -1], q: [[-.5, -.5, -.5], [-.5, .5, -.5], [.5, .5, -.5], [.5, -.5, -.5]] },
 ];
 
+/** 服として扱う部位（この内側の肌は描かない）。 */
+const CLOTH_PARTS = new Set(["jersey", "shorts", "socks", "shoes", "tshirt", "jeans"]);
+/** 方位の分割数。高さ×方位ごとに「服の一番外側の半径」を持つ。 */
+const SECTORS = 24;
+
+/**
+ * 服に覆われた肌を落とすための判定を作る（焼き込み側 clothOuter と同じ考え方）。
+ * 高さの層ごとに服の重心を軸とし、方位ごとの最大半径を持つ。
+ * その半径より内側にある肌のボクセルは「服の中」なので描かない。
+ */
+function clothCover(
+  cloth: { x: number; y: number; z: number }[], layer: number,
+): (x: number, y: number, z: number, margin: number) => boolean {
+  const acc = new Map<number, [number, number, number]>();
+  for (const c of cloth) {
+    const L = Math.round(c.z / layer);
+    let a = acc.get(L);
+    if (!a) { a = [0, 0, 0]; acc.set(L, a); }
+    a[0] += c.x; a[1] += c.y; a[2]++;
+  }
+  const axis = new Map<number, [number, number]>();
+  for (const [L, a] of acc) axis.set(L, [a[0] / a[2], a[1] / a[2]]);
+
+  const outer = new Map<string, number>();
+  const key = (L: number, s: number): string => L + "," + ((s % SECTORS) + SECTORS) % SECTORS;
+  const put = (L: number, s: number, r: number): void => {
+    const k = key(L, s);
+    const cur = outer.get(k);
+    if (cur === undefined || cur < r) outer.set(k, r);
+  };
+  const sectorOf = (dx: number, dy: number): number =>
+    Math.floor(((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI)) * SECTORS);
+
+  for (const c of cloth) {
+    const L = Math.round(c.z / layer);
+    const ax = axis.get(L);
+    if (!ax) continue;
+    const dx = c.x - ax[0], dy = c.y - ax[1];
+    const r = Math.hypot(dx, dy);
+    if (r < 1e-6) continue;
+    const s = sectorOf(dx, dy);
+    // 隣の方位にも広げる（縫い目で肌が点々と残らないように）
+    put(L, s - 1, r); put(L, s, r); put(L, s + 1, r);
+  }
+
+  return (x, y, z, margin) => {
+    const L = Math.round(z / layer);
+    const ax = axis.get(L);
+    if (!ax) return false;
+    const dx = x - ax[0], dy = y - ax[1];
+    const o = outer.get(key(L, sectorOf(dx, dy)));
+    // 服の方が外側にある = この肌は服の中に隠れている
+    return o !== undefined && o > Math.hypot(dx, dy) + margin;
+  };
+}
+
 export interface RawModel {
   rig: RigHandle;
   root: TransformNode;
@@ -153,6 +209,8 @@ export interface RawModel {
   meshes: Mesh[];
   voxelCount: number;
   triangles: number;
+  /** 服に隠れて描かなかった肌のボクセル数。 */
+  skinDropped: number;
   height: number;
   perBone: Map<string, number>;
 }
@@ -189,14 +247,53 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
 
   const meshes: Mesh[] = [];
   const perBone = new Map<string, number>();
-  let voxelCount = 0, triangles = 0;
+  let voxelCount = 0, triangles = 0, skinDropped = 0;
 
+  // --- 先に全部位を読む（服の外径を決めてから肌を間引くため2段構え）---
+  type Loaded = {
+    part: { prefix: string; grid: string; weights?: string };
+    grid: PartGrid; w: PartWeights | null;
+    chunks: { ch: VoxChunk; voxels: Uint8Array[]; palette: number[][] }[];
+  };
+  const loaded: Loaded[] = [];
   for (const part of manifest.parts) {
     const grid = await get<PartGrid>(part.grid);
     const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
-    const chunks = grid.chunks?.length ? grid.chunks
+    const chunkDefs = grid.chunks?.length ? grid.chunks
       : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
+    const chunks: Loaded["chunks"] = [];
+    for (const ch of chunkDefs) {
+      const res = await fetch(`${baseUrl}/${ch.vox_file}`);
+      if (!res.ok) continue;
+      const { voxels, palette } = parseVox(await res.arrayBuffer());
+      chunks.push({ ch, voxels, palette });
+    }
+    loaded.push({ part, grid, w, chunks });
+  }
+
+  // --- 服の外径を測る（Blender 座標のまま。x=左右 / y=前後 / z=高さ）---
+  const clothPts: { x: number; y: number; z: number }[] = [];
+  let clothLayer = 0.02;
+  for (const L of loaded) {
+    if (!CLOTH_PARTS.has(L.part.prefix)) continue;
+    clothLayer = Math.max(clothLayer, L.grid.voxel_size * 2);
+    for (const { ch, voxels } of L.chunks) {
+      for (const v of voxels) {
+        clothPts.push({
+          x: ch.grid_origin[0] + (v[0] + 0.5) * L.grid.voxel_size,
+          y: ch.grid_origin[1] + (v[1] + 0.5) * L.grid.voxel_size,
+          z: ch.grid_origin[2] + (v[2] + 0.5) * L.grid.voxel_size,
+        });
+      }
+    }
+  }
+  const covered = clothPts.length ? clothCover(clothPts, clothLayer) : null;
+
+  for (const { part, grid, w, chunks: loadedChunks } of loaded) {
+    const chunks = loadedChunks.map((c) => c.ch);
     const S = grid.voxel_size;
+    // 服の中に隠れる肌は描かない（body だけが対象。服・髪・目はそのまま）
+    const cullSkin = covered && part.prefix === "body";
 
     // 部位の格子で「そこにボクセルがあるか」を引けるようにする（隠れた面を描かないため）
     type Cell = { c: [number, number, number]; col: number[]; wi: number };
@@ -204,14 +301,19 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     const occupied = new Set<number>();
     const KEY = (x: number, y: number, z: number): number => (x + 512) * 4194304 + (y + 512) * 2048 + (z + 512);
     let wi = 0;
-    for (const ch of chunks) {
-      const res = await fetch(`${baseUrl}/${ch.vox_file}`);
-      if (!res.ok) { continue; }
-      const { voxels, palette } = parseVox(await res.arrayBuffer());
+    for (const { ch, voxels, palette } of loadedChunks) {
       const off = [0, 1, 2].map((i) => Math.round((ch.grid_origin[i] - grid.grid_origin[i]) / S));
       for (const v of voxels) {
         const c: [number, number, number] = [v[0] + off[0], v[1] + off[1], v[2] + off[2]];
-        cells.push({ c, col: palette[v[3] - 1] ?? [200, 200, 200], wi: wi++ });
+        const myWi = wi++;
+        if (cullSkin) {
+          const wx = ch.grid_origin[0] + (v[0] + 0.5) * S;
+          const wy = ch.grid_origin[1] + (v[1] + 0.5) * S;
+          const wz = ch.grid_origin[2] + (v[2] + 0.5) * S;
+          // 服より内側なら描かない。margin は服の厚みぶんの余裕（負で少し内側まで残す）
+          if (covered!(wx, wy, wz, -S)) { skinDropped++; continue; }
+        }
+        cells.push({ c, col: palette[v[3] - 1] ?? [200, 200, 200], wi: myWi });
         occupied.add(KEY(c[0], c[1], c[2]));
       }
     }
@@ -281,5 +383,5 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     meshes.push(mesh);
   }
 
-  return { rig, root, skel, meshes, voxelCount, triangles, height, perBone };
+  return { rig, root, skel, meshes, voxelCount, triangles, height, perBone, skinDropped };
 }
