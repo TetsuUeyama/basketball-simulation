@@ -19,6 +19,8 @@ declare module "./player" {
 Player.prototype.applyDef = function(def: PlayerDef): void {
     const prevVariant = this.vox ? variantFor(this.attr.balance) : "";
     this.role = def.role;
+    this.weight = def.weight;
+    this.posMask = def.posMask;
     this.attr = def.attr;   // 再バインド: 試合前のスワップはdefオブジェクトを差し替えうる
     this.abilities = new Set(def.abilities ?? []);
     this.runSpeed = runSpeedForSpeed(def.attr.speed); // コンストラクタと同期を保つ

@@ -15,9 +15,14 @@ export function overallOf(p: Player): number {
   return n ? sum / n / 100 : 0.5;
 }
 
-// ポジション適格性: 自分のロールと EXTRA_POSITIONS のみ可。適格なら 1、不適格なら 0。
-export function roleFit(p: { role: string; name: string }, slot: string): number {
+/** 守れるポジションのビット（C=1 / PF=2 / SF=4 / SG=8 / PG=16）。identity.ts の posMask と同じ並び。 */
+export const POS_BIT: Record<string, number> = { C: 1, PF: 2, SF: 4, SG: 8, PG: 16 };
+
+// ポジション適格性: 主ロール / 選手DBの posMask（守れるポジション）/ EXTRA_POSITIONS の手指定。
+// 適格なら 1、不適格なら 0。posMask は WE2010 の J〜N 列由来で、1人が複数ポジションを持つ。
+export function roleFit(p: { role: string; name: string; posMask?: number }, slot: string): number {
   if (slot === p.role) return 1;
+  if (p.posMask && (p.posMask & (POS_BIT[slot] ?? 0)) !== 0) return 1;
   return (EXTRA_POSITIONS[p.name] ?? []).includes(slot) ? 1 : 0;
 }
 

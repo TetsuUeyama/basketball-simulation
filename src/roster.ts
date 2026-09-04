@@ -31,11 +31,11 @@ const MAX = A(99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99
 // データベースのエントリから、新しい独立した PlayerDef を構築する。試合前の選手ピッカーが
 // ロスタースロットに触れずに任意の選手をプレビューするのに使う。
 export function makeDefFromDb(p: DbPlayer): PlayerDef {
-  const [name, role, hcm, ratings, mask, extras, hand, look] = p;
+  const [name, role, hcm, ratings, mask, extras, hand, look, wkg, posMask] = p;
   const attr = {} as Attributes;
   ATTR_META.forEach((m, k) => { attr[m.key] = clamp(ratings[k] ?? 50, 0, 100); });
   return {
-    name, role, height: hcm / 100, attr,
+    name, role, height: hcm / 100, weight: wkg ?? 75, posMask: posMask ?? 0, attr,
     abilities: ABILITY_META.filter((_, b) => mask & (1 << b)).map((m) => m.key),
     hand: hand === "L" ? "L" : "R",
     future: { stability: extras[0] ?? 0, offhandAcc: extras[1] ?? 0, offhandFreq: extras[2] ?? 0 },
@@ -51,6 +51,8 @@ export function applyDbPlayer(def: PlayerDef, p: DbPlayer): void {
   def.name = src.name;
   def.role = src.role;
   def.height = src.height;
+  def.weight = src.weight;
+  def.posMask = src.posMask;
   def.priority = undefined;
   ATTR_META.forEach((m) => { def.attr[m.key] = src.attr[m.key]; });
   def.abilities = src.abilities;
@@ -159,8 +161,9 @@ export const EXTRA_POSITIONS: Record<string, string[]> = {
 };
 const BENCH_ROLES = ["PG", "SG", "SF", "PF", "C", "SG", "SF", "PF"];
 
+// 初期ダミー用。体重は身長から BMI 23 相当で置く（実プレイでは DB の値で上書きされる）。
 const mk = (name: string, role: string, height: number, attr: Attributes): PlayerDef =>
-  ({ name, role, height, attr });
+  ({ name, role, height, weight: Math.round(23 * height * height), posMask: 0, attr });
 
 export const ROSTER: PlayerDef[][] = [
   [ // Team 0 — BLAZE (RED) — すべて最小値

@@ -41,6 +41,8 @@ export class Player {
   look: PlayerLook;              // 見た目(肌/髪/髪型)。defのlookを保持しHUD/頭と共有
   attr: Attributes;              // defの能力値へのライブ参照
   height: number;                // メートル
+  weight = 80;                   // kg（DB由来。体格＝見た目の厚みと接触の質量に使う）
+  posMask = 0;                   // 守れるポジションのビット和（C=1/PF=2/SF=4/SG=8/PG=16）
   runSpeed: number;              // m/s、`speed`能力値から算出
   role: string;                  // PG / SG / SF / PF / C
   evalRole: string | undefined;  // オフェンスロール — 攻撃時の挙動修飾 (applyDef)

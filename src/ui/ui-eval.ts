@@ -221,8 +221,16 @@ UI.prototype.positionChips = function(def: PlayerDef, color: string): HTMLDivEle
     return row;
 };
 
-  // 守れるポジション: 隣接ポジションを身長/脚力でゲートする。最初の要素 = 自分自身。
+  // 守れるポジション。選手DBの posMask（WE2010 の J〜N 列）が正。
+  // posMask を持たない def（初期ダミー等）は従来どおり隣接ポジションを身長/脚力で推定する。
 UI.prototype.coverablePositions = function(def: PlayerDef): string[] {
+    const ORDER0 = ["PG", "SG", "SF", "PF", "C"];
+    const BIT: Record<string, number> = { C: 1, PF: 2, SF: 4, SG: 8, PG: 16 };
+    if (def.posMask) {
+      const list = ORDER0.filter((p) => (def.posMask & BIT[p]) !== 0);
+      // 主ポジションを先頭に置く（表示の約束）
+      return [def.role, ...list.filter((p) => p !== def.role)];
+    }
     const ADJ: Record<string, string[]> = {
       PG: ["SG"], SG: ["PG", "SF"], SF: ["SG", "PF"], PF: ["SF", "C"], C: ["PF"],
     };

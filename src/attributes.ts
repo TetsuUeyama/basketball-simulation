@@ -123,8 +123,12 @@ export const ABILITY_META: { key: AbilityKey; label: string; tip: string }[] = [
 
 export interface PlayerDef {
   name: string;
-  role: string;       // PG / SG / SF / PF / C
+  role: string;       // PG / SG / SF / PF / C（守れるポジションの中央値）
   height: number;     // メートル — 身長。リバウンド・ブロック・ゴール下の届く高さに影響
+  // 体重(kg)。身長との比（BMI）が体格＝見た目の厚みを決める。接触の質量としても使える。
+  weight: number;
+  // 守れるポジションのビット和（C=1 / PF=2 / SF=4 / SG=8 / PG=16）。0 = 情報なし。
+  posMask: number;
   attr: Attributes;
   abilities?: AbilityKey[]; // 特殊能力 — 持っているものだけ列挙
   priority?: number;  // 明示的なオフェンス優先度 0..1 (ロール/スキルのデフォルトを上書き)
