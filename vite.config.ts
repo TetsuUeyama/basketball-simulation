@@ -9,6 +9,15 @@ const objctsDir = fileURLToPath(new URL('./vendor/objcts', import.meta.url));
 const babylonCore = fileURLToPath(new URL('./node_modules/@babylonjs/core', import.meta.url));
 
 export default defineConfig({
+  // index.html = 本編 / confirm.html = モデル確認ページ（見た目とモーションの目視確認用）
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        confirm: fileURLToPath(new URL("./confirm.html", import.meta.url)),
+      },
+    },
+  },
   resolve: {
     dedupe: ['@babylonjs/core'],
     alias: {

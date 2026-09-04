@@ -18,7 +18,7 @@ npm run dev      # http://localhost:5173
 
 | コマンド | 内容 |
 | --- | --- |
-| `npm run dev` | Vite 開発サーバー |
+| `npm run dev` | Vite 開発サーバー（本編 http://localhost:5173/ ／**モデル確認 /confirm.html**） |
 | `npm run build` | 型チェック + `dist/` へビルド |
 | `npm run preview` | ビルド結果の確認 |
 | `npm run typecheck` | 型チェックのみ |
@@ -42,6 +42,14 @@ src/
 vendor/objcts/   選手モデル・モーションの共有ライブラリ（scripts/sync-objcts.mjs で取り込む）
 headless_sim/    ブラウザ無しでロジックを実測するプローブ群
 ```
+
+## モデル確認ページ（/confirm.html）
+
+選手モデルの見た目とモーションを、**ゲームと同じ描画経路**で目視確認するページ。試合は動かさない。
+
+- 左右に別モデルを並べて比較できる（新: player_one ／ 現行: normal / skinny / muscle）。
+- モーションはクリップ名で選び、再生 / 停止 / 1コマ送り / 速さ変更ができる。
+- 三角形数・メッシュ数・fps を常時表示する。
 
 ## ポーカー強化
 

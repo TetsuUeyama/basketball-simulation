@@ -8,12 +8,15 @@ import { Mesh, VertexData, Scene } from "@babylonjs/core";
 import bodySkinny from "./data/body-skinny.json";
 import bodyNormal from "./data/body-normal.json";
 import bodyMuscle from "./data/body-muscle.json";
+import bodyP1 from "./data/body-p1.json";
 import clothSkinny from "./data/cloth-skinny.json";
 import clothNormal from "./data/cloth-normal.json";
 import clothMuscle from "./data/cloth-muscle.json";
+import clothP1 from "./data/cloth-p1.json";
 import hairData from "./data/hair.json";
 
-export type BodyVariant = "skinny" | "normal" | "muscle";
+// "p1" = player_one（Spanish footballer をボクセル化したもの）。体型モーフが無いので1種のみ。
+export type BodyVariant = "skinny" | "normal" | "muscle" | "p1";
 /** 握り具合 0..1（0 = 指を広げた状態 / 1 = 握った状態）。handL / handR にのみ効く。
  *  段階は焼き込んであるので、一番近い段へ丸められる（既定 4 段）。 */
 export type HandCurl = number;
@@ -39,10 +42,17 @@ const DATA: Record<BodyVariant, BodyData> = {
   skinny: bodySkinny as BodyData,
   normal: bodyNormal as BodyData,
   muscle: bodyMuscle as BodyData,
+  p1: bodyP1 as unknown as BodyData,
 };
+
+// モデル比較用の上書き。null 以外なら variantFor() が常にこれを返す（confirm ページで使う）。
+let VARIANT_OVERRIDE: BodyVariant | null = null;
+export function setVariantOverride(v: BodyVariant | null): void { VARIANT_OVERRIDE = v; }
+export function variantOverride(): BodyVariant | null { return VARIANT_OVERRIDE; }
 
 /** ボディバランス(0..100) → 体型。現行の胴の厚み（65以下は一律細い）と同じ刻み。 */
 export function variantFor(balance: number): BodyVariant {
+  if (VARIANT_OVERRIDE) return VARIANT_OVERRIDE;
   if (balance <= 55) return "skinny";
   if (balance >= 80) return "muscle";
   return "normal";
@@ -65,6 +75,7 @@ const CLOTH: Record<BodyVariant, BodyData> = {
   skinny: clothSkinny as BodyData,
   normal: clothNormal as BodyData,
   muscle: clothMuscle as BodyData,
+  p1: clothP1 as unknown as BodyData,
 };
 
 /** その体型に着せてある服。 */

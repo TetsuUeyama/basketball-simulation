@@ -9,7 +9,7 @@ const engine = new NullEngine();
 const scene = new Scene(engine);
 
 const HEIGHT = Number(process.env.H ?? 1.95);
-const variant = variantFor(Number(process.env.BAL ?? 70));
+const variant = (process.env.VARIANT as ReturnType<typeof variantFor>) ?? variantFor(Number(process.env.BAL ?? 70));
 const st = partStretch(variant, HEIGHT, DEFAULT_WIDTH_EXPONENT, DEFAULT_HEAD_EXPONENT);
 const parts = Object.keys(bodyData(variant).parts);
 
