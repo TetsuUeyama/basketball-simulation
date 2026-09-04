@@ -39,6 +39,17 @@ let playing = true;
 let speed = 1;
 let t = 0;
 let info = "読み込み中…";
+/** 表示中の髪型の部位名。"hair" = モデル本来の髪 / "" = 髪なし。 */
+let hairPart = "hair";
+
+/** 髪型を1つだけ表示する。 */
+function showHair(name: string): void {
+  if (!model) return;
+  for (const [part, mesh] of model.byPart) {
+    if (part === "hair" || part.startsWith("hairstyle_")) mesh.setEnabled(part === name);
+  }
+  hairPart = name;
+}
 
 /** 選んだクリップの t 秒地点をモデル自身のリグへ当てる。 */
 function applyPose(time: number): void {
@@ -56,8 +67,21 @@ async function load(): Promise<void> {
   camera.radius = model.height * 1.6;
   const bones = [...model.perBone.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
     .map(([b, n]) => `${b} ${n.toLocaleString()}`);
+  // 髪型セレクタの中身を、読み込んだ部位から作る
+  hairSel.replaceChildren();
+  const opts: [string, string][] = [["hair", "モデル本来の髪"], ["", "髪なし"]];
+  for (const part of [...model.byPart.keys()].filter((k) => k.startsWith("hairstyle_")).sort()) {
+    opts.push([part, "髪型 " + part.replace("hairstyle_", "")]);
+  }
+  for (const [v, label] of opts) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    if (v === hairPart) o.selected = true;
+    hairSel.appendChild(o);
+  }
   info = `ボクセル ${model.voxelCount.toLocaleString()} / 三角形 ${model.triangles.toLocaleString()} / メッシュ ${model.meshes.length}\n`
     + `${bones.join("  ")}\n身長 ${model.height.toFixed(3)}m`;
+  showHair(hairPart);
   applyPose(0);
 }
 
@@ -112,6 +136,15 @@ for (const n of MOTION_NAMES.slice().sort()) {
 }
 sel.onchange = () => { motion = sel.value; t = 0; applyPose(0); };
 row("モーション").appendChild(sel);
+
+// 髪型のセレクタ（モデル本来の髪 / 差し替え用の髪型 / 無し）
+const hairSel = document.createElement("select");
+Object.assign(hairSel.style, {
+  background: "rgba(20,24,34,0.95)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
+  borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
+} as Partial<CSSStyleDeclaration>);
+hairSel.onchange = () => showHair(hairSel.value);
+row("髪型").appendChild(hairSel);
 
 const ctl = row("再生");
 const playBtn = button(ctl, "⏸ 停止", () => {

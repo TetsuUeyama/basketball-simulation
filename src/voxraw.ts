@@ -207,6 +207,8 @@ export interface RawModel {
   root: TransformNode;
   skel: Skeleton;
   meshes: Mesh[];
+  /** 部位名 → メッシュ。髪型の出し分けに使う。 */
+  byPart: Map<string, Mesh>;
   voxelCount: number;
   triangles: number;
   /** 服に隠れて描かなかった肌のボクセル数。 */
@@ -246,6 +248,7 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
   mat.backFaceCulling = true;
 
   const meshes: Mesh[] = [];
+  const byPart = new Map<string, Mesh>();
   const perBone = new Map<string, number>();
   let voxelCount = 0, triangles = 0, skinDropped = 0;
 
@@ -381,7 +384,8 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     mesh.numBoneInfluencers = 4;
     mesh.alwaysSelectAsActiveMesh = true;
     meshes.push(mesh);
+    byPart.set(part.prefix, mesh);
   }
 
-  return { rig, root, skel, meshes, voxelCount, triangles, height, perBone, skinDropped };
+  return { rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped };
 }

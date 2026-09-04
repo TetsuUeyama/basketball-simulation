@@ -39,6 +39,16 @@ for (const mesh of m.meshes) {
     + ` weights=${hasW ? "有" : "★無"} color=${hasC ? "有" : "★無"} skeleton=${mesh.skeleton ? "有" : "★無"}`);
 }
 console.log(`  骨 ${m.skel.bones.length} 本 / 問題のあるメッシュ ${bad}`);
+const hairs = [...m.byPart.keys()].filter((k) => k.startsWith("hairstyle_")).sort();
+console.log(`
+髪型 ${hairs.length} 種: ${hairs.join(" ")}`);
+for (const h of hairs.slice(0, 4)) {
+  const mesh = m.byPart.get(h)!;
+  const bb = mesh.getBoundingInfo().boundingBox;
+  console.log(`  ${h} 頂点${mesh.getTotalVertices()} 幅${(bb.maximum.x-bb.minimum.x).toFixed(3)} 高さ${(bb.maximum.y-bb.minimum.y).toFixed(3)} 頭頂Y${bb.maximum.y.toFixed(3)}`);
+}
+const head = m.byPart.get("body")!;
+console.log(`  参考 body の上端Y ${head.getBoundingInfo().boundingBox.maximum.y.toFixed(3)}`);
 
 // モーションで頂点が実際に動くか（スキニング後の位置で確認）
 const clip = motionClip(process.env.CLIP ?? "dribbleRun")!;
