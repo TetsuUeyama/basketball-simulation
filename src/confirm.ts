@@ -101,14 +101,23 @@ function rebuild(): void {
   applyPose(0);
 }
 
-/** 選んだモーションの t 秒地点のポーズを全員へ適用する。 */
+/**
+ * 選んだモーションの t 秒地点のポーズを全員へ適用する。
+ *
+ * ⚠️ 順番が重要。`p.sync()` は内部で `syncVoxelPose()` を呼び、Player が持つ関節ノード
+ * （腕・肘・腰・膝）から**リグ全体を書き直す**。先に applyMotion してから sync すると
+ * そこで上書きされて動かない。sync を先に走らせ、その上へクリップを重ねる。
+ * 服はスキニングなので、リグを触ったあとに `skel.prepare()` が要る。
+ */
 function applyPose(time: number): void {
   const clip = motionClip(motion);
   for (const p of players) {
     const vb = p.vox;
     if (!vb) continue;
-    if (clip) applyMotion(vb.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
-    p.sync();
+    p.sync();                                   // ゲーム側の姿勢（リグを一度書き直す）
+    if (!clip) continue;
+    applyMotion(vb.rig, clip, time % motionDuration(clip), { rootMotion: "vertical", leanDeg: 0 });
+    vb.skel.prepare();                          // リグ → スケルトン（服へ反映）
   }
 }
 
