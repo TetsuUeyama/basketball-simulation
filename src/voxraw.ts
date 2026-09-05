@@ -688,6 +688,17 @@ export interface RawModel {
   triangles: number;
   /** 服に隠れて描かなかった肌のボクセル数。 */
   skinDropped: number;
+  /** 殻の内側の空洞に向いていて描かなかった面の数。 */
+  cavityFaces: number;
+  /**
+   * 遠景用の粗いメッシュを作って返す（作ってあれば使い回す）。描画は呼び手が決める。
+   * ⚠️ 26人ぶんを近景の細かさで描くと三角形が桁違いになる。遠い選手はこちらへ寄せる。
+   */
+  lodPart(name: string): Mesh | null;
+  /** 粗い版のボクセル寸法が細かい版の何倍か。 */
+  lodStep: number;
+  /** 背中の番号（Name ではないほう）が占めている範囲。選手ごとの番号を貼る位置。 */
+  backNumberBand: { xLo: number; xHi: number; yLo: number; yHi: number } | null;
   /**
   /** あごの形を変える（顔のバリエーション）。body のメッシュだけ張り直す。 */
   setJaw(shape: JawShape): void;
@@ -805,8 +816,11 @@ export function buildRawRig(scene: Scene, source: RawSource): {
 
 /** 読み込み済みの素材から1体を組む（同期）。 */
 export function buildRawModelFrom(
-  scene: Scene, source: RawSource, opts?: { jaw?: JawShape },
+  scene: Scene, source: RawSource, opts?: { jaw?: JawShape; noCavityCull?: boolean },
 ): RawModel {
+  // 検証用の逃げ道。面の間引きを止めて、間引き版と当たり判定を突き合わせる
+  // （間引きで穴が開いていないかを確かめる。probe-cull がこれを使う）。
+  const noCavityCull = opts?.noCavityCull === true;
   const { skelJson, height, hairParts, hairNames } = source;
   const loadPart = source.loadPart;
   type Loaded = LoadedPart;
@@ -1099,8 +1113,132 @@ export function buildRawModelFrom(
     return [tx / sum, ty / sum, tz / sum, mx / sum, my / sum, mz / sum];
   };
 
+  // ⚠️ 「他の部位に埋まっている面」も落とそうとしたが、やめた。部位ごとに格子の
+  //    原点がずれているので、半分だけ服に潜っているマスを埋没と誤判定する。中心1点でも
+  //    マスの8隅すべてでも漏れが残り、浅い角度から覗くと穴が見えた（レイ 5163 本中
+  //    26本→1本。headless_sim/probe-cull.ts で再現できる）。三角形は 6% 増えるが、
+  //    穴が開くよりましなので、根拠が明確な「密閉された空洞向き」だけ落とす。
+  let cavityFaces = 0;
+
+  // --- 背中の番号がどこにあるか ---------------------------------------------
+  // ⚠️ 背中には「番号」と「Name」が乗っている。ゲーム側は番号だけを選手ごとに
+  //    差し替えるので、その帯を知る必要がある。**面ではなく元のボクセルで**塊に
+  //    分けて一番大きいものを番号とする（面は隠れたぶんを間引くので段が飛び、
+  //    高さの切れ目では番号と Name を区別できない）。
+  const backNumberBand = ((): { xLo: number; xHi: number; yLo: number; yHi: number } | null => {
+    const L = loaded.find((x) => x.part.prefix === "jerseymark");
+    if (!L) return null;
+    const S = L.grid.voxel_size, O = L.grid.grid_origin;
+    const cells: [number, number, number][] = [];
+    for (const { ch, voxels, palette } of L.chunks) {
+      const off = [0, 1, 2].map((i) => Math.round((ch.grid_origin[i] - O[i]) / S));
+      for (const v of voxels) {
+        // ⚠️ 地の色（ジャージの赤）のボクセルを外す。これを混ぜると番号と Name が
+        //    地でつながって1つの塊になり、帯が Name まで伸びる（実測 21cm → 30cm）。
+        const col = palette[v[3] - 1];
+        if (baseCloth && col && Math.hypot(col[0] - baseCloth[0], col[1] - baseCloth[1],
+          col[2] - baseCloth[2]) <= CLOTH_BASE_TOL) continue;
+        const c: [number, number, number] = [v[0] + off[0], v[1] + off[1], v[2] + off[2]];
+        const b = toBabylon(O[0] + (c[0] + 0.5) * S, O[1] + (c[1] + 0.5) * S, O[2] + (c[2] + 0.5) * S);
+        if (b[2] > -0.05) continue;                 // 背中側（-Z）だけ
+        cells.push(c);
+      }
+    }
+    if (!cells.length) return null;
+    const at = new Map(cells.map((c, i) => [CELL_KEY(c[0], c[1], c[2]), i]));
+    const par = cells.map((_, i) => i);
+    const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
+    for (const c of cells) {
+      const i = at.get(CELL_KEY(c[0], c[1], c[2]))!;
+      for (const d of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+        const j = at.get(CELL_KEY(c[0] + d[0], c[1] + d[1], c[2] + d[2]));
+        if (j === undefined) continue;
+        const a = find(i), b = find(j);
+        if (a !== b) par[a] = b;
+      }
+    }
+    const groups = new Map<number, [number, number, number][]>();
+    for (const c of cells) {
+      const r = find(at.get(CELL_KEY(c[0], c[1], c[2]))!);
+      let g = groups.get(r); if (!g) { g = []; groups.set(r, g); }
+      g.push(c);
+    }
+    let best: [number, number, number][] = [];
+    for (const g of groups.values()) if (g.length > best.length) best = g;
+    let xLo = Infinity, xHi = -Infinity, yLo = Infinity, yHi = -Infinity;
+    for (const c of best) {
+      const b = toBabylon(O[0] + (c[0] + 0.5) * S, O[1] + (c[1] + 0.5) * S, O[2] + (c[2] + 0.5) * S);
+      xLo = Math.min(xLo, b[0]); xHi = Math.max(xHi, b[0]);
+      yLo = Math.min(yLo, b[1]); yHi = Math.max(yHi, b[1]);
+    }
+    return { xLo, xHi, yLo, yHi };
+  })();
+
+  /**
+   * 部位の「外の空気」を求める。
+   * ⚠️ ボクセル化は中身を詰めない（--no-interior）ので、体も服も**殻**になっている。
+   *    殻の内側の面は絶対に見えないのに毎フレーム描いていた。境界箱の外周から
+   *    空きセルを塗り広げ、届かなかった空き＝密閉された空洞とみなして面を張らない。
+   *    「外から6方向に辿り着けない」ことが根拠なので、見える面を消す心配は無い。
+   */
+  const outsideAir = (cells: Cell[]): { has(cx: number, cy: number, cz: number): boolean } => {
+    let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const c of cells) for (let i = 0; i < 3; i++) {
+      if (c.c[i] < lo[i]) lo[i] = c.c[i];
+      if (c.c[i] > hi[i]) hi[i] = c.c[i];
+    }
+    lo = lo.map((v) => v - 1); hi = hi.map((v) => v + 1);
+    const nx = hi[0] - lo[0] + 1, ny = hi[1] - lo[1] + 1, nz = hi[2] - lo[2] + 1;
+    const n = nx * ny * nz;
+    const at = (x: number, y: number, z: number): number => (z * ny + y) * nx + x;
+    const solid = new Uint8Array(n);
+    for (const c of cells) solid[at(c.c[0] - lo[0], c.c[1] - lo[1], c.c[2] - lo[2])] = 1;
+    const air = new Uint8Array(n);
+    const q = new Int32Array(n);
+    let head = 0, tail = 0;
+    const push = (i: number): void => { if (!solid[i] && !air[i]) { air[i] = 1; q[tail++] = i; } };
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      if (x === 0 || y === 0 || z === 0 || x === nx - 1 || y === ny - 1 || z === nz - 1) push(at(x, y, z));
+    }
+    while (head < tail) {
+      const i = q[head++];
+      const x = i % nx, y = ((i / nx) | 0) % ny, z = (i / (nx * ny)) | 0;
+      if (x > 0) push(i - 1); if (x < nx - 1) push(i + 1);
+      if (y > 0) push(i - nx); if (y < ny - 1) push(i + nx);
+      if (z > 0) push(i - nx * ny); if (z < nz - 1) push(i + nx * ny);
+    }
+    return {
+      has: (cx, cy, cz) => {
+        const x = cx - lo[0], y = cy - lo[1], z = cz - lo[2];
+        if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return true;  // 箱の外＝外気
+        return air[at(x, y, z)] === 1;
+      },
+    };
+  };
+
   /** 部位1つぶんのメッシュを作る。reuse を渡すと同じメッシュへ張り直す（あご変更時）。 */
-  const buildPart = (L: Loaded, reuse?: Mesh): Mesh | null => {
+  /**
+   * ボクセルを lod×lod×lod の塊にまとめて粗くする（遠景用）。
+   * 色は塊の平均、ウェイトは塊の代表セルのものを使う。
+   * ⚠️ ウェイトを平均してはいけない。骨の番号が違うもの同士を混ぜると腕が胴へ
+   *    引っ張られる。同じ塊のセルはほぼ同じ骨なので代表で足りる。
+   */
+  const downsample = (cells: Cell[], lod: number): Cell[] => {
+    const acc = new Map<number, { c: [number, number, number]; r: number; g: number; b: number; n: number; wi: number }>();
+    for (const c of cells) {
+      const k: [number, number, number] = [
+        Math.floor(c.c[0] / lod), Math.floor(c.c[1] / lod), Math.floor(c.c[2] / lod)];
+      const key = CELL_KEY(k[0], k[1], k[2]);
+      let e = acc.get(key);
+      if (!e) { e = { c: k, r: 0, g: 0, b: 0, n: 0, wi: c.wi }; acc.set(key, e); }
+      e.r += c.col[0]; e.g += c.col[1]; e.b += c.col[2]; e.n++;
+    }
+    return [...acc.values()].map((e) => ({
+      c: e.c, col: [e.r / e.n, e.g / e.n, e.b / e.n] as [number, number, number], wi: e.wi,
+    }));
+  };
+
+  const buildPart = (L: Loaded, reuse?: Mesh, lod = 1): Mesh | null => {
     const { part, grid, w, chunks: loadedChunks } = L;
     const S = grid.voxel_size;
     // 服の中に隠れる肌は描かない（body だけが対象。服・髪・目はそのまま）
@@ -1179,8 +1317,12 @@ export function buildRawModelFrom(
       cells = closeSeams(cells, 2, grid.grid_origin, S, (x, y, z) =>
         z > bodyTopZ - 0.30 && Math.abs(x) < 0.12 && Math.abs(y) < 0.12);
     }
+    // 遠景用に粗くする（ボクセルを lod 個ぶんの塊にまとめる）
+    if (lod > 1) cells = downsample(cells, lod);
+    const SS = S * lod;                       // まとめたあとのボクセル寸法
     const occupied = new Set<number>();
     for (const c of cells) occupied.add(CELL_KEY(c.c[0], c.c[1], c.c[2]));
+    const air = outsideAir(cells);
 
     const pos: number[] = [], nrm: number[] = [], col: number[] = [];
     const mIdx: number[] = [], mWgt: number[] = [], idx: number[] = [];
@@ -1210,13 +1352,15 @@ export function buildRawModelFrom(
 
       // --- 露出面だけ張る ---
       const [cx, cy, cz] = cell.c;
-      const wx = O[0] + (cx + 0.5) * S, wy = O[1] + (cy + 0.5) * S, wz = O[2] + (cz + 0.5) * S;
+      const wx = O[0] + (cx + 0.5) * SS, wy = O[1] + (cy + 0.5) * SS, wz = O[2] + (cz + 0.5) * SS;
       const [tx, ty, tz, mx, my, mz] = thickenBlend(bi4, bw4, wx, wy, wz);
       for (const f of FACES) {
         if (occupied.has(CELL_KEY(cx + f.d[0], cy + f.d[1], cz + f.d[2]))) continue;
+        // 殻の内側（外気と繋がっていない空洞）に向いた面は描かない
+        if (!noCavityCull && !air.has(cx + f.d[0], cy + f.d[1], cz + f.d[2])) { cavityFaces++; continue; }
         const base = pos.length / 3;
         for (const q of f.q) {
-          const [px, py, pz] = toBabylon(tx + q[0] * S * mx, ty + q[1] * S * my, tz + q[2] * S * mz);
+          const [px, py, pz] = toBabylon(tx + q[0] * SS * mx, ty + q[1] * SS * my, tz + q[2] * SS * mz);
           pos.push(px, py, pz);
           const [nx, ny, nz] = toBabylon(f.n[0], f.n[1], f.n[2]);
           nrm.push(nx, ny, nz);
@@ -1225,9 +1369,9 @@ export function buildRawModelFrom(
           mWgt.push(bw4[0], bw4[1], bw4[2], bw4[3]);
         }
         idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-        triangles += 2;
+        if (lod === 1) triangles += 2;
       }
-      voxelCount++;
+      if (lod === 1) voxelCount++;
     }
 
     const vd = new VertexData();
@@ -1237,7 +1381,7 @@ export function buildRawModelFrom(
     vd.indices = idx;
     vd.matricesIndices = mIdx;
     vd.matricesWeights = mWgt;
-    const mesh = reuse ?? new Mesh(`raw_${part.prefix}`, scene);
+    const mesh = reuse ?? new Mesh(`raw_${lod > 1 ? "lod_" : ""}${part.prefix}`, scene);
     vd.applyToMesh(mesh, false);
     mesh.material = mat;
     mesh.parent = root;
@@ -1318,6 +1462,23 @@ export function buildRawModelFrom(
     return true;
   };
 
+  // --- 遠景用の粗いメッシュ -------------------------------------------------
+  // ⚠️ ボクセルを2個ぶんの塊にまとめるので、面はおおよそ 1/4 になる。
+  //    数メートル離れれば見分けはつかない。
+  const LOD_STEP = 2;
+  const lodMeshes = new Map<string, Mesh>();
+  const lodPart = (name: string): Mesh | null => {
+    const hit = lodMeshes.get(name);
+    if (hit) return hit;
+    const L = loaded.find((x) => x.part.prefix === name);
+    if (!L) return null;
+    const m = buildPart(L, undefined, LOD_STEP);
+    if (!m) return null;
+    m.setEnabled(false);
+    lodMeshes.set(name, m);
+    return m;
+  };
+
   /** あごの形を変える。body のメッシュだけを張り直す。 */
   const setJaw = (shape: JawShape): void => {
     if (shape === jaw) return;
@@ -1336,7 +1497,7 @@ export function buildRawModelFrom(
   };
 
   const model: RawModel = {
-    rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped,
+    rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped, cavityFaces, lodPart, lodStep: LOD_STEP, backNumberBand,
     setJaw, hairNames, loadHair,
     modelHeightCm: modelHeight * 100, setHeight, setBody, thickness, applyTo,
   };
@@ -1345,7 +1506,7 @@ export function buildRawModelFrom(
 
 /** 読み込みと組み立てをまとめて行う（確認ページ用）。 */
 export async function buildRawModel(
-  scene: Scene, baseUrl: string, opts?: { jaw?: JawShape },
+  scene: Scene, baseUrl: string, opts?: { jaw?: JawShape; noCavityCull?: boolean },
 ): Promise<RawModel> {
   return buildRawModelFrom(scene, await preloadRawSource(baseUrl), opts);
 }

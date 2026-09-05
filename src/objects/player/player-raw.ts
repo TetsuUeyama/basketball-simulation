@@ -81,35 +81,15 @@ function bucketWeight(b: number): number {
 const MARK_BACK_Z = -0.05;              // これより後ろ（-Z）が背中側
 
 /** 背中側の三角形を落とす（頂点はそのまま。共有ジオメトリに1回だけ）。 */
-function stripBackMarks(mesh: Mesh): { yLo: number; yHi: number; xLo: number; xHi: number } | null {
+function stripBackMarks(mesh: Mesh): void {
   const pos = mesh.getVerticesData("position"); const idx = mesh.getIndices();
-  if (!pos || !idx) return null;
+  if (!pos || !idx) return;
   const keep: number[] = [];
-  let yLo = Infinity, yHi = -Infinity, xLo = Infinity, xHi = -Infinity;
-  const ys: number[] = [];
   for (let t = 0; t < idx.length; t += 3) {
-    const back = [0, 1, 2].every((j) => pos[idx[t + j] * 3 + 2] < MARK_BACK_Z);
-    if (!back) { keep.push(idx[t], idx[t + 1], idx[t + 2]); continue; }
-    for (let j = 0; j < 3; j++) {
-      const y = pos[idx[t + j] * 3 + 1], x = pos[idx[t + j] * 3];
-      ys.push(y);
-      if (x < xLo) xLo = x; if (x > xHi) xHi = x;
-    }
+    if ([0, 1, 2].every((j) => pos[idx[t + j] * 3 + 2] < MARK_BACK_Z)) continue;
+    keep.push(idx[t], idx[t + 1], idx[t + 2]);
   }
   mesh.setIndices(keep);
-  if (!ys.length) return null;
-  // ⚠️ 背中には番号と Name の2つが乗っている。下の塊が番号なので、高さを並べて
-  //    **最初の切れ目**までを番号の帯とする。切れ目は実測 10mm、マークのボクセルは
-  //    4.69mm なので、その間の 7mm をしきい値にする（4mm 刻みのヒストグラムだと
-  //    ボクセルの段そのものが切れ目に見えて、帯が 20mm しか取れなかった）。
-  const GAP = 0.007;
-  const sorted = [...new Set(ys.map((y) => Math.round(y * 2000) / 2000))].sort((a, b) => a - b);
-  yLo = sorted[0]; yHi = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i] - yHi > GAP) break;
-    yHi = sorted[i];
-  }
-  return { yLo, yHi, xLo, xHi };
 }
 
 /**
@@ -180,7 +160,10 @@ function proto(scene: Scene, bucket: number): Proto | null {
     model.setBody(180.4, bucketWeight(bucket));
     const mark = model.byPart.get("jerseymark");
     const jersey = model.byPart.get("jersey");
-    const band = mark ? stripBackMarks(mark) : null;
+    if (mark) stripBackMarks(mark);
+    // ⚠️ 番号の帯は voxraw が元のボクセルから出したものを使う。面から測ると、
+    //    隠れた面を間引いたぶん段が飛んで Name と区別が付かない。
+    const band = model.backNumberBand;
     const panel = band && jersey ? backPanel(jersey, band) : null;
     // ⚠️ 板は Spine ノードにぶら下げるので、**ここで一度だけ** Spine ローカルへ移す。
     //    buildRig はノードに位置しか入れない（回転も倍率も単位）ので、Spine の
@@ -292,6 +275,41 @@ function rgb3(c: RGB): Color3 { return new Color3(c.r, c.g, c.b); }
 /** 既に明るさへ直した見本メッシュ。共有ジオメトリなので二重に掛けない。 */
 const tinted = new WeakSet<Mesh>();
 
+// ───────────────────────── 遠景の粗い版 ─────────────────────────
+// ⚠️ 26人を近景の細かさで描くと毎フレーム 3.8M 三角形になり、実機でカクついた。
+//    数メートル離れれば 1ボクセルは1画素にも満たないので、遠い選手はボクセル2個ぶんに
+//    まとめた版（面はおよそ 1/4）へ切り替える。
+const LOD_DIST = 12;                 // これより遠い選手は粗い版（m）
+const LOD_HYST = 1.5;                // 境目で行ったり来たりしないための余裕（m）
+/** 粗い版を持たせる部位。目・口・エンブレム・背番号は遠景では見えないので消すだけ。 */
+const LOD_PARTS = new Set(["body", "hair", "jersey", "shorts", "socks", "shoes"]);
+const lodOf = (part: string): boolean => LOD_PARTS.has(part) || part.startsWith("hairstyle_");
+
+type LodEntry = { root: TransformNode; fine: Mesh[]; coarse: Mesh[]; far: boolean };
+const LOD_REG = new WeakMap<Scene, LodEntry[]>();
+/** シーンに1つだけ観測者を置き、カメラからの距離で近景／遠景を切り替える。 */
+function lodList(scene: Scene): LodEntry[] {
+  const hit = LOD_REG.get(scene);
+  if (hit) return hit;
+  const all: LodEntry[] = [];
+  LOD_REG.set(scene, all);
+  scene.onBeforeRenderObservable.add(() => {
+    const cam = scene.activeCamera;
+    if (!cam) return;
+    for (let i = all.length - 1; i >= 0; i--) {
+      const e = all[i];
+      if (e.root.isDisposed()) { all.splice(i, 1); continue; }
+      const d = Vector3.Distance(cam.globalPosition, e.root.getAbsolutePosition());
+      const far = e.far ? d > LOD_DIST - LOD_HYST : d > LOD_DIST + LOD_HYST;
+      if (far === e.far) continue;
+      e.far = far;
+      for (const m of e.fine) m.setEnabled(!far);
+      for (const m of e.coarse) m.setEnabled(far);
+    }
+  });
+  return all;
+}
+
 /** 生ボクセルで素体を組む。読み込みが終わっていなければ null。 */
 export function buildRawVoxelBody(
   scene: Scene, parent: TransformNode, o: VoxelBodyOptions & { weight?: number },
@@ -336,9 +354,11 @@ export function buildRawVoxelBody(
    */
   const own = new Map<string, Mesh>();
   const meshes: Mesh[] = [];
-  const attach = (part: string, src: Mesh): Mesh => {
+  const lodEntry: LodEntry = { root, fine: [], coarse: [], far: false };
+  /** 見本のメッシュを1本生やす。 */
+  const spawn = (name: string, part: string, src: Mesh): Mesh => {
     if (TINTED(part) && !tinted.has(src)) { normalizeTint(src, TINT_KEEP(part)); tinted.add(src); }
-    const m = new Mesh(`${part}_${o.name}`, scene);
+    const m = new Mesh(name, scene);
     src.geometry?.applyToMesh(m);
     // 見本の姿勢はそのまま引き継ぐ（生モデルは単位行列だが、崩れたら気づけるように写す）
     m.position.copyFrom(src.position);
@@ -349,10 +369,30 @@ export function buildRawVoxelBody(
     m.parent = modelRoot;
     m.skeleton = skel;             // 姿勢は選手ごとのスケルトンが決める
     m.numBoneInfluencers = 4;
-    m.alwaysSelectAsActiveMesh = true;
+    // ⚠️ alwaysSelectAsActiveMesh は立てない。画面外でも必ず描く指定で、26人ぶんだと
+    //    カメラの外の選手まで毎フレーム描くことになる（従来モデルも立てていない）。
+    //    静止姿勢の境界箱で判定するので、腕を上げた瞬間に画面端で消えることはあり得るが、
+    //    従来モデルと同じ割り切り。
     m.material = matFor(part);
+    return m;
+  };
+  /**
+   * 近景ぶんと、あれば遠景ぶんを生やす。
+   * 遠景ぶんが無い部位（目・口・エンブレム・背番号）は、遠景では消えるだけ。
+   */
+  const attach = (part: string, src: Mesh): Mesh => {
+    const m = spawn(part + "_" + o.name, part, src);
     own.set(part, m);
     meshes.push(m);
+    lodEntry.fine.push(m);
+    m.setEnabled(!lodEntry.far);
+    const lodSrc = lodOf(part) ? pr.lodPart(part) : null;
+    if (lodSrc) {
+      const c = spawn("lod_" + part + "_" + o.name, part, lodSrc);
+      c.setEnabled(lodEntry.far);
+      own.set("lod_" + part, c);
+      lodEntry.coarse.push(c);
+    }
     return m;
   };
   for (const [part, src] of pr.byPart) {
@@ -364,13 +404,25 @@ export function buildRawVoxelBody(
   // ⚠️ 髪型は 139 種・19MB あるので先読みしない。選手が使うものだけ後から読んで足す。
   //    読み終わるまでは髪無しで描かれる。
   let hairMesh: Mesh | null = null;
+  let hairStyle = "";                    // いま付いている髪型の名前
   let hairWant = "";                     // いま欲しい髪型（読み終わったとき取り違えない用）
+  /** メッシュを外して、近景／遠景のどの一覧からも消す。 */
+  const drop = (m: Mesh | null | undefined): void => {
+    if (!m) return;
+    for (const arr of [meshes, lodEntry.fine, lodEntry.coarse]) {
+      const i = arr.indexOf(m);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    m.dispose();
+  };
   const setHair = (hairNo: number): void => {
     if (hairMesh) {
-      const i = meshes.indexOf(hairMesh);
-      if (i >= 0) meshes.splice(i, 1);
-      hairMesh.dispose();
+      drop(hairMesh);
+      drop(own.get("lod_" + hairStyle));
+      own.delete("lod_" + hairStyle);
+      own.delete(hairStyle);
       hairMesh = null;
+      hairStyle = "";
     }
     const name = hairPartName(hairNo);
     hairWant = name ?? "";
@@ -389,6 +441,7 @@ export function buildRawVoxelBody(
     void job.then((src2) => {
       if (!src2 || hairWant !== name || root.isDisposed()) return;
       hairMesh = attach(name, src2);
+      hairStyle = name;
     });
   };
   setHair(o.hairNo);
@@ -469,8 +522,11 @@ export function buildRawVoxelBody(
     wristPivot.set(b, Vector3.Zero());
   }
 
-  const shadowMeshes = ["jersey", "shorts", "shoes"]
+  // ⚠️ 影は近景・遠景の両方を登録する。無効なほうは描かれないので二重にはならないが、
+  //    片方しか入れないと切り替わった側で影が消える。
+  const shadowMeshes = ["jersey", "shorts", "shoes", "lod_jersey", "lod_shorts", "lod_shoes"]
     .map((p2) => own.get(p2)).filter((m): m is Mesh => !!m);
+  lodList(scene).push(lodEntry);
 
   const body: VoxelBody = {
     root, rig, skel, map: boneMap(),
@@ -497,6 +553,7 @@ export function buildRawVoxelBody(
     setNumberVisible: (v) => { if (numMesh) numMesh.isVisible = v; },
     dispose: () => {
       for (const m of meshes) m.dispose();
+      for (const m of lodEntry.coarse) m.dispose();
       numMesh?.dispose();
       numTex?.dispose();
       skel.dispose();
