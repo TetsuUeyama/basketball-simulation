@@ -44,6 +44,32 @@ const chest = (): { w: number; d: number } => {
   const s = slab("jersey", 1.15, 1.25);
   return { w: s.w, d: s.d };
 };
+/**
+ * 肩幅。肩の高さ(y=1.49〜1.53)で body の |x| 最大 × 2。
+ * ⚠️ GPU スキニングなので頂点は動かない。骨のワールド位置から出す。
+ */
+const shoulderW = (): number => {
+  const l = m.rig.node("LeftUpperArm" as never), r = m.rig.node("RightUpperArm" as never);
+  if (!l || !r) return 0;
+  l.computeWorldMatrix(true); r.computeWorldMatrix(true);
+  return Math.abs(l.getAbsolutePosition().x - r.getAbsolutePosition().x);
+};
+/** 前腕の太さ。
+ * ⚠️ 上腕は袖に覆われて肌のボクセルが消えているので測れない。素肌の前腕で測る。
+ *    前腕は x 0.407〜0.619 / y 1.269〜1.379（rest のボーン位置の実測）を通る。 */
+const foreArm = (): { v: number; d: number } => {
+  const p2 = m.byPart.get("body")!.getVerticesData("position")!;
+  let y0 = 9, y1 = -9, z0 = 9, z1 = -9, n = 0;
+  for (let i = 0; i < p2.length / 3; i++) {
+    const x = p2[i * 3];
+    if (x < 0.46 || x > 0.50) continue;      // 前腕の途中を横切る帯（右腕）
+    const y = p2[i * 3 + 1], z = p2[i * 3 + 2];
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+    n++;
+  }
+  return n ? { v: y1 - y0, d: z1 - z0 } : { v: 0, d: 0 };
+};
 /** 太もも。 */
 const thigh = (): { w: number; d: number } => {
   const s = slab("shorts", 0.85, 0.95);
@@ -52,12 +78,12 @@ const thigh = (): { w: number; d: number } => {
 
 const H = 180.4;
 console.log(`身長 ${H}cm 固定で体重を変える（BMI 23.1 = ${(23.1 * (H / 100) ** 2).toFixed(1)}kg が基準）`);
-console.log("体重    BMI   厚み倍率   胴の幅   胴の厚み  太ももの幅  頭の幅");
+console.log("体重    BMI   厚み倍率   胴の幅   胴の厚み  太もも  前腕の縦  前腕の前後  肩幅   頭の幅");
 for (const kg of [55, 65, 75.2, 85, 95]) {
   m.setBody(H, kg);
-  const c = chest(), t = thigh();
+  const c = chest(), t = thigh(), ua = foreArm();
   const bmi = kg / (H / 100) ** 2;
   console.log(`  ${String(kg).padStart(5)}kg ${bmi.toFixed(1)}  x${m.thickness.toFixed(3)}`
-    + `   ${c.w.toFixed(3)}   ${c.d.toFixed(3)}    ${t.w.toFixed(3)}     ${headW().toFixed(3)}`);
+    + `   ${c.w.toFixed(3)}   ${c.d.toFixed(3)}    ${t.w.toFixed(3)}   ${ua.v.toFixed(3)}    ${ua.d.toFixed(3)}   ${shoulderW().toFixed(3)}  ${headW().toFixed(3)}`);
 }
 console.log("\n※ 頭の幅は体重で変わらないのが正しい（THICK_BY_BONE で Head/Neck を 0 にしている）。");

@@ -929,6 +929,12 @@ export async function buildRawModel(
       rebuildAll();
       model.thickness = thickness;
     }
+    // 肩幅も体格に合わせる（骨の位置を動かす）
+    const sw = 1 + (thickness - 1) * SHOULDER_W;
+    for (const [name, x0] of shoulderBase) {
+      const n = rig.node(name as never);
+      if (n) n.position.x = x0 * sw;
+    }
     setHeight(heightCm);
   };
   const setHeight = (cm: number): void => {
@@ -977,23 +983,46 @@ export async function buildRawModel(
   /** 骨番号 → 標準ボーン名。ボクセルごとに index を線形探索しないため。 */
   const boneName: string[] = [];
   for (const [n, i2] of index) boneName[i2] = n;
+  /**
+   * 肩幅の効き方。厚み倍率 1 からのズレに、この割合だけ肩の骨を内外へ動かす。
+   * ⚠️ 厚みの変形はボクセルを**自分の骨の軸**に寄せるだけなので、骨の位置＝肩幅は変わらない。
+   *    細い体型でも肩幅が広いままになるので、肩の骨自体を動かす。スキニングで腕全体が
+   *    追従し、肩まわりはウェイトが混ざるので境目も出ない。
+   */
+  const SHOULDER_W = 0.7;
+  // ⚠️ 肩の骨だけ動かしても幅はほとんど変わらない。実測では Chest→Shoulder が 0.067m、
+  //    Shoulder→UpperArm（鎖骨にあたる）が 0.135m で、後者が主。両方を動かすこと。
+  const shoulderBase = new Map<string, number>();
+  for (const b of ["LeftShoulder", "RightShoulder", "LeftUpperArm", "RightUpperArm"]) {
+    const n = rig.node(b as never);
+    if (n) shoulderBase.set(b, n.position.x);
+  }
   let thickness = 1;
   let bodyHeightCm = modelHeight * 100;
   let bodyWeightKg = BMI_REF * modelHeight * modelHeight;
 
-  /** 厚みを効かせた後のボクセル中心と、箱の広がり方（x,y 倍率）。 */
+  /**
+   * 厚みを効かせた後のボクセル中心と、箱の広がり方（x,y,z の倍率）。
+   * ⚠️ 横方向(x,y)だけ伸縮すると、軸がほぼ水平な**腕の太さが変わらない**。
+   *    腕の軸は A-pose で (0.89, 0.06, -0.46) なので、太さの向きに垂直成分が多く含まれる。
+   *    骨の軸に**垂直な成分を3軸とも**伸縮すること。軸に沿う成分は伸ばさないので、
+   *    骨の長さ（＝手足の長さ）は変わらない。
+   */
   const thicken = (bone: string | undefined, x: number, y: number, z: number):
-  [number, number, number, number] => {
+  [number, number, number, number, number, number] => {
     const fr = bone ? boneFrame.get(bone) : undefined;
-    if (!fr || fr.f === 0 || thickness === 1) return [x, y, 1, 1];
+    if (!fr || fr.f === 0 || thickness === 1) return [x, y, z, 1, 1, 1];
     const m = 1 + (thickness - 1) * fr.f;
     const vx = x - fr.a[0], vy = y - fr.a[1], vz = z - fr.a[2];
     const along = vx * fr.ax[0] + vy * fr.ax[1] + vz * fr.ax[2];
-    // 横方向(x,y)だけ m 倍。骨に沿う向きの成分は伸ばさない
     const nx = fr.a[0] + m * vx + (1 - m) * fr.ax[0] * along;
     const ny = fr.a[1] + m * vy + (1 - m) * fr.ax[1] * along;
-    // 隣のボクセルとの間隔も同じ割合で変わるので、箱もその分広げる
-    return [nx, ny, m + (1 - m) * fr.ax[0] * fr.ax[0], m + (1 - m) * fr.ax[1] * fr.ax[1]];
+    const nz = fr.a[2] + m * vz + (1 - m) * fr.ax[2] * along;
+    // 隣のボクセルとの間隔も同じ割合で変わるので、箱もその分広げる（隙間が出ない）
+    return [nx, ny, nz,
+      m + (1 - m) * fr.ax[0] * fr.ax[0],
+      m + (1 - m) * fr.ax[1] * fr.ax[1],
+      m + (1 - m) * fr.ax[2] * fr.ax[2]];
   };
 
   /**
@@ -1002,17 +1031,18 @@ export async function buildRawModel(
    *    隙間ができる（細い体型で顕著）。境目のボクセルは両方の骨で混ぜること。
    */
   const thickenBlend = (bi: number[], bw: number[], x: number, y: number, z: number):
-  [number, number, number, number] => {
-    if (thickness === 1) return [x, y, 1, 1];
-    let tx = 0, ty = 0, mx = 0, my = 0, sum = 0;
+  [number, number, number, number, number, number] => {
+    if (thickness === 1) return [x, y, z, 1, 1, 1];
+    let tx = 0, ty = 0, tz = 0, mx = 0, my = 0, mz = 0, sum = 0;
     for (let k = 0; k < 4; k++) {
       const w = bw[k];
       if (!(w > 0)) continue;
-      const [ax, ay, sx, sy] = thicken(boneName[bi[k]], x, y, z);
-      tx += ax * w; ty += ay * w; mx += sx * w; my += sy * w; sum += w;
+      const [ax, ay, az, sx, sy, sz] = thicken(boneName[bi[k]], x, y, z);
+      tx += ax * w; ty += ay * w; tz += az * w;
+      mx += sx * w; my += sy * w; mz += sz * w; sum += w;
     }
-    if (sum <= 0) return [x, y, 1, 1];
-    return [tx / sum, ty / sum, mx / sum, my / sum];
+    if (sum <= 0) return [x, y, z, 1, 1, 1];
+    return [tx / sum, ty / sum, tz / sum, mx / sum, my / sum, mz / sum];
   };
 
   /** 部位1つぶんのメッシュを作る。reuse を渡すと同じメッシュへ張り直す（あご変更時）。 */
@@ -1127,12 +1157,12 @@ export async function buildRawModel(
       // --- 露出面だけ張る ---
       const [cx, cy, cz] = cell.c;
       const wx = O[0] + (cx + 0.5) * S, wy = O[1] + (cy + 0.5) * S, wz = O[2] + (cz + 0.5) * S;
-      const [tx, ty, mx, my] = thickenBlend(bi4, bw4, wx, wy, wz);
+      const [tx, ty, tz, mx, my, mz] = thickenBlend(bi4, bw4, wx, wy, wz);
       for (const f of FACES) {
         if (occupied.has(CELL_KEY(cx + f.d[0], cy + f.d[1], cz + f.d[2]))) continue;
         const base = pos.length / 3;
         for (const q of f.q) {
-          const [px, py, pz] = toBabylon(tx + q[0] * S * mx, ty + q[1] * S * my, wz + q[2] * S);
+          const [px, py, pz] = toBabylon(tx + q[0] * S * mx, ty + q[1] * S * my, tz + q[2] * S * mz);
           pos.push(px, py, pz);
           const [nx, ny, nz] = toBabylon(f.n[0], f.n[1], f.n[2]);
           nrm.push(nx, ny, nz);
