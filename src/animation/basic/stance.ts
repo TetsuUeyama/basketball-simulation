@@ -58,10 +58,59 @@ export function uprightTargetFor(p: Player, ballX: number, ballZ: number, onOffe
   return base + (top - base) * k;
 }
 
-/** 狙いへ滑らかに寄せる。sync から毎フレーム。 */
+// --- 関節ごとのばらつき ----------------------------------------------------
+// ⚠️ 全関節に同じ直立度を渡すと、左右も上下も揃いすぎて機械的に見える。関節ごとに
+//    少しずつ違う値をゆっくり揺らす。人ごとに位相と周期が違うので、26人が同じ形に
+//    ならない。
+/** 揺れの片振幅。実効の直立度は base-2*WOB 〜 base の帯に収まる。 */
+const WOB = 0.025;             // 帯は 5%（例: 直立度 1.00 なら 0.95〜1.00）
+/** 揺れの遅さ（rad/秒）。ゆっくり漂う速さ。速いと震えて見える。 */
+const WOB_HZ_LO = 0.18, WOB_HZ_HI = 0.45;
+
+/** 関節の区分。左右・部位ごとに別々の値を渡す。 */
+export const G = {
+  thighL: 0, thighR: 1, shinL: 2, shinR: 3, stanceL: 4, stanceR: 5,
+  outL: 6, outR: 7, lean: 8, shoulderL: 9, shoulderR: 10,
+  armL: 11, armR: 12, foreL: 13, foreR: 14, splay: 15,
+} as const;
+const NG = 16;
+
+type Wobble = { t: number; ph: Float64Array; fr: Float64Array; s: Float64Array };
+const WOBBLE = new WeakMap<Player, Wobble>();
+
+function wobbleOf(p: Player): Wobble {
+  let w = WOBBLE.get(p);
+  if (!w) {
+    w = { t: Math.random() * 100, ph: new Float64Array(NG), fr: new Float64Array(NG), s: new Float64Array(NG) };
+    for (let i = 0; i < NG; i++) {
+      w.ph[i] = Math.random() * Math.PI * 2;
+      w.fr[i] = (WOB_HZ_LO + Math.random() * (WOB_HZ_HI - WOB_HZ_LO)) * Math.PI * 2;
+    }
+    WOBBLE.set(p, w);
+  }
+  return w;
+}
+
+/** 関節 i の「構えの深さ」。0 = 直立、1 = 一番低い。 */
+export function stanceS(p: Player, i: number): number {
+  const w = WOBBLE.get(p);
+  return w ? w.s[i] : 1 - p.upright;
+}
+
+/** 狙いへ滑らかに寄せ、関節ごとのばらつきを進める。sync から毎フレーム。 */
 export function stepUpright(p: Player, dt: number): void {
-  const d = Math.min(1, (dt > 0 ? dt : 1 / 60) * FOLLOW);
-  p.upright += (p.uprightTarget - p.upright) * d;
+  const step = dt > 0 ? dt : 1 / 60;
+  p.upright += (p.uprightTarget - p.upright) * Math.min(1, step * FOLLOW);
+  const w = wobbleOf(p);
+  w.t += step;
+  for (let i = 0; i < NG; i++) {
+    // 周期の違う波を2つ重ねると、繰り返しが目立たない
+    const n = Math.sin(w.t * w.fr[i] + w.ph[i]) * 0.65
+      + Math.sin(w.t * w.fr[i] * 1.7 + w.ph[i] * 2.3) * 0.35;
+    // 帯の上端を base に合わせる（直立度 1 の選手が 1 を超えないように）
+    const u = Math.min(1, Math.max(0, p.upright - WOB + n * WOB));
+    w.s[i] = 1 - u;
+  }
 }
 
 const _q = new Quaternion();
@@ -139,51 +188,53 @@ function lowestFootY(vb: VoxelBody): number {
  *    掛けないと脚が横へねじれる（splayLegs と同じ規約）。
  */
 export function applyStance(vb: VoxelBody, p: Player): void {
-  const s = 1 - p.upright;
-  // 鎖骨は誰も書かないので、直立時に 0 へ戻すためここは早期 return より前に置く。
-  setTiltX(vb, "LeftShoulder", -READY_SHOULDER * s);
-  setTiltX(vb, "RightShoulder", -READY_SHOULDER * s);
-  if (s < 0.01) return;
+  const S = (i: number): number => stanceS(p, i);
+  setTiltX(vb, "LeftShoulder", -READY_SHOULDER * S(G.shoulderL));
+  setTiltX(vb, "RightShoulder", -READY_SHOULDER * S(G.shoulderR));
   // ⚠️ **numberSide（コートのどちら側を向くか）で符号を変えてはいけない。**
   //    ここはボクセルのボーンに直接掛けるので、既に骨組みごとヨーされた「体の枠」の
   //    中にいる。向きで符号を変えると、片側のチームだけ膝が逆関節になる（実測で
   //    numberSide=+1 の選手が -131mm＝後ろへ曲がっていた）。体の枠での向きは1つ。
-  const a = READY_THIGH * s;                 // 腿を前へ
-  const b = READY_SHIN * s;                  // 脛を後ろへ
+  const aL = READY_THIGH * S(G.thighL), aR = READY_THIGH * S(G.thighR);
+  const bL = READY_SHIN * S(G.shinL), bR = READY_SHIN * S(G.shinR);
   const before = lowestFootY(vb);
   // 脚: 前へ曲げる ＋ 左右に開く
-  tiltX(vb, "LeftUpperLeg", -a); tiltX(vb, "RightUpperLeg", -a);
-  tiltX(vb, "LeftLowerLeg", a + b); tiltX(vb, "RightLowerLeg", a + b);
-  const splay = READY_STANCE * s;
-  splayLegs(vb, splay);
+  tiltX(vb, "LeftUpperLeg", -aL); tiltX(vb, "RightUpperLeg", -aR);
+  tiltX(vb, "LeftLowerLeg", aL + bL); tiltX(vb, "RightLowerLeg", aR + bR);
+  const spL = READY_STANCE * S(G.stanceL), spR = READY_STANCE * S(G.stanceR);
+  // splayLegs は「両脚共通の量 ＋ 左右差」で受けるので、そこへ寄せる
+  const spAvg = (spL + spR) / 2;
+  splayLegs(vb, spAvg, spAvg > 1e-6 ? (spL - spR) / (2 * spAvg) : 0);
   // 膝を外へ向ける（腿を長軸まわりに外へひねる）。つま先も一緒に外を向く。
   // ⚠️ 足裏の水平は崩れない（縦軸まわりなので傾かない）。
-  const out = READY_KNEE_OUT * s;
-  tiltY(vb, "LeftUpperLeg", -out); tiltY(vb, "RightUpperLeg", out);
+  tiltY(vb, "LeftUpperLeg", -READY_KNEE_OUT * S(G.outL));
+  tiltY(vb, "RightUpperLeg", READY_KNEE_OUT * S(G.outR));
   // 足首: 脛の傾きと脚の開きを打ち消して、足裏を地面と平行に保つ。
   // ⚠️ 足首は親から回転をそのまま受け継ぐ。腿 -a と膝 +(a+b) で差し引き +b、
   //    開きは splayLegs が Z 軸に ±splay。同じ量を逆へ掛けて水平へ戻す。
   //    （splayLegs の左右の符号は Left=-1 / Right=+1。そちらに合わせる）
-  tiltX(vb, "LeftFoot", -b); tiltX(vb, "RightFoot", -b);
-  tiltZ(vb, "LeftFoot", splay); tiltZ(vb, "RightFoot", -splay);
+  tiltX(vb, "LeftFoot", -bL); tiltX(vb, "RightFoot", -bR);
+  tiltZ(vb, "LeftFoot", spL); tiltZ(vb, "RightFoot", -spR);
   // 腰を沈める。
   // ⚠️ 縮む量を角度から計算してはいけない。クリップが既に膝を曲げているので、
   //    重ねた角度ぶんだけでは合わない（式で出すと 8.6cm 沈みすぎたり 4.3cm 浮いたりした）。
   //    **曲げる前と後で足首の高さを実測**し、その差だけ下げる。
   p.root.position.y -= lowestFootY(vb) - before;
   // 上半身の前傾。⚠️ 胴は脚と符号が逆。ボーンごとにローカル軸の向きが違う。
-  tiltX(vb, "Spine", READY_LEAN * s);
+  // ⚠️ 頭は胴と**同じ値**を使う。別々に揺らすと打ち消しが狂って顔が上下する。
+  const lean = READY_LEAN * S(G.lean);
+  tiltX(vb, "Spine", lean);
   // 頭: 胴が前傾したぶん起こして、顔は前を向いたままにする。
-  tiltX(vb, "Head", -READY_LEAN * s);
+  tiltX(vb, "Head", -lean);
   // 肩〜前腕を前へ。すぐ手が出る形にする。
   // ⚠️ 腕は胴と符号が逆（脚と同じ側）。正のまま掛けると腕が後ろへ流れる
   //    （実測で手が体の前 -113mm → -268mm と、逆に後ろへ下がっていた）。
-  tiltX(vb, "LeftUpperArm", -READY_ARM * s); tiltX(vb, "RightUpperArm", -READY_ARM * s);
-  tiltX(vb, "LeftLowerArm", -READY_FOREARM * s); tiltX(vb, "RightLowerArm", -READY_FOREARM * s);
+  tiltX(vb, "LeftUpperArm", -READY_ARM * S(G.armL)); tiltX(vb, "RightUpperArm", -READY_ARM * S(G.armR));
+  tiltX(vb, "LeftLowerArm", -READY_FOREARM * S(G.foreL));
+  tiltX(vb, "RightLowerArm", -READY_FOREARM * S(G.foreR));
 }
 
 /** 構えに応じた上腕の外向き角の下限。 */
 export function armSplayFor(vb: VoxelBody, p: Player): number {
-  const s = 1 - p.upright;
-  return vb.baseArmSplay + (READY_SPLAY - vb.baseArmSplay) * s;
+  return vb.baseArmSplay + (READY_SPLAY - vb.baseArmSplay) * stanceS(p, G.splay);
 }
