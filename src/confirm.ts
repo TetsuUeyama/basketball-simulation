@@ -6,7 +6,7 @@ import {
 } from "@babylonjs/core";
 import { makeMat } from "./objects/materials";
 import { MOTION_NAMES, motionClip, motionDuration, applyMotion } from "@objcts/player/motion/clip";
-import { buildRawModel, type RawModel } from "./voxraw";
+import { buildRawModel, type RawModel, type JawShape } from "./voxraw";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const engine = new Engine(canvas, true, { stencil: true });
@@ -41,6 +41,15 @@ let t = 0;
 let info = "読み込み中…";
 /** 表示中の髪型の部位名。"hair" = モデル本来の髪 / "" = 髪なし。 */
 let hairPart = "hair";
+/** ボーンごとのボクセル数の上位（表示用）。 */
+let bonesLine = "";
+
+/** 左上に出す要約。あごを変えるとボクセル数が変わるので作り直せるようにしてある。 */
+const infoText = (): string => {
+  if (!model) return "読み込み中…";
+  return `ボクセル ${model.voxelCount.toLocaleString()} / 三角形 ${model.triangles.toLocaleString()}`
+    + ` / メッシュ ${model.meshes.length}\n${bonesLine}\n身長 ${model.height.toFixed(3)}m`;
+};
 /** 髪色に塗り替えた頭皮ボクセル数（表示用）。 */
 let tinted = 0;
 
@@ -83,8 +92,8 @@ async function load(): Promise<void> {
     if (v === hairPart) o.selected = true;
     hairSel.appendChild(o);
   }
-  info = `ボクセル ${model.voxelCount.toLocaleString()} / 三角形 ${model.triangles.toLocaleString()} / メッシュ ${model.meshes.length}\n`
-    + `${bones.join("  ")}\n身長 ${model.height.toFixed(3)}m`;
+  bonesLine = bones.join("  ");
+  info = infoText();
   showHair(hairPart);
   applyPose(0);
 }
@@ -149,6 +158,25 @@ Object.assign(hairSel.style, {
 } as Partial<CSSStyleDeclaration>);
 hairSel.onchange = () => showHair(hairSel.value);
 row("髪型").appendChild(hairSel);
+
+// 顔（あご）のバリエーション。body のメッシュだけ張り直す。
+const jawSel = document.createElement("select");
+Object.assign(jawSel.style, {
+  background: "rgba(20,24,34,0.95)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
+  borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
+} as Partial<CSSStyleDeclaration>);
+for (const [v, label] of [["normal", "標準（モデルそのまま）"], ["round", "丸顔"], ["narrow", "細あご"]] as const) {
+  const o = document.createElement("option");
+  o.value = v; o.textContent = label;
+  jawSel.appendChild(o);
+}
+jawSel.onchange = () => {
+  if (!model) return;
+  model.setJaw(jawSel.value as JawShape);
+  // 張り直しでボクセル数が変わるので表示も更新する
+  info = infoText();
+};
+row("顔（あご）").appendChild(jawSel);
 
 const ctl = row("再生");
 const playBtn = button(ctl, "⏸ 停止", () => {
