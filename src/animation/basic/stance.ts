@@ -29,6 +29,13 @@ const READY_SHOULDER = 0.14;   // ≈8°
 const READY_ARM = 0.34;        // ≈19°
 /** 直立度 0 のときの前腕の前傾（rad）。肘を曲げて手を前に出す。 */
 const READY_FOREARM = 0.62;    // ≈36°
+/**
+ * 肩・上腕・前腕だけ、構えの深さを底上げする量。
+ * 直立度 100% のときに、以前の 60% と同じ角度になるようにする。以降は同じ傾きで
+ * 続くので、直立度が 1 下がるごとに深さが 1 増える（100%→0.40、0%→1.40）。
+ * ⚠️ 脚と胴には掛けない。腕だけ常に前へ構えているのが狙い。
+ */
+const ARM_BIAS = 0.40;
 /** 直立度の追従の速さ（1秒あたりの割合）。急に沈むと不自然。 */
 const FOLLOW = 4.0;
 
@@ -64,8 +71,10 @@ export function uprightTargetFor(p: Player, ballX: number, ballZ: number, onOffe
 //    ならない。
 /** 揺れの片振幅。実効の直立度は base-2*WOB 〜 base の帯に収まる。 */
 const WOB = 0.025;             // 脚・胴は帯 5%（例: 直立度 1.00 なら 0.95〜1.00）
-/** 腕はもう少し大きく揺らす。脚と違って接地の制約が無く、動いて見えるほうが自然。 */
-const WOB_ARM = 0.07;          // 腕は帯 14%（同 0.86〜1.00）
+/** 肩・上腕・前腕の揺れ。脚と違って接地の制約が無いので大きく振れてよい。 */
+const WOB_ARM = 0.10;          // 帯 20%
+/** 腕の外向き（脇の開き）の揺れ。角度の指定は無いので腕より控えめ。 */
+const WOB_SPLAY = 0.05;        // 帯 10%
 // ⚠️ 帯を倍にしても**見た目の動きは倍にならない**。関節の角度は「帯 × その関節の
 //    振り幅の定数」で決まり、脚は開き・膝の外向きなど複数の区分が重なるため。
 //    実測: 帯 5%/10% のとき、腿の振れ 3.1° に対し上腕 4.3°（1.4倍）だった。
@@ -80,10 +89,11 @@ export const G = {
   armL: 11, armR: 12, foreL: 13, foreR: 14, splay: 15,
 } as const;
 const NG = 16;
-/** 区分ごとの揺れ幅。腕まわり（鎖骨・上腕・前腕・腕の外向き）だけ大きい。 */
+/** 区分ごとの揺れ幅。肩・上腕・前腕が一番大きい。 */
 const AMP = (() => {
   const a = new Float64Array(NG).fill(WOB);
-  for (const i of [G.shoulderL, G.shoulderR, G.armL, G.armR, G.foreL, G.foreR, G.splay]) a[i] = WOB_ARM;
+  for (const i of [G.shoulderL, G.shoulderR, G.armL, G.armR, G.foreL, G.foreR]) a[i] = WOB_ARM;
+  a[G.splay] = WOB_SPLAY;
   return a;
 })();
 
@@ -202,8 +212,10 @@ function lowestFootY(vb: VoxelBody): number {
  */
 export function applyStance(vb: VoxelBody, p: Player): void {
   const S = (i: number): number => stanceS(p, i);
-  setTiltX(vb, "LeftShoulder", -READY_SHOULDER * S(G.shoulderL));
-  setTiltX(vb, "RightShoulder", -READY_SHOULDER * S(G.shoulderR));
+  // 腕は底上げぶんだけ深い側から始める（上の ARM_BIAS を参照）
+  const A = (i: number): number => S(i) + ARM_BIAS;
+  setTiltX(vb, "LeftShoulder", -READY_SHOULDER * A(G.shoulderL));
+  setTiltX(vb, "RightShoulder", -READY_SHOULDER * A(G.shoulderR));
   // ⚠️ **numberSide（コートのどちら側を向くか）で符号を変えてはいけない。**
   //    ここはボクセルのボーンに直接掛けるので、既に骨組みごとヨーされた「体の枠」の
   //    中にいる。向きで符号を変えると、片側のチームだけ膝が逆関節になる（実測で
@@ -242,9 +254,9 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   // 肩〜前腕を前へ。すぐ手が出る形にする。
   // ⚠️ 腕は胴と符号が逆（脚と同じ側）。正のまま掛けると腕が後ろへ流れる
   //    （実測で手が体の前 -113mm → -268mm と、逆に後ろへ下がっていた）。
-  tiltX(vb, "LeftUpperArm", -READY_ARM * S(G.armL)); tiltX(vb, "RightUpperArm", -READY_ARM * S(G.armR));
-  tiltX(vb, "LeftLowerArm", -READY_FOREARM * S(G.foreL));
-  tiltX(vb, "RightLowerArm", -READY_FOREARM * S(G.foreR));
+  tiltX(vb, "LeftUpperArm", -READY_ARM * A(G.armL)); tiltX(vb, "RightUpperArm", -READY_ARM * A(G.armR));
+  tiltX(vb, "LeftLowerArm", -READY_FOREARM * A(G.foreL));
+  tiltX(vb, "RightLowerArm", -READY_FOREARM * A(G.foreR));
 }
 
 /** 構えに応じた上腕の外向き角の下限。 */
