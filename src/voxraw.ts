@@ -702,6 +702,13 @@ export interface RawModel {
   setBody(heightCm: number, weightKg: number): void;
   /** いまの厚み倍率（1 = モデルのまま）。 */
   thickness: number;
+  /**
+   * 別のリグへ、この素体と同じ身長合わせ・肩幅合わせを掛ける。
+   * ⚠️ 26人ぶんのジオメトリは1体ぶんを共有する（buildRawRig で骨だけ人数ぶん作る）。
+   *    共有したジオメトリは**この素体のいまの厚みで**作られているので、複製先の骨にも
+   *    同じ肩幅を入れないと、肩から先がズレる。身長は骨の伸縮では無く root の倍率で出す。
+   */
+  applyTo(root: TransformNode, rig: RigHandle, heightCm: number): void;
   /** 使える髪型の名前（データにあるもの全部）。メッシュはまだ作っていない。 */
   hairNames: string[];
   /** 髪型を1つ読み込んでメッシュにする。読み終えると byPart から取れる。 */
@@ -714,27 +721,95 @@ export interface RawModel {
  * 生の出力を読み込み、モデル自身のスケルトンへ**スキニングして**返す。
  * `applyMotion(model.rig, clip, t)` → `model.skel.prepare()` で変形する。
  */
-export async function buildRawModel(
-  scene: Scene, baseUrl: string, opts?: { jaw?: JawShape },
-): Promise<RawModel> {
+/** 読み込んだ素材。1回読めば、何人ぶんでも同期で組める。 */
+export interface RawSource {
+  baseUrl: string;
+  skelJson: SkeletonJson;
+  /** grid.json の bb から出した高さ（rest を作るのに使う）。 */
+  height: number;
+  hairParts: { prefix: string; grid: string; weights?: string }[];
+  hairNames: string[];
+  parts: LoadedPart[];
+  get<T>(f: string): Promise<T>;
+  loadPart(part: { prefix: string; grid: string; weights?: string }): Promise<LoadedPart>;
+}
+/** 部位1つぶんの読み込み済みデータ。 */
+export interface LoadedPart {
+  part: { prefix: string; grid: string; weights?: string };
+  grid: PartGrid;
+  w: PartWeights | null;
+  chunks: { ch: VoxChunk; voxels: Uint8Array[]; palette: number[][] }[];
+}
+
+/**
+ * ボクセル素材をまとめて読む。
+ * ⚠️ 差し替え用の髪型は 139 件・20MB あるので、ここでは読まない（選ばれたものだけ後で読む）。
+ */
+export async function preloadRawSource(baseUrl: string): Promise<RawSource> {
   // ⚠️ 404 を握り潰すと「真っ黒だが例外も出ない」になる。必ず落とす。
   const get = async <T>(f: string): Promise<T> => {
     const r = await fetch(`${baseUrl}/${f}`);
     if (!r.ok) throw new Error(`${f} が読めない (HTTP ${r.status})。scripts/sync-voxraw.mjs を流したか？`);
     return await r.json() as T;
   };
+  const loadPart = async (part: LoadedPart["part"]): Promise<LoadedPart> => {
+    const grid = await get<PartGrid>(part.grid);
+    const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
+    const chunkDefs = grid.chunks?.length ? grid.chunks
+      : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
+    const chunks: LoadedPart["chunks"] = [];
+    for (const ch of chunkDefs) {
+      const res = await fetch(`${baseUrl}/${ch.vox_file}`);
+      if (!res.ok) continue;
+      const { voxels, palette } = parseVox(await res.arrayBuffer());
+      chunks.push({ ch, voxels, palette });
+    }
+    return { part, grid, w, chunks };
+  };
   const manifest = await get<{ parts: { prefix: string; grid: string; weights?: string }[] }>("manifest.json");
   const skelJson = await get<SkeletonJson>("skeleton.json");
   const rootGrid = await get<{ bb_min: number[]; bb_max: number[] }>("grid.json");
-  const height = rootGrid.bb_max[2] - rootGrid.bb_min[2];
+  const hairParts = manifest.parts.filter((x) => x.prefix.startsWith("hairstyle_"));
+  const parts: LoadedPart[] = [];
+  for (const part of manifest.parts) {
+    if (part.prefix.startsWith("hairstyle_")) continue;
+    parts.push(await loadPart(part));
+  }
+  return {
+    baseUrl, skelJson, height: rootGrid.bb_max[2] - rootGrid.bb_min[2],
+    hairParts, hairNames: hairParts.map((x) => x.prefix).sort(), parts, get, loadPart,
+  };
+}
 
-  // --- 1. モデル自身の rest → 標準ボーン名の RestPose → リグ → Skeleton ---
+/**
+ * 素材からリグとスケルトンだけ作る。
+ * ⚠️ 26人ぶんメッシュを別々に作ると重いので、ジオメトリは1体ぶんを共有し、
+ *    リグとスケルトンだけ人数ぶん作る（姿勢は人ごとに違うが形は同じ）。
+ */
+export function buildRawRig(scene: Scene, source: RawSource): {
+  root: TransformNode; rig: RigHandle; skel: Skeleton; index: Map<string, number>;
+} {
   const src: Record<string, [number, number, number]> = {};
-  for (const b of skelJson.bones) src[b.name] = toBabylon(b.head_rest[0], b.head_rest[1], b.head_rest[2]);
-  const rest = restPoseFrom(src, MIXAMO_NO_PREFIX, "left", height);
+  for (const b of source.skelJson.bones) {
+    src[b.name] = toBabylon(b.head_rest[0], b.head_rest[1], b.head_rest[2]);
+  }
+  const rest = restPoseFrom(src, MIXAMO_NO_PREFIX, "left", source.height);
   const root = new TransformNode("rawRoot", scene);
   const rig = buildRig(scene, rest, { name: "raw", parent: root, allowMissing: true });
   const { skel, index } = buildSkeleton(scene, rig, "raw");
+  return { root, rig, skel, index };
+}
+
+/** 読み込み済みの素材から1体を組む（同期）。 */
+export function buildRawModelFrom(
+  scene: Scene, source: RawSource, opts?: { jaw?: JawShape },
+): RawModel {
+  const { skelJson, height, hairParts, hairNames } = source;
+  const loadPart = source.loadPart;
+  type Loaded = LoadedPart;
+
+  // --- 1. モデル自身の rest → 標準ボーン名の RestPose → リグ → Skeleton ---
+  const { root, rig, skel, index } = buildRawRig(scene, source);
 
   const mat = new StandardMaterial("rawMat", scene);
   // ⚠️ specularColor は Color3。Vector3 を入れると r/g/b が undefined になって描画が壊れる。
@@ -747,36 +822,8 @@ export async function buildRawModel(
   const perBone = new Map<string, number>();
   let voxelCount = 0, triangles = 0, skinDropped = 0;
 
-  // --- 先に全部位を読む（服の外径を決めてから肌を間引くため2段構え）---
-  type Loaded = {
-    part: { prefix: string; grid: string; weights?: string };
-    grid: PartGrid; w: PartWeights | null;
-    chunks: { ch: VoxChunk; voxels: Uint8Array[]; palette: number[][] }[];
-  };
-  const loadPart = async (part: Loaded["part"]): Promise<Loaded> => {
-    const grid = await get<PartGrid>(part.grid);
-    const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
-    const chunkDefs = grid.chunks?.length ? grid.chunks
-      : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
-    const chunks: Loaded["chunks"] = [];
-    for (const ch of chunkDefs) {
-      const res = await fetch(`${baseUrl}/${ch.vox_file}`);
-      if (!res.ok) continue;
-      const { voxels, palette } = parseVox(await res.arrayBuffer());
-      chunks.push({ ch, voxels, palette });
-    }
-    return { part, grid, w, chunks };
-  };
-
-  // ⚠️ 差し替え用の髪型は 139 件・20MB ある。全部読むと確認ページが開かないので、
-  //    最初は読まず、選ばれたものだけ読む（loadHair）。
-  const hairParts = manifest.parts.filter((x) => x.prefix.startsWith("hairstyle_"));
-  const hairNames = hairParts.map((x) => x.prefix).sort();
-  const loaded: Loaded[] = [];
-  for (const part of manifest.parts) {
-    if (part.prefix.startsWith("hairstyle_")) continue;
-    loaded.push(await loadPart(part));
-  }
+  // 読み込み済みの部位（髪型はここには入らない。選ばれたものだけ後で読む）
+  const loaded: Loaded[] = source.parts.slice();
 
   // --- 服の外径を測る（Blender 座標のまま。x=左右 / y=前後 / z=高さ）---
   const clothPts: { x: number; y: number; z: number }[] = [];
@@ -929,19 +976,23 @@ export async function buildRawModel(
       rebuildAll();
       model.thickness = thickness;
     }
-    // 肩幅も体格に合わせる（骨の位置を動かす）
-    const sw = 1 + (thickness - 1) * SHOULDER_W;
-    for (const [name, x0] of shoulderBase) {
-      const n = rig.node(name as never);
-      if (n) n.position.x = x0 * sw;
-    }
     setHeight(heightCm);
   };
   const setHeight = (cm: number): void => {
+    applyTo(root, rig, cm);
+  };
+  /** 身長合わせと肩幅合わせを、指定のリグへ掛ける（自分自身にも使う）。 */
+  const applyTo = (r: TransformNode, g: RigHandle, cm: number): void => {
+    // 肩幅（いまの厚みに合わせる。ジオメトリがその厚みで作られているため）
+    const sw = 1 + (thickness - 1) * SHOULDER_W;
+    for (const [name, x0] of shoulderBase) {
+      const n = g.node(name as never);
+      if (n) n.position.x = x0 * sw;
+    }
     const k = solveScale(cm / 100);
     // 足元は y=0 付近にあるので、原点まわりの拡大で足が地面に残る
-    root.scaling.setAll(k);
-    const h = rig.node("Head");
+    r.scaling.setAll(k);
+    const h = g.node("Head");
     // 頭だけ伸縮を戻して、最終的な頭の倍率を k^HEAD_EXP にする
     if (h) h.scaling.setAll(Math.pow(k, HEAD_EXP - 1));
   };
@@ -1284,7 +1335,14 @@ export async function buildRawModel(
   const model: RawModel = {
     rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped,
     setJaw, hairNames, loadHair,
-    modelHeightCm: modelHeight * 100, setHeight, setBody, thickness,
+    modelHeightCm: modelHeight * 100, setHeight, setBody, thickness, applyTo,
   };
   return model;
+}
+
+/** 読み込みと組み立てをまとめて行う（確認ページ用）。 */
+export async function buildRawModel(
+  scene: Scene, baseUrl: string, opts?: { jaw?: JawShape },
+): Promise<RawModel> {
+  return buildRawModelFrom(scene, await preloadRawSource(baseUrl), opts);
 }

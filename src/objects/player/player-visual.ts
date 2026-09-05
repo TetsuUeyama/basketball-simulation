@@ -6,6 +6,7 @@ import { clamp } from "../../util";
 import { Player } from "./player";
 import { buildVoxelBody, syncVoxelPose } from "./player-voxel";
 import { applyClipPose } from "../../animation/voxel-motion";
+import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 
 declare module "./player" {
   interface Player {
@@ -26,7 +27,21 @@ declare module "./player" {
 Player.prototype.ensureVoxel = function(): void {
     if (this.vox || Player.HEADLESS) return;
     const u = this.kitOverride ?? uniformOf(this.team);
-    this.vox = buildVoxelBody(this.scene, this.root, {
+    // 生ボクセルの素体。読み込みが間に合っていなければ従来の経路へ落ちる。
+    if (rawReady() && useRawFor()) {
+      this.vox = buildRawVoxelBody(this.scene, this.root, {
+        name: `${this.team}_${this.idx}`,
+        balance: this.attr.balance,
+        height: this.height,
+        weight: this.weight,
+        skin: this.look.skin,
+        hair: this.look.hair,
+        hairNo: this.look.hairNo,
+        kit: { top: u.top, bottom: u.bottom, shoes: u.shoes },
+        jerseyText: this.jerseyText,
+      });
+    }
+    if (!this.vox) this.vox = buildVoxelBody(this.scene, this.root, {
       name: `${this.team}_${this.idx}`,
       balance: this.attr.balance,
       height: this.height,

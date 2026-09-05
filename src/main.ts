@@ -21,6 +21,7 @@ import "./ui/ui-pickers";
 import "./ui/ui-result";
 import "./ui/ui-hud";
 import "./ui/ui-poker";
+import { startRawPreload } from "./objects/player/player-raw";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 // preserveDrawingBuffer は意図的にOFF（モバイルGPUのちらつき防止。スクショ時のみ有効化）。
@@ -32,6 +33,11 @@ scene.clearColor = new Color4(0.04, 0.05, 0.07, 1);
 const { sun } = addLights(scene);
 
 const camera = new BroadcastCamera(scene, canvas);
+
+// ---- 生ボクセルの素体を先に読み込む ----------------------------------------
+// ⚠️ 選手を組むのは同期処理なので、チーム決定までに読み終えておく必要がある。
+//    間に合わなければ従来のモデルで組まれる（動作は同じ）。
+void startRawPreload();
 
 // ---- 3Dの実体はチーム決定後に組む -----------------------------------------
 // タイトル/クラブ選択の間はコートも選手も作らない。26人ぶんのボクセル生成と、その

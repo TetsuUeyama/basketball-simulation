@@ -58,7 +58,7 @@ export interface VoxelKit { top: RGB; bottom: RGB; shoes: RGB }
  *  アニメ側が作る回転 V（(0,-1,0) を目標方向へ向ける）から
  *    ノードの回転 = restRot(親) ⊗ V ⊗ restRot(自分)⁻¹
  *  へ変換する。メッシュ側は restRot を自分で持つので、両者が同じ向きに揃う。 */
-interface BoneMap {
+export interface BoneMap {
   bone: StandardBoneName;
   pre: Quaternion;    // restRot(親の部位)
   post: Quaternion;   // restRot(自分の部位)の逆
