@@ -41,11 +41,30 @@ function advance(sec: number): void {
 for (const p of players) { p.upright = p.uprightTarget = 1.0; }
 advance(2);
 
-console.log("① 直立度 1.00 のとき、関節ごとの実効値（1.00 が直立）");
+console.log("① 直立度 1.00 のとき、脚・胴と腕それぞれの実効値の帯（1.00 が直立）");
+const LEG = ["thighL", "thighR", "shinL", "shinR", "stanceL", "stanceR", "outL", "outR", "lean"] as const;
+const ARM = ["shoulderL", "shoulderR", "armL", "armR", "foreL", "foreR", "splay"] as const;
+{
+  // 長めに回して、それぞれの区分がどこまで振れるかを見る
+  const lo = new Map<string, number>(), hi = new Map<string, number>();
+  for (const n of names) { lo.set(n, 9); hi.set(n, -9); }
+  for (let i = 0; i < 40; i++) {
+    advance(0.4);
+    for (const n of names) {
+      const v = 1 - stanceS(players[0], G[n]);
+      lo.set(n, Math.min(lo.get(n)!, v)); hi.set(n, Math.max(hi.get(n)!, v));
+    }
+  }
+  const band = (ks: readonly string[]): string => {
+    const l = Math.min(...ks.map((k) => lo.get(k)!)), h = Math.max(...ks.map((k) => hi.get(k)!));
+    return `${l.toFixed(3)}〜${h.toFixed(3)}（幅 ${((h - l) * 100).toFixed(1)}%）`;
+  };
+  console.log(`  脚・胴 ${band(LEG)}`);
+  console.log(`  腕     ${band(ARM)}`);
+}
 for (const p of players) {
   const v = names.map((n) => (1 - stanceS(p, G[n])).toFixed(3));
-  const lo = Math.min(...v.map(Number)), hi = Math.max(...v.map(Number));
-  console.log(`  ${p.name.slice(0, 8).padEnd(9)} ${v.slice(0, 8).join(" ")}  … 幅 ${lo.toFixed(3)}〜${hi.toFixed(3)}`);
+  console.log(`  ${p.name.slice(0, 8).padEnd(9)} ${v.slice(0, 8).join(" ")}`);
 }
 
 console.log("\n② 時間で漂うか（左腿の実効値を 0.5 秒ごと）");

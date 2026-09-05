@@ -63,7 +63,9 @@ export function uprightTargetFor(p: Player, ballX: number, ballZ: number, onOffe
 //    少しずつ違う値をゆっくり揺らす。人ごとに位相と周期が違うので、26人が同じ形に
 //    ならない。
 /** 揺れの片振幅。実効の直立度は base-2*WOB 〜 base の帯に収まる。 */
-const WOB = 0.025;             // 帯は 5%（例: 直立度 1.00 なら 0.95〜1.00）
+const WOB = 0.025;             // 脚・胴は帯 5%（例: 直立度 1.00 なら 0.95〜1.00）
+/** 腕はもう少し大きく揺らす。脚と違って接地の制約が無く、動いて見えるほうが自然。 */
+const WOB_ARM = 0.05;          // 腕は帯 10%（同 0.90〜1.00）
 /** 揺れの遅さ（rad/秒）。ゆっくり漂う速さ。速いと震えて見える。 */
 const WOB_HZ_LO = 0.18, WOB_HZ_HI = 0.45;
 
@@ -74,6 +76,12 @@ export const G = {
   armL: 11, armR: 12, foreL: 13, foreR: 14, splay: 15,
 } as const;
 const NG = 16;
+/** 区分ごとの揺れ幅。腕まわり（鎖骨・上腕・前腕・腕の外向き）だけ大きい。 */
+const AMP = (() => {
+  const a = new Float64Array(NG).fill(WOB);
+  for (const i of [G.shoulderL, G.shoulderR, G.armL, G.armR, G.foreL, G.foreR, G.splay]) a[i] = WOB_ARM;
+  return a;
+})();
 
 type Wobble = { t: number; ph: Float64Array; fr: Float64Array; s: Float64Array };
 const WOBBLE = new WeakMap<Player, Wobble>();
@@ -108,7 +116,8 @@ export function stepUpright(p: Player, dt: number): void {
     const n = Math.sin(w.t * w.fr[i] + w.ph[i]) * 0.65
       + Math.sin(w.t * w.fr[i] * 1.7 + w.ph[i] * 2.3) * 0.35;
     // 帯の上端を base に合わせる（直立度 1 の選手が 1 を超えないように）
-    const u = Math.min(1, Math.max(0, p.upright - WOB + n * WOB));
+    const w2 = AMP[i];
+    const u = Math.min(1, Math.max(0, p.upright - w2 + n * w2));
     w.s[i] = 1 - u;
   }
 }
