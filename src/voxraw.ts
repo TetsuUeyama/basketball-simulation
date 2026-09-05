@@ -764,6 +764,28 @@ export async function buildRawModel(
   let bodyCells: Cell[] = [];
   /** 体から求めたあごの情報。髭付きの髪型を同じ形に変えるのに使う。 */
   let jawFit: JawFit | null = null;
+  /** ユニフォームの地の色。柄パーツから地を落とすのに使う。 */
+  let baseCloth: number[] | null = null;
+  let clothBaseDropped = 0;
+  /** 地とみなす色の距離。赤(168,8,8)と黄(248,248,40)は 250 以上離れている。 */
+  const CLOTH_BASE_TOL = 90;
+  {
+    const L = loaded.find((x) => x.part.prefix === "jersey");
+    if (L) {
+      const n = new Map<string, { col: number[]; n: number }>();
+      for (const { voxels, palette } of L.chunks) {
+        for (const v of voxels) {
+          const col = palette[v[3] - 1];
+          if (!col) continue;
+          const k = col.join(",");
+          const e = n.get(k);
+          if (e) e.n++; else n.set(k, { col, n: 1 });
+        }
+      }
+      let best = 0;
+      for (const e of n.values()) if (e.n > best) { best = e.n; baseCloth = e.col; }
+    }
+  }
 
   // --- モデル本来の髪の色の散り方 -------------------------------------------
   // ⚠️ 差し替え用の髪型（Man Hair Collection）はテクスチャが無く**1色**で焼ける
@@ -850,6 +872,17 @@ export async function buildRawModel(
       }
     }
     if (!cells.length) return null;
+    // ⚠️ ユニフォームの柄（jerseymark）は文字の周りのポリゴンごと抜いているので、
+    //    地の赤が混ざる（実測 5279 個中 2476 個）。そのまま出すと赤い板が浮いて見える。
+    //    土台と同じ色のボクセルは落とし、柄の色だけ残す。
+    if (part.prefix === "jerseymark" && baseCloth) {
+      const before = cells.length;
+      cells = cells.filter((c) => {
+        const d = Math.hypot(c.col[0] - baseCloth![0], c.col[1] - baseCloth![1], c.col[2] - baseCloth![2]);
+        return d > CLOTH_BASE_TOL;
+      });
+      clothBaseDropped += before - cells.length;
+    }
     // 差し替え用の髪型はモデル本来の髪と同じ色の散り方にする（上の注意を参照）
     if (part.prefix.startsWith("hairstyle_") && hairDistTotal > 0) {
       for (const c of cells) {

@@ -3,8 +3,14 @@
 "bones": [
 "Head"
 ],
-"voxel_count": 1478,
+"voxel_count": 1479,
 "weights": [
+[
+[
+0,
+1.0
+]
+],
 [
 [
 0,
