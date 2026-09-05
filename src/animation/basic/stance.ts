@@ -30,6 +30,13 @@ const READY_ARM = 0.18;        // ≈10°
 /** 直立度 0 のときの前腕の前傾（rad）。肘を曲げて手を前に出す。 */
 const READY_FOREARM = 0.30;    // ≈17°
 /**
+ * 直立度 0 のときの前腕の横の開き（rad）。
+ * ⚠️ splayArm は「上腕だけ外へ振り、前腕は鉛直のまま」に打ち消している（脇を開いた
+ *    まま手が体から離れないようにするため）。そのままだと肩をいくら開いても前腕の
+ *    横向きが変わらないので、ここで前腕にも少しだけ外向きを足す。
+ */
+const READY_FORE_OUT = 0.22;   // ≈13°
+/**
  * 肩まわりだけ、構えの深さを底上げする量。
  * 直立度 100% のときに、以前の 60% と同じ角度になるようにする。以降は同じ傾きで
  * 続くので、直立度が 1 下がるごとに深さが 1 増える（100%→0.40、0%→1.40）。
@@ -258,6 +265,9 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   tiltX(vb, "LeftUpperArm", -READY_ARM * A(G.armL)); tiltX(vb, "RightUpperArm", -READY_ARM * A(G.armR));
   tiltX(vb, "LeftLowerArm", -READY_FOREARM * A(G.foreL));
   tiltX(vb, "RightLowerArm", -READY_FOREARM * A(G.foreR));
+  // 前腕も少し外へ。符号は splayLegs と同じ規約（左が -、右が +）。
+  tiltZ(vb, "LeftLowerArm", -READY_FORE_OUT * A(G.foreL));
+  tiltZ(vb, "RightLowerArm", READY_FORE_OUT * A(G.foreR));
 }
 
 /**
