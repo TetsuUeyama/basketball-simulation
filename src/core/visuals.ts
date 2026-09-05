@@ -4,6 +4,7 @@ import { TEAM_COLORS, HUD_OPTS } from "../config";
 import { rate, dist2D, dist2DTo } from "../util";
 import { hoopIndex, NET_BOTTOM_Y } from "../objects/court";
 import { poseHands } from "./poses";
+import { uprightTargetFor } from "../animation/basic/stance";
 import type { Player } from "../objects/player/player";
 import type { Game } from "../game";
 
@@ -316,6 +317,10 @@ export function syncAll(game: Game, ): void {
     // モーションクリップの選択に使う（ドリブル系 ⇄ 素の歩行/走行）
     const carrying = game.ballMode === "held" || game.ballMode === "charge";
     for (const p of game.players) p.holdingBall = carrying && p === game.handler;
+    // 構えの深さ: ボールが遠いほど立ち、守る側は攻める側より低く構える
+    for (const p of game.players) {
+      p.uprightTarget = uprightTargetFor(p, game.ball.pos.x, game.ball.pos.z, p.team === game.possession);
+    }
     for (const p of game.players) p.sync();
     updateNameTags(game);
     game.ball.sync();

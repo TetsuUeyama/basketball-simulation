@@ -211,6 +211,14 @@ function proto(scene: Scene, bucket: number): Proto | null {
  */
 const HAIR_PROTO = new WeakMap<Scene, Map<string, Promise<Mesh | null>>>();
 
+/**
+ * その体格で使われている見本のモデル。確認ページが統計やあごの形を触るのに使う。
+ * ⚠️ 見本は全選手で共有している。ここを書き換えると同じ体格の選手すべてに効く。
+ */
+export function rawPrototype(scene: Scene, heightM: number, weightKg: number): RawModel | null {
+  return proto(scene, thickBucket(heightM, weightKg))?.model ?? null;
+}
+
 /** 選手の髪型番号 → データにある髪型名。無ければ順番で近いものへ寄せる。 */
 export function hairPartName(hairNo: number): string | null {
   if (!source || hairNo <= 0) return null;
@@ -611,9 +619,10 @@ export function buildRawVoxelBody(
     // 腕を真下へ垂らしたとき、上腕が胴に触れないぶんだけ開く。
     // ⚠️ 焼き込み素体の 35° を流用してはいけない。あちらは肩の関節が胴の内側に
     //    あるための値で、生素体は肩が胴より 4cm 外にあるので開く必要がほぼ無い。
-    minArmSplay: Math.max(MIN_SPLAY,
+    baseArmSplay: Math.max(MIN_SPLAY,
       Math.atan2(Math.max(0, pe.torsoHalf * k + ARM_RADIUS * k - Math.abs(sh.x)),
         Vector3.Distance(sh, el))),
+    armSplay: 0,   // 直立度から毎フレーム決まる（作った直後に下限を入れる）
     // ⚠️ 焼き込みモデルは手のひらの中心までを実効長にしている。生モデルは手ボーンが
     //    手首にあるので、手のひらぶんを足す。
     foreArm: Vector3.Distance(el, hand) * 1.12,
@@ -639,5 +648,6 @@ export function buildRawVoxelBody(
       for (const m of allMats) m.dispose();
     },
   };
+  body.armSplay = body.baseArmSplay;
   return body;
 }

@@ -193,7 +193,9 @@ export interface VoxelBody {
   readonly upperArm: number;
   readonly foreArm: number;
   /** 腕を胴へ埋めないための外向き角の下限(rad)。素体の肩幅と胴幅から決まる。 */
-  readonly minArmSplay: number;
+  readonly baseArmSplay: number;
+  /** いまのフレームで使う外向き角(rad)。構え（直立度）が毎フレーム書き換える。 */
+  armSplay: number;
   /** 手ボーンの静止ローカル位置（手首を軸に回すとき position を戻す基準）。 */
   readonly handRest: Map<string, Vector3>;
   /** 手ボーン原点から見た手首（手メッシュの内側の端）。ここを固定して手を回す。 */
@@ -676,7 +678,8 @@ export function buildVoxelBody(scene: Scene, parent: TransformNode, o: VoxelBody
     ankleY: ankle.y,
     upperArm: Vector3.Distance(sh, el),
     foreArm: (fixL.len + fixR.len) / 2,
-    minArmSplay: MIN_ARM_SPLAY,
+    baseArmSplay: MIN_ARM_SPLAY,
+    armSplay: MIN_ARM_SPLAY,
     setSkinColor: (c) => {
       const b = skinBaseColor(variant);
       skinMat.unfreeze();
@@ -847,14 +850,14 @@ function putArms(vb: VoxelBody, back: boolean, armL: TransformNode, armR: Transf
   if (doLeftBone) {
   localQuat(back ? armR : armL, _q);
   if (back) flipQ(_q);
-  if (back ? ikR : ikL) _cancelL.copyFromFloats(0, 0, 0, 1); else splayArm(_q, -1, _cancelL, vb.minArmSplay);
+  if (back ? ikR : ikL) _cancelL.copyFromFloats(0, 0, 0, 1); else splayArm(_q, -1, _cancelL, vb.armSplay);
   put(vb, "LeftUpperArm", _q);
   }
 
   if (doRightBone) {
   localQuat(back ? armL : armR, _q);
   if (back) flipQ(_q);
-  if (back ? ikL : ikR) _cancelR.copyFromFloats(0, 0, 0, 1); else splayArm(_q, 1, _cancelR, vb.minArmSplay);
+  if (back ? ikL : ikR) _cancelR.copyFromFloats(0, 0, 0, 1); else splayArm(_q, 1, _cancelR, vb.armSplay);
   put(vb, "RightUpperArm", _q);
   }
 

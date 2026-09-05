@@ -41,6 +41,11 @@ export class Player {
   look: PlayerLook;              // 見た目(肌/髪/髪型)。defのlookを保持しHUD/頭と共有
   attr: Attributes;              // defの能力値へのライブ参照
   height: number;                // メートル
+  /** 確認ページ用: 名指しで再生するクリップ。空ならゲームの選択に任せる。 */
+  clipOverride = "";
+  /** 直立度 0..1。1=直立不動、下がるほど膝を曲げ肩を開いて構える。 */
+  upright = 1;
+  uprightTarget = 1;
   weight = 80;                   // kg（DB由来。体格＝見た目の厚みと接触の質量に使う）
   posMask = 0;                   // 守れるポジションのビット和（C=1/PF=2/SF=4/SG=8/PG=16）
   runSpeed: number;              // m/s、`speed`能力値から算出

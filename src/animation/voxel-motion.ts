@@ -183,6 +183,10 @@ function pickJump(p: Player): string {
 }
 
 function pickClip(p: Player): string {
+  // 確認ページから特定のクリップを名指しで再生するための逃げ道。
+  // ⚠️ ゲーム中は空のまま。ここを通しておかないと、確認ページで見えるものと
+  //    試合中の見た目が別物になり、確認の意味が無くなる。
+  if (p.clipOverride) return p.clipOverride;
   if (p.seated) return "";
   if (p.airborne) return p.jumpDur > 0 ? pickJump(p) : "";
   // 着地の立て直し中はジャンプのクリップを続ける。⚠️ 滞空区間の最後で切ると、

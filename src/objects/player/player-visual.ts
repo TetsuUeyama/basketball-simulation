@@ -8,6 +8,7 @@ import { Quaternion, Vector3 } from "@babylonjs/core";
 import { buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
 import { applyClipPose } from "../../animation/voxel-motion";
 import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
+import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/stance";
 
 declare module "./player" {
   interface Player {
@@ -143,7 +144,11 @@ Player.prototype.syncVoxel = function(): void {
     const vb = this.vox;
     if (!vb) return;
     this.updateWristTrail();   // 手首は肩・肘が決まったあとに追従させる
+    // 構え（直立度）。腕の開きは姿勢を作る前に、脚の曲げは作ったあとに重ねる。
+    stepUpright(this, this.lastDt);
+    vb.armSplay = armSplayFor(vb, this);
     if (applyClipPose(vb, this, this.lastDt)) {
+      applyStance(vb, this);
       blendPose(this, vb, this.clipName, this.lastDt);
       vb.skel.prepare();
       return;
@@ -163,6 +168,7 @@ Player.prototype.syncVoxel = function(): void {
       hipL: this.hipL, hipR: this.hipR,
       kneeL: this.kneeL, kneeR: this.kneeR,
     });
+    applyStance(vb, this);
     blendPose(this, vb, "", this.lastDt);
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
 };
