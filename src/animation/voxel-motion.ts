@@ -299,16 +299,15 @@ export function applyClipPose(vb: VoxelBody, p: Player, dt: number): boolean {
   // 胸・頭の向き（プレーを追う）はゲーム側の値をクリップの上に重ねる
   syncVoxelHeadTorso(vb, p.numberSide, p.torsoNode.rotation.y, p.headNode.rotation.y,
     _spineQ, _headQ);
-  // 腕はゲーム側（ボール・守備）が持つ。ただしドリブル中は**ボール側の腕だけ**にして、
-  // 反対の腕はクリップに焼かれた「空いている方の腕」を残す（両方上書きするとドリブルに見えない）。
+  // 腕は**両方ともゲーム側**（ボール・守備・腕振り）が持つ。
   //
-  // ⚠️ ドリブルのクリップは全て**右手ドリブル**で焼いてある（`ballHand: "right"`）。
-  //    ゲームが左手側でついているときにこれをやると、残った反対の腕がクリップの
-  //    「右手ドリブルの腕」になり、ボールと逆側で手が上下する。その場合は両腕とも
-  //    ゲーム側で上書きする。
-  const ballOnVoxelRight = (p.dribbleArm === "R") !== (p.numberSide > 0);
-  const keepClipArm = name.startsWith("dribble") && ballOnVoxelRight;
-  syncVoxelArms(vb, p, keepClipArm ? p.dribbleArm : null);
+  // ⚠️ 以前はドリブル中だけ「空いている腕はクリップに焼かれたものを残す」ようにして
+  //    いたが、それをやるのはボールがボクセルの右手にあるときだけだった。結果として
+  //    番号側（コートのどちら側を向くか）で空いている腕の高さが変わり、実測で
+  //    片側は 1023mm（垂れている）・もう片側は 1295mm（クリップの上がった腕）になって
+  //    いた。空いている腕は reachDribble が「腕を振る／相手へ伸ばす」を作るので、
+  //    クリップを残す必要はない。
+  syncVoxelArms(vb, p, null);
   void _aim;
   return true;
 }

@@ -5,6 +5,7 @@ import { Player } from "../objects/player/player";
 import { MAX_PASS } from "../config";
 import { rate, dist2D, dist2DTo, rand, chance } from "../util";
 import type { Game } from "../game";
+import { GUARD_RANGE } from "../animation/action/dribble";
 
   // ボールに触れている者の手をボールに当てる。それ以外は全員、腕を脇に下ろして休める。
 export function poseHands(game: Game, ): void {
@@ -75,7 +76,14 @@ export function poseHands(game: Game, ): void {
           } else {
             // ドリブル: ボールを運ぶのと同じ側の手でドリブルの高さにかまえる
             const bw = new Vector3(b.x, 0.95, b.z);
-            game.handler.reachDribble(bw, game.handler.dribbleWithRight(bw), dribArmRate(game, game.handler));
+            // 空いている手は、マークに来ている相手が近ければその選手へ伸ばして
+            // 間合いを作る。⚠️ 全選手から一番近い者を探すのではなく、ゲームが持って
+            //    いる「オンボール守備者」を使う。全走査だと味方をすり抜けて遠くの
+            //    選手を拾うことがあり、相手が居ないのに腕が上がった。
+            const h = game.handler;
+            const dfd = game.onBallDefender(h);
+            const guard = dfd && !dfd.seated && dist2D(dfd.pos, h.pos) < GUARD_RANGE ? dfd.pos : null;
+            h.reachDribble(bw, h.dribbleWithRight(bw), dribArmRate(game, h), guard);
           }
         }
         break;

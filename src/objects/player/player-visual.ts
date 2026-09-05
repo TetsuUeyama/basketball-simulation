@@ -9,6 +9,7 @@ import { buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
 import { applyClipPose } from "../../animation/voxel-motion";
 import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/stance";
+import { levelDribbleHand } from "../../animation/action/dribble";
 
 declare module "./player" {
   interface Player {
@@ -149,8 +150,11 @@ Player.prototype.syncVoxel = function(): void {
     vb.armSplay = armSplayFor(vb, this);
     if (applyClipPose(vb, this, this.lastDt)) {
       applyStance(vb, this);
+      // ⚠️ 手のひらは最後に決める。前腕を動かしたあとでないと打ち消せない。
+      if (this.dribblePosed) levelDribbleHand(vb, this);
       blendPose(this, vb, this.clipName, this.lastDt);
       vb.skel.prepare();
+      this.dribblePosed = false;
       return;
     }
     syncVoxelPose(vb, {
@@ -169,8 +173,10 @@ Player.prototype.syncVoxel = function(): void {
       kneeL: this.kneeL, kneeR: this.kneeR,
     });
     applyStance(vb, this);
+    if (this.dribblePosed) levelDribbleHand(vb, this);
     blendPose(this, vb, "", this.lastDt);
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
+    this.dribblePosed = false;
 };
 
   /** このスロットを今占有する選手のために、見た目（肌/髪色・髪型）を再適用する。
