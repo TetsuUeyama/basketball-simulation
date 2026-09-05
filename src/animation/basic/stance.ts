@@ -26,7 +26,7 @@ const READY_SHOULDER = 0.14;   // ≈8°
 /** 直立度 0 のときの上腕の前傾（rad）。 */
 const READY_ARM = 0.34;        // ≈19°
 /** 直立度 0 のときの前腕の前傾（rad）。肘を曲げて手を前に出す。 */
-const READY_FOREARM = 0.42;    // ≈24°
+const READY_FOREARM = 0.62;    // ≈36°
 /** 直立度の追従の速さ（1秒あたりの割合）。急に沈むと不自然。 */
 const FOLLOW = 4.0;
 
@@ -64,6 +64,7 @@ export function stepUpright(p: Player, dt: number): void {
 
 const _q = new Quaternion();
 const X = new Vector3(1, 0, 0);
+const Z = new Vector3(0, 0, 1);
 
 /**
  * ボーンを体の前後方向へ傾ける（今の姿勢の上に重ねる）。
@@ -77,6 +78,17 @@ function tiltX(vb: VoxelBody, bone: string, ang: number): void {
   const q = n?.rotationQuaternion;
   if (!n || !q) return;
   Quaternion.RotationAxisToRef(X, ang, _q);
+  _q.multiplyToRef(q, q);
+  n.markAsDirty("rotationQuaternion");
+}
+
+/** ボーンを体の左右方向へ倒す（今の姿勢の上に重ねる）。splayLegs の打ち消しに使う。 */
+function tiltZ(vb: VoxelBody, bone: string, ang: number): void {
+  if (Math.abs(ang) < 1e-4) return;
+  const n = vb.rig.node(bone as StandardBoneName);
+  const q = n?.rotationQuaternion;
+  if (!n || !q) return;
+  Quaternion.RotationAxisToRef(Z, ang, _q);
   _q.multiplyToRef(q, q);
   n.markAsDirty("rotationQuaternion");
 }
@@ -128,7 +140,14 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   // 脚: 前へ曲げる ＋ 左右に開く
   tiltX(vb, "LeftUpperLeg", -a); tiltX(vb, "RightUpperLeg", -a);
   tiltX(vb, "LeftLowerLeg", a + b); tiltX(vb, "RightLowerLeg", a + b);
-  splayLegs(vb, READY_STANCE * s);
+  const splay = READY_STANCE * s;
+  splayLegs(vb, splay);
+  // 足首: 脛の傾きと脚の開きを打ち消して、足裏を地面と平行に保つ。
+  // ⚠️ 足首は親から回転をそのまま受け継ぐ。腿 -a と膝 +(a+b) で差し引き +b、
+  //    開きは splayLegs が Z 軸に ±splay。同じ量を逆へ掛けて水平へ戻す。
+  //    （splayLegs の左右の符号は Left=-1 / Right=+1。そちらに合わせる）
+  tiltX(vb, "LeftFoot", -b); tiltX(vb, "RightFoot", -b);
+  tiltZ(vb, "LeftFoot", splay); tiltZ(vb, "RightFoot", -splay);
   // 腰を沈める。
   // ⚠️ 縮む量を角度から計算してはいけない。クリップが既に膝を曲げているので、
   //    重ねた角度ぶんだけでは合わない（式で出すと 8.6cm 沈みすぎたり 4.3cm 浮いたりした）。
@@ -136,6 +155,8 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   p.root.position.y -= lowestFootY(vb) - before;
   // 上半身の前傾。⚠️ 胴は脚と符号が逆。ボーンごとにローカル軸の向きが違う。
   tiltX(vb, "Spine", READY_LEAN * s);
+  // 頭: 胴が前傾したぶん起こして、顔は前を向いたままにする。
+  tiltX(vb, "Head", -READY_LEAN * s);
   // 肩〜前腕を前へ。すぐ手が出る形にする。
   // ⚠️ 腕は胴と符号が逆（脚と同じ側）。正のまま掛けると腕が後ろへ流れる
   //    （実測で手が体の前 -113mm → -268mm と、逆に後ろへ下がっていた）。
