@@ -166,6 +166,16 @@ function proto(scene: Scene, bucket: number): Proto | null {
     const jersey = model.byPart.get("jersey");
     const band = mark ? stripBackMarks(mark) : null;
     const panel = band && jersey ? backPanel(jersey, band) : null;
+    // ⚠️ 板は Spine ノードにぶら下げるので、**ここで一度だけ** Spine ローカルへ移す。
+    //    buildRig はノードに位置しか入れない（回転も倍率も単位）ので、Spine の
+    //    静止絶対位置を引くだけでよい。身長の倍率はリグより上の枝に掛かるので効かない。
+    const spineRest = model.rig.restPosition("Spine");
+    if (panel?.positions && spineRest) {
+      const q = panel.positions as number[];
+      for (let i = 0; i < q.length; i += 3) {
+        q[i] -= spineRest.x; q[i + 1] -= spineRest.y; q[i + 2] -= spineRest.z;
+      }
+    }
     for (const mesh of model.meshes) mesh.setEnabled(false);
     model.root.setEnabled(false);
     e = { model, panel };
@@ -422,20 +432,13 @@ export function buildRawVoxelBody(
     numMat.opacityTexture = numTex;
     allMats.push(numMat);
     numMesh = new Mesh(`rawnumshell_${o.name}`, scene);
+    // ⚠️ 板の頂点は見本と**同じ配列を共有**している。ここで書き換えてはいけない。
+    //    以前は選手ごとに Spine ローカルへ変換していたが、getVerticesData が
+    //    共有配列そのものを返すため26人ぶん変換が積み重なり、板がコートの下
+    //    （y = -34m）へ沈んだ。Spine ローカルへの変換は見本を作るときに済ませてある。
     pe.panel.applyToMesh(numMesh, false);
     numMesh.isPickable = false;
     numMesh.material = numMat;
-    // 板は素体の座標で作ってあるので、Spine ローカルへ移してから親付けする
-    // （Spine は身長ぶんの倍率が掛かった枝の中にあるので、その差分も一緒に消える）。
-    modelRoot.computeWorldMatrix(true);
-    spineNode.computeWorldMatrix(true);
-    const toSpine = modelRoot.getWorldMatrix().multiply(spineNode.getWorldMatrix().clone().invert());
-    const vp = numMesh.getVerticesData("position")!;
-    for (let i = 0; i < vp.length; i += 3) {
-      const v = Vector3.TransformCoordinates(new Vector3(vp[i], vp[i + 1], vp[i + 2]), toSpine);
-      vp[i] = v.x; vp[i + 1] = v.y; vp[i + 2] = v.z;
-    }
-    numMesh.setVerticesData("position", vp, false);
     numMesh.parent = spineNode;
     numMesh.isVisible = false;    // Game が背中側を決める（setNumberVisible）まで出さない
     drawNumber(o.jerseyText, "white");
