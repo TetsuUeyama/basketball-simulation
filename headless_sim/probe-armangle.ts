@@ -34,19 +34,30 @@ const ang = (a: string, b: string): number => {
   const d = at(b).subtract(at(a));
   return Math.acos(Math.min(1, Math.max(-1, -d.y / d.length()))) * 180 / Math.PI;
 };
-console.log("直立度  上腕の開き  前腕の開き  手の前後   手の高さ  膝の前後");
+/** 上腕が体から横へどれだけ離れているか（正面から見た開き）。 */
+const sideAng = (): number => {
+  const d = at("LeftLowerArm").subtract(at("LeftUpperArm"));
+  return Math.atan2(Math.abs(d.x), Math.max(1e-6, -d.y)) * 180 / Math.PI;
+};
+console.log("直立度  肩の横の開き  上腕の前傾  前腕の前傾  手の横   手の前   手の高さ");
 for (const u of [1.0, 0.8, 0.6, 0.4, 0.2, 0.0]) {
   // 揺れを平均で見るため、少し回して真ん中あたりを取る
-  let a1 = 0, a2 = 0, hz = 0, hy = 0, kz = 0, n = 0;
+  let a0 = 0, a1 = 0, a2 = 0, hx = 0, hz = 0, hy = 0, n = 0;
   for (let i = 0; i < 600; i++) {
     p.upright = p.uprightTarget = u;
     p.sync();
     if (i < 120) continue;
     p.root.computeWorldMatrix(true);
-    a1 += ang("LeftUpperArm", "LeftLowerArm"); a2 += ang("LeftLowerArm", "LeftHand");
-    const h = at("LeftHand").subtract(p.pos), k = at("LeftLowerLeg").subtract(p.pos);
-    hz += h.z * 1000; hy += h.y * 1000; kz += k.z * 1000; n++;
+    a0 += sideAng();
+    // 前後の傾き（横成分を除いた、真下からの前後角）
+    const du = at("LeftLowerArm").subtract(at("LeftUpperArm"));
+    const df = at("LeftHand").subtract(at("LeftLowerArm"));
+    a1 += Math.atan2(-du.z, Math.max(1e-6, -du.y)) * 180 / Math.PI;
+    a2 += Math.atan2(-df.z, Math.max(1e-6, -df.y)) * 180 / Math.PI;
+    const h = at("LeftHand").subtract(p.pos);
+    hx += Math.abs(h.x) * 1000; hz += -h.z * 1000; hy += h.y * 1000; n++;
   }
-  console.log(`  ${u.toFixed(2)}  ${(a1 / n).toFixed(1).padStart(8)}°  ${(a2 / n).toFixed(1).padStart(8)}°`
-    + `  ${(hz / n).toFixed(0).padStart(7)}mm  ${(hy / n).toFixed(0).padStart(7)}mm  ${(kz / n).toFixed(0).padStart(7)}mm`);
+  console.log(`  ${u.toFixed(2)}  ${(a0 / n).toFixed(1).padStart(10)}°  ${(a1 / n).toFixed(1).padStart(8)}°`
+    + `  ${(a2 / n).toFixed(1).padStart(8)}°  ${(hx / n).toFixed(0).padStart(6)}mm`
+    + `  ${(hz / n).toFixed(0).padStart(6)}mm  ${(hy / n).toFixed(0).padStart(7)}mm`);
 }

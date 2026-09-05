@@ -15,8 +15,8 @@ import { splayLegs, type VoxelBody } from "../../objects/player/player-voxel";
 const READY_THIGH = 0.40;      // ≈23°
 /** 直立度 0 のときの脛の後傾（rad）。腿より深くして膝を曲げる。 */
 const READY_SHIN = 0.52;       // ≈30°
-/** 直立度 0 のときの上腕の外向き角（rad）。 */
-const READY_SPLAY = 0.40;      // ≈23°
+/** 直立度 0 のときの肩の横の開き（上腕を体から離す角、rad）。 */
+const READY_SPLAY = 0.62;      // ≈36°
 /** 直立度 0 のときの上半身の前傾（rad）。 */
 const READY_LEAN = 0.30;       // ≈17°
 /** 直立度 0 のときの足の開き（rad、片脚あたり）。 */
@@ -25,12 +25,12 @@ const READY_STANCE = 0.17;     // ≈10°
 const READY_KNEE_OUT = 0.32;   // ≈18°
 /** 直立度 0 のときの鎖骨の前傾（rad）。肩を前へ入れる。 */
 const READY_SHOULDER = 0.14;   // ≈8°
-/** 直立度 0 のときの上腕の前傾（rad）。 */
-const READY_ARM = 0.34;        // ≈19°
+/** 直立度 0 のときの上腕の前傾（rad）。⚠️ 前後は控えめ。広げるのは横。 */
+const READY_ARM = 0.18;        // ≈10°
 /** 直立度 0 のときの前腕の前傾（rad）。肘を曲げて手を前に出す。 */
-const READY_FOREARM = 0.62;    // ≈36°
+const READY_FOREARM = 0.30;    // ≈17°
 /**
- * 肩・上腕・前腕だけ、構えの深さを底上げする量。
+ * 肩まわりだけ、構えの深さを底上げする量。
  * 直立度 100% のときに、以前の 60% と同じ角度になるようにする。以降は同じ傾きで
  * 続くので、直立度が 1 下がるごとに深さが 1 増える（100%→0.40、0%→1.40）。
  * ⚠️ 脚と胴には掛けない。腕だけ常に前へ構えているのが狙い。
@@ -73,8 +73,8 @@ export function uprightTargetFor(p: Player, ballX: number, ballZ: number, onOffe
 const WOB = 0.025;             // 脚・胴は帯 5%（例: 直立度 1.00 なら 0.95〜1.00）
 /** 肩・上腕・前腕の揺れ。脚と違って接地の制約が無いので大きく振れてよい。 */
 const WOB_ARM = 0.10;          // 帯 20%
-/** 腕の外向き（脇の開き）の揺れ。角度の指定は無いので腕より控えめ。 */
-const WOB_SPLAY = 0.05;        // 帯 10%
+/** 肩の横の開きの揺れ。ここも腕と同じ 20%。 */
+const WOB_SPLAY = 0.10;        // 帯 20%
 // ⚠️ 帯を倍にしても**見た目の動きは倍にならない**。関節の角度は「帯 × その関節の
 //    振り幅の定数」で決まり、脚は開き・膝の外向きなど複数の区分が重なるため。
 //    実測: 帯 5%/10% のとき、腿の振れ 3.1° に対し上腕 4.3°（1.4倍）だった。
@@ -94,6 +94,7 @@ const AMP = (() => {
   const a = new Float64Array(NG).fill(WOB);
   for (const i of [G.shoulderL, G.shoulderR, G.armL, G.armR, G.foreL, G.foreR]) a[i] = WOB_ARM;
   a[G.splay] = WOB_SPLAY;
+  void 0;
   return a;
 })();
 
@@ -259,7 +260,14 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   tiltX(vb, "RightLowerArm", -READY_FOREARM * A(G.foreR));
 }
 
-/** 構えに応じた上腕の外向き角の下限。 */
+/**
+ * 構えに応じた肩の横の開き（上腕を体から離す角）。
+ * ⚠️ ここにも底上げを掛ける。直立度 100% でも肩は開いていて、下がるほど広がる。
+ * ⚠️ 頭打ちは 1.0 ではなく 1.3。1.0 だと直立度 40% で開きが止まり、そこから下が
+ *    まったく変わらなかった（実測で 35.7° のまま）。
+ */
+const SPLAY_CAP = 1.3;
 export function armSplayFor(vb: VoxelBody, p: Player): number {
-  return vb.baseArmSplay + (READY_SPLAY - vb.baseArmSplay) * stanceS(p, G.splay);
+  const s = Math.min(SPLAY_CAP, stanceS(p, G.splay) + ARM_BIAS);
+  return vb.baseArmSplay + (READY_SPLAY - vb.baseArmSplay) * s;
 }
