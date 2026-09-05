@@ -100,6 +100,9 @@ async function load(): Promise<void> {
   }
   bonesLine = bones.join("  ");
   info = infoText();
+  hSlider.value = String(Math.round(model.modelHeightCm));
+  wSlider.value = String(Math.round(23.1 * (model.modelHeightCm / 100) ** 2));
+  applyBody();
   await showHair(hairPart);
   applyPose(0);
 }
@@ -183,6 +186,39 @@ jawSel.onchange = () => {
   info = infoText();
 };
 row("顔（あご）").appendChild(jawSel);
+
+// 身長。選手データは 158〜203cm（中央 180）。モデル自身は 180.4cm。
+const hRow = row("身長");
+const hSlider = document.createElement("input");
+hSlider.type = "range";
+hSlider.min = "158"; hSlider.max = "203"; hSlider.step = "1";
+Object.assign(hSlider.style, { flex: "1", minWidth: "0" } as Partial<CSSStyleDeclaration>);
+const hLabel = document.createElement("span");
+Object.assign(hLabel.style, { minWidth: "46px", fontSize: "12px", textAlign: "right" } as Partial<CSSStyleDeclaration>);
+// 体重。選手データは 50〜99kg（中央 75）。BMI 23.1 を基準の体型としている。
+const wRow = row("体重");
+const wSlider = document.createElement("input");
+wSlider.type = "range";
+wSlider.min = "50"; wSlider.max = "99"; wSlider.step = "1";
+Object.assign(wSlider.style, { flex: "1", minWidth: "0" } as Partial<CSSStyleDeclaration>);
+const wLabel = document.createElement("span");
+Object.assign(wLabel.style, { minWidth: "70px", fontSize: "12px", textAlign: "right" } as Partial<CSSStyleDeclaration>);
+
+/** 身長と体重をまとめて反映する。厚みが変わったときだけメッシュを作り直す。 */
+function applyBody(): void {
+  if (!model) return;
+  const h = Number(hSlider.value), w = Number(wSlider.value);
+  model.setBody(h, w);
+  hLabel.textContent = h + "cm";
+  wLabel.textContent = w + "kg x" + model.thickness.toFixed(2);
+  info = infoText();
+}
+hSlider.oninput = applyBody;
+wSlider.oninput = applyBody;
+hRow.appendChild(hSlider);
+hRow.appendChild(hLabel);
+wRow.appendChild(wSlider);
+wRow.appendChild(wLabel);
 
 const ctl = row("再生");
 const playBtn = button(ctl, "⏸ 停止", () => {

@@ -566,6 +566,35 @@ function reshapeJaw(
   return filled.length ? clipped.concat(filled) : clipped;
 }
 
+/**
+ * 体重による厚みの基準。選手データ 4015 人の BMI は 17.0〜29.4、中央 23.1（実測）。
+ * 厚み倍率 = sqrt(BMI / 23.1)。横2方向にだけ効かせるので、体積は倍率の2乗で効く。
+ * 実測の範囲: BMI 17.0 → x0.859 / 23.1 → x1.000 / 29.4 → x1.128。
+ */
+const BMI_REF = 23.1;
+/**
+ * 骨ごとの効き方。1 = 厚みをそのまま、0 = 変えない。
+ * ⚠️ 頭と首は変えない。太っても頭蓋骨は太らないので、変えると別人の頭になる。
+ */
+const THICK_BY_BONE: Record<string, number> = {
+  Head: 0, Neck: 0,
+  LeftShoulder: 0.6, RightShoulder: 0.6,
+  LeftHand: 0.3, RightHand: 0.3, LeftFoot: 0.3, RightFoot: 0.3,
+};
+/** 骨の向きを出すための子ボーン。無い骨は親からの向きを使う。 */
+const BONE_CHILD: Record<string, string> = {
+  Hips: "Spine", Spine: "Chest", Chest: "Neck", Neck: "Head",
+  LeftShoulder: "LeftUpperArm", LeftUpperArm: "LeftLowerArm", LeftLowerArm: "LeftHand",
+  RightShoulder: "RightUpperArm", RightUpperArm: "RightLowerArm", RightLowerArm: "RightHand",
+  LeftUpperLeg: "LeftLowerLeg", LeftLowerLeg: "LeftFoot",
+  RightUpperLeg: "RightLowerLeg", RightLowerLeg: "RightFoot",
+};
+/** 子が無い骨の向きを出すための親。 */
+const BONE_PARENT: Record<string, string> = {
+  Head: "Neck", LeftHand: "LeftLowerArm", RightHand: "RightLowerArm",
+  LeftFoot: "LeftLowerLeg", RightFoot: "RightLowerLeg",
+};
+
 /** 服として扱う部位（この内側の肌は描かない）。 */
 const CLOTH_PARTS = new Set(["jersey", "shorts", "socks", "shoes", "tshirt", "jeans"]);
 /** 髪の部位か（モデル本来の hair と、差し替え用の hairstyle_NNN）。 */
@@ -662,6 +691,17 @@ export interface RawModel {
   /**
   /** あごの形を変える（顔のバリエーション）。body のメッシュだけ張り直す。 */
   setJaw(shape: JawShape): void;
+  /** モデル自身の身長(cm)。足元（全部位の最下端）から頭頂（body の最上端）まで。 */
+  modelHeightCm: number;
+  /** 身長を変える。ボクセルは作り直さず、表示のときに伸縮する。 */
+  setHeight(cm: number): void;
+  /**
+   * 身長と体重から体格を決める。身長は表示の伸縮、体重は骨ごとの厚みで効かせる。
+   * 厚みが変わるときだけメッシュを張り直す。
+   */
+  setBody(heightCm: number, weightKg: number): void;
+  /** いまの厚み倍率（1 = モデルのまま）。 */
+  thickness: number;
   /** 使える髪型の名前（データにあるもの全部）。メッシュはまだ作っていない。 */
   hairNames: string[];
   /** 髪型を1つ読み込んでメッシュにする。読み終えると byPart から取れる。 */
@@ -825,6 +865,156 @@ export async function buildRawModel(
     return hairDist[lo].col;
   };
 
+  // --- 身長 ---------------------------------------------------------------
+  // ⚠️ 頭頂は **body の最上端**で測る。全部位で測ると髪型（139種のうち高いもの）が
+  //    混ざって身長が 26cm も伸びる（実測: grid.json の bb は 206.3cm、実体は 180.4cm）。
+  let modelHeight = 1.8;
+  let modelBottom = 0, modelCrown = 1.8;
+  {
+    let lo = Infinity, hi = -Infinity;
+    for (const L of loaded) {
+      const S2 = L.grid.voxel_size;
+      const isBody2 = L.part.prefix === "body";
+      for (const { ch, voxels } of L.chunks) {
+        for (const v of voxels) {
+          const z = ch.grid_origin[2] + (v[2] + 0.5) * S2;
+          if (z < lo) lo = z;
+          if (isBody2 && z > hi) hi = z;
+        }
+      }
+    }
+    if (isFinite(lo) && isFinite(hi) && hi > lo) {
+      modelHeight = hi - lo;
+      modelBottom = lo;
+      modelCrown = hi;
+    }
+  }
+  /**
+   * 頭の大きさが身長に対してどれだけ変わるか。
+   * ⚠️ 1.0（＝全身を一様に拡大）にすると、背の高い選手ほど頭が大きい子供体型になる。
+   *    実際の成人は 身長 170→203cm(+19%) でも頭は 22→25cm(+13%) 程度しか変わらない。
+   *    指数 0.5 は log(1.13)/log(1.19)=0.66 と log での実測の間を取った控えめな値。
+   */
+  const HEAD_EXP = 0.5;
+  // ⚠️ 頭だけ別倍率にすると、単純に k = 目標/モデル では高さが合わない（実測で最大 1.1cm ずれた）。
+  //    実際の高さ = k*(頭のボーンまで) + k^HEAD_EXP*(頭のボーンから頭頂まで) なので、
+  //    これが目標に一致する k を数回の反復で解く。
+  const headRestY = rig.restPosition("Head")?.y ?? modelCrown * 0.9;
+  const bodyPart = headRestY - modelBottom;        // 足元から頭のボーンまで
+  const headPart = Math.max(0, modelCrown - headRestY);  // 頭のボーンから頭頂まで
+  const solveScale = (targetM: number): number => {
+    let k = targetM / modelHeight;
+    for (let i = 0; i < 8; i++) {
+      const next = (targetM - Math.pow(k, HEAD_EXP) * headPart) / Math.max(1e-6, bodyPart);
+      if (Math.abs(next - k) < 1e-6) { k = next; break; }
+      k = next;
+    }
+    return k;
+  };
+  /** 全部位を作り直す（厚みが変わったとき）。 */
+  const rebuildAll = (): void => {
+    for (const L of loaded) {
+      const mesh = byPart.get(L.part.prefix);
+      buildPart(L, mesh ?? undefined);
+    }
+    buildMarks();
+  };
+  const setBody = (heightCm: number, weightKg: number): void => {
+    bodyHeightCm = heightCm;
+    bodyWeightKg = weightKg;
+    const h = heightCm / 100;
+    const next = Math.sqrt(weightKg / (BMI_REF * h * h));
+    if (Math.abs(next - thickness) > 1e-4) {
+      thickness = next;
+      rebuildAll();
+      model.thickness = thickness;
+    }
+    setHeight(heightCm);
+  };
+  const setHeight = (cm: number): void => {
+    const k = solveScale(cm / 100);
+    // 足元は y=0 付近にあるので、原点まわりの拡大で足が地面に残る
+    root.scaling.setAll(k);
+    const h = rig.node("Head");
+    // 頭だけ伸縮を戻して、最終的な頭の倍率を k^HEAD_EXP にする
+    if (h) h.scaling.setAll(Math.pow(k, HEAD_EXP - 1));
+  };
+
+  // --- 体重による厚み -------------------------------------------------------
+  // ⚠️ 骨の**軸から見た横方向**だけ伸ばす。体の中心から一律に伸ばすと、腕が
+  //    体から離れる方向へ動いてしまう（T-pose なら 0.9m の位置が 15% 外へ = 13cm）。
+  // ⚠️ 横方向(Blender の x,y)だけ伸ばすので、伸ばす量は骨の向きによって軸ごとに変わる。
+  //    ボクセルの箱も同じ量だけ広げれば、隙間なくぴったり並ぶ。
+  type BoneFrame = { a: [number, number, number]; ax: [number, number, number]; f: number };
+  const boneFrame = new Map<string, BoneFrame>();
+  {
+    /** rig（Babylon）の rest 位置を Blender 座標へ戻す。toBabylon の逆。 */
+    const toBlender = (v: { x: number; y: number; z: number }): [number, number, number] =>
+      [-v.x, -v.z, v.y];
+    for (const name of index.keys()) {
+      const a = rig.restPosition(name as never);
+      if (!a) continue;
+      const childName = BONE_CHILD[name];
+      const other = childName ? rig.restPosition(childName as never) : null;
+      const parentName = BONE_PARENT[name];
+      const par = parentName ? rig.restPosition(parentName as never) : null;
+      const A = toBlender(a);
+      let dir: [number, number, number] = [0, 0, 1];
+      if (other) {
+        const B = toBlender(other);
+        dir = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+      } else if (par) {
+        const P = toBlender(par);
+        dir = [A[0] - P[0], A[1] - P[1], A[2] - P[2]];
+      }
+      const len = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+      boneFrame.set(name, {
+        a: A, ax: [dir[0] / len, dir[1] / len, dir[2] / len],
+        f: THICK_BY_BONE[name] ?? 1,
+      });
+    }
+  }
+  /** 骨番号 → 標準ボーン名。ボクセルごとに index を線形探索しないため。 */
+  const boneName: string[] = [];
+  for (const [n, i2] of index) boneName[i2] = n;
+  let thickness = 1;
+  let bodyHeightCm = modelHeight * 100;
+  let bodyWeightKg = BMI_REF * modelHeight * modelHeight;
+
+  /** 厚みを効かせた後のボクセル中心と、箱の広がり方（x,y 倍率）。 */
+  const thicken = (bone: string | undefined, x: number, y: number, z: number):
+  [number, number, number, number] => {
+    const fr = bone ? boneFrame.get(bone) : undefined;
+    if (!fr || fr.f === 0 || thickness === 1) return [x, y, 1, 1];
+    const m = 1 + (thickness - 1) * fr.f;
+    const vx = x - fr.a[0], vy = y - fr.a[1], vz = z - fr.a[2];
+    const along = vx * fr.ax[0] + vy * fr.ax[1] + vz * fr.ax[2];
+    // 横方向(x,y)だけ m 倍。骨に沿う向きの成分は伸ばさない
+    const nx = fr.a[0] + m * vx + (1 - m) * fr.ax[0] * along;
+    const ny = fr.a[1] + m * vy + (1 - m) * fr.ax[1] * along;
+    // 隣のボクセルとの間隔も同じ割合で変わるので、箱もその分広げる
+    return [nx, ny, m + (1 - m) * fr.ax[0] * fr.ax[0], m + (1 - m) * fr.ax[1] * fr.ax[1]];
+  };
+
+  /**
+   * ボクセル1個ぶんの厚みを、スキンウェイトで**混ぜて**求める。
+   * ⚠️ 一番強い骨だけで変形すると、袖(腕の骨)と胴(胸の骨)が別々に縮んで脇の下に
+   *    隙間ができる（細い体型で顕著）。境目のボクセルは両方の骨で混ぜること。
+   */
+  const thickenBlend = (bi: number[], bw: number[], x: number, y: number, z: number):
+  [number, number, number, number] => {
+    if (thickness === 1) return [x, y, 1, 1];
+    let tx = 0, ty = 0, mx = 0, my = 0, sum = 0;
+    for (let k = 0; k < 4; k++) {
+      const w = bw[k];
+      if (!(w > 0)) continue;
+      const [ax, ay, sx, sy] = thicken(boneName[bi[k]], x, y, z);
+      tx += ax * w; ty += ay * w; mx += sx * w; my += sy * w; sum += w;
+    }
+    if (sum <= 0) return [x, y, 1, 1];
+    return [tx / sum, ty / sum, mx / sum, my / sum];
+  };
+
   /** 部位1つぶんのメッシュを作る。reuse を渡すと同じメッシュへ張り直す（あご変更時）。 */
   const buildPart = (L: Loaded, reuse?: Mesh): Mesh | null => {
     const { part, grid, w, chunks: loadedChunks } = L;
@@ -931,17 +1121,18 @@ export async function buildRawModel(
       const bi4 = [0, 0, 0, 0], bw4 = [0, 0, 0, 0];
       top.forEach((e, i) => { bi4[i] = e[0]; bw4[i] = e[1] / sum; });
       // 目安表示用: 一番強い骨で数える
-      const domName = [...index].find(([, v]) => v === bi4[0])?.[0];
+      const domName = boneName[bi4[0]];
       if (domName) perBone.set(domName, (perBone.get(domName) ?? 0) + 1);
 
       // --- 露出面だけ張る ---
       const [cx, cy, cz] = cell.c;
       const wx = O[0] + (cx + 0.5) * S, wy = O[1] + (cy + 0.5) * S, wz = O[2] + (cz + 0.5) * S;
+      const [tx, ty, mx, my] = thickenBlend(bi4, bw4, wx, wy, wz);
       for (const f of FACES) {
         if (occupied.has(CELL_KEY(cx + f.d[0], cy + f.d[1], cz + f.d[2]))) continue;
         const base = pos.length / 3;
         for (const q of f.q) {
-          const [px, py, pz] = toBabylon(wx + q[0] * S, wy + q[1] * S, wz + q[2] * S);
+          const [px, py, pz] = toBabylon(tx + q[0] * S * mx, ty + q[1] * S * my, wz + q[2] * S);
           pos.push(px, py, pz);
           const [nx, ny, nz] = toBabylon(f.n[0], f.n[1], f.n[2]);
           nrm.push(nx, ny, nz);
@@ -983,6 +1174,7 @@ export async function buildRawModel(
     meshes.push(mesh);
     byPart.set(L.part.prefix, mesh);
   }
+
 
 
   /** 顔に描いた目・口を、半分の大きさの立方体のメッシュにする。 */
@@ -1062,6 +1254,7 @@ export async function buildRawModel(
   const model: RawModel = {
     rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped,
     setJaw, hairNames, loadHair,
+    modelHeightCm: modelHeight * 100, setHeight, setBody, thickness,
   };
   return model;
 }
