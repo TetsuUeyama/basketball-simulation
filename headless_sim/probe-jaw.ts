@@ -106,25 +106,6 @@ for (const jaw of SHAPES) {
 }
 console.log(`張り直しの不一致: ${mismatch}`);
 
-// あごを変えても、髪の下の頭皮の塗りが残るか（setJaw は body を張り直すので消えやすい）
-m.setJaw("normal");
-const painted = m.applyScalpTint("hairstyle_002");
-const hairMesh = m.byPart.get("hairstyle_002")!;
-const hc = hairMesh.getVerticesData("color")!;
-const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1 / 512;
-const countHairColored = (): number => {
-  const c = body.getVerticesData("color")!;
-  let n = 0;
-  for (let i = 0; i < c.length / 4; i++) {
-    if (near(c[i * 4], hc[0]) && near(c[i * 4 + 1], hc[1]) && near(c[i * 4 + 2], hc[2])) n++;
-  }
-  return n;
-};
-const before = countHairColored();
-m.setJaw("narrow");
-const after = countHairColored();
-console.log(`\n髪の下の塗り: normal で ${painted} ボクセル(${before}頂点) → あごを narrow にして ${after}頂点`
-  + ` ${after > before * 0.8 ? "OK" : "★NG（塗りが消えた）"}`);
 
 // 顔の長さ。あごは前へ張り出すが首は張り出さないので、
 // 「前端Zが最大付近まで届く一番下の層」をあご先とみなす。

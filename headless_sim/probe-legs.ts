@@ -15,8 +15,8 @@ const { buildRawModel } = await import("../src/voxraw");
 type JawShape = "normal" | "round" | "narrow";
 const engine = new NullEngine();
 const band: Record<string, [number, number]> = {
-  "脚(前)": [0.30, 0.95], "腰・胴": [0.95, 1.35], "腕・肩": [1.35, 1.50],
-  "首(変わってよい)": [1.50, 1.62],
+  "脚(前)": [0.30, 0.95], "腰・胴": [0.95, 1.35], "腕・肩": [1.35, 1.49],   // ⚠️ 1.50 は首の輪郭クリップの下限(頭頂-0.30)と重なる
+  "首(変わってよい)": [1.49, 1.62],
 };
 const got: Record<string, Record<string, number>> = {};
 for (const jaw of ["normal", "round", "narrow"] as JawShape[]) {

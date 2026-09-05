@@ -234,6 +234,105 @@ function closeSeams(
 }
 
 /**
+ * 顔（目・口）を**描いて**顔の表面に貼る。元モデル（function-lab の buildParts.mjs
+ * `splitFace`）と同じ作り:
+ *   目 … 白目 3×2 マス、黒目は上段の中央1マス。左右対称に2つ。
+ *   口 … 横一文字。元は 2*HW マス（HW = 頭の幅/8 ≒ 2）×厚さ1段。
+ * ⚠️ ボクセルは body の**縦横半分**（body 8.74mm に対し 4.37mm）。上の枡目もそのぶん倍に
+ *    なるので、白目 6×4・黒目 2×2・口 8×2 で作る。
+ * ⚠️ 元データから目・口の面は取れない。実測すると顔の前面の色は肌色 70〜75 階調だけで
+ *    唇も眉も残らず、眼球メッシュは瞼の内側（肌より 26mm 奥）にある。だから描くしかない。
+ */
+const MARK_HALF = 0.5;              // body に対するボクセル比（縦横半分）
+/** 白目・黒目・唇の色（元モデルは白目=182の灰 / 黒目=2の黒）。 */
+const MARK_COLOR = { white: [182, 182, 182], black: [2, 2, 2], lip: [120, 60, 50] };
+/** 枡目の数（半分のボクセルでの数）。元モデルの倍。 */
+const MARK_GRID = { eyeW: 6, eyeH: 4, pupil: 2, mouthW: 8, mouthH: 2 };
+/**
+ * 顔の中での位置（頭頂からの距離 m / 中心からの左右 m）。
+ * 実測（player_one / 頭頂Z 1.800、Face.jpg を顔のポリゴンへサンプルして得た値）:
+ *   目・眉 頭頂から 0.088〜0.117m、X -0.039〜+0.046
+ *   口     頭頂から 0.146〜0.175m、X -0.025〜+0.022
+ */
+const MARK_POS = { eyeDepth: 0.102, eyeX: 0.032, mouthDepth: 0.172 };
+
+/** 顔に描く1マス。Blender 座標の中心と色。 */
+type Mark = { x: number; y: number; z: number; col: number[] };
+
+/**
+ * 顔の表面に目と口のマス目を並べる。`cells` は body のボクセル（Blender 格子）。
+ * 戻り値は「半分の大きさの立方体」の中心と色。
+ */
+function faceMarks(cells: Cell[], O: number[], S: number): Mark[] {
+  const H = S * MARK_HALF;
+  let topZ = -Infinity;
+  for (const c of cells) topZ = Math.max(topZ, O[2] + (c.c[2] + 0.5) * S);
+
+  // 顔の前面（Blender では -Y が前）。(x, z) ごとに一番前の面の位置を持つ。
+  // ⚠️ 升目は Math.round(x/S) ではなく**セル番号**で引くこと。格子の原点は S の倍数では
+  //    ないので、丸めだと升目がずれて隣のセルを見る。実測で 64 マス中 14 マスが
+  //    肌より 9.8mm 奥（＝完全に埋没）に置かれていた。
+  const front = new Map<number, number>();
+  const cellX = (x: number): number => Math.floor((x - O[0]) / S);
+  const cellZ = (z: number): number => Math.floor((z - O[2]) / S);
+  const key = (ix: number, iz: number): number => (ix + 512) * 2048 + (iz + 512);
+  for (const c of cells) {
+    const x = O[0] + (c.c[0] + 0.5) * S, y = O[1] + (c.c[1] + 0.5) * S, z = O[2] + (c.c[2] + 0.5) * S;
+    if (topZ - z > 0.24 || Math.abs(x) > 0.12) continue;
+    const k = key(c.c[0], c.c[2]);
+    const cur = front.get(k);
+    if (cur === undefined || y < cur) front.set(k, y);
+  }
+  /**
+   * (x, z) の肌の表面 Y。
+   * ⚠️ 周り1マスの中で一番手前を採ると、顔の曲面では実際の面より前に出て**浮く**。
+   *    まずその位置ちょうどを見て、そこに肌が無いときだけ周りへ広げる。
+   */
+  const surfaceY = (x: number, z: number): number | null => {
+    const ix = cellX(x), iz = cellZ(z);
+    const hit = front.get(key(ix, iz));
+    if (hit !== undefined) return hit - S / 2;   // ボクセル中心 → 前面
+    // ⚠️ ここで周囲の**一番手前**を採ると、肌の無い場所で前へ出過ぎて浮く（実測5マス）。
+    //    一番奥を採る。少し食い込む側に倒れるだけで、浮きは出ない。
+    let best: number | null = null;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const v = front.get(key(ix + dx, iz + dz));
+        if (v !== undefined && (best === null || v > best)) best = v;
+      }
+    }
+    return best === null ? null : best - S / 2;
+  };
+
+  const out: Mark[] = [];
+  /** 左上を (cx, cz) 中心とする w×h の枡目を顔に貼る。 */
+  const block = (cx: number, cz: number, w: number, h: number,
+    color: (col: number, row: number) => number[]): void => {
+    for (let col = 0; col < w; col++) {
+      for (let row = 0; row < h; row++) {
+        const x = cx + (col - (w - 1) / 2) * H;
+        const z = cz - (row - (h - 1) / 2) * H;
+        const sy = surfaceY(x, z);
+        if (sy === null) continue;
+        // ⚠️ 面のちょうど外側に置くと隙間ができて浮いて見える。1/4マスだけ肌へ食い込ませる。
+        out.push({ x, y: sy - H * 0.25, z, col: color(col, row) });
+      }
+    }
+  };
+
+  const eyeZ = topZ - MARK_POS.eyeDepth;
+  const { eyeW, eyeH, pupil, mouthW, mouthH } = MARK_GRID;
+  const p0 = Math.floor((eyeW - pupil) / 2);       // 黒目は上段の中央
+  for (const sx of [-1, 1]) {
+    block(sx * MARK_POS.eyeX, eyeZ, eyeW, eyeH,
+      (col, row) => (row < pupil && col >= p0 && col < p0 + pupil
+        ? MARK_COLOR.black : MARK_COLOR.white));
+  }
+  block(0, topZ - MARK_POS.mouthDepth, mouthW, mouthH, () => MARK_COLOR.lip);
+  return out;
+}
+
+/**
  * あごだけを作り替える。頭の軸まわりに、高さに応じて幅と奥行きを縮める。
  *
  * ⚠️ 位置をずらすのではなく**逆写像でサンプリングし直す**（変形後の格子から元の格子を引く）。
@@ -244,16 +343,46 @@ function closeSeams(
  *    実測で頭頂から 0.227m 以下が変化 0% ＝「下だけモアイのまま」になっていた。
  *    帯の下は首（もともと細い）なので、段差にはならない。
  */
+/**
+ * 体から求めた「あごを作り替えるための頭の情報」。
+ * ⚠️ 髭のある髪型（実測 139 件中 67 件）にも同じ変形を掛けるので、頭の中心や頭頂は
+ *    **体から**求めて渡すこと。髪型自身のボクセルから求めると、髭だけの範囲で
+ *    中心を取ってしまい、体と違う変形になって顔からずれる。
+ */
+type JawFit = { topZ: number; cx: number; cy: number; backY: number };
+
+/** body のボクセルから JawFit を作る。 */
+function jawFitFrom(cells: Cell[], O: number[], S: number): JawFit | null {
+  const wx = (i: number): number => O[0] + (i + 0.5) * S;
+  const wy = (j: number): number => O[1] + (j + 0.5) * S;
+  const wz = (k: number): number => O[2] + (k + 0.5) * S;
+  let topZ = -Infinity;
+  for (const c of cells) topZ = Math.max(topZ, wz(c.c[2]));
+  const jawTop = topZ - 0.130, jawBottom = topZ - 0.265;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, backY = -Infinity;
+  for (const c of cells) {
+    const z = wz(c.c[2]);
+    if (z < jawBottom || z > jawTop) continue;
+    const x = wx(c.c[0]), y = wy(c.c[1]);
+    if (Math.abs(x) > 0.16) continue;      // 腕・肩を除く
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    backY = Math.max(backY, y);
+  }
+  if (!isFinite(minX)) return null;
+  return { topZ, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, backY };
+}
+
 function reshapeJaw(
   cells: Cell[], O: number[], S: number, shape: Exclude<JawShape, "normal">,
+  fit: JawFit, forBody: boolean,
 ): Cell[] {
   const P = JAW_PROFILE[shape];
   const wx = (i: number): number => O[0] + (i + 0.5) * S;
   const wy = (j: number): number => O[1] + (j + 0.5) * S;
   const wz = (k: number): number => O[2] + (k + 0.5) * S;
 
-  let topZ = -Infinity;
-  for (const c of cells) topZ = Math.max(topZ, wz(c.c[2]));
+  const topZ = fit.topZ;
   // 実測（頭頂Z1.802 / 服に隠れた肌を除いたメッシュ）: 頭頂から
   //   0.131〜0.236m … 幅 0.184→0.140 でほぼ一定＝あご（ここを削る）
   //   0.245m 以降  … 幅 0.096 の首（触らない）
@@ -264,29 +393,19 @@ function reshapeJaw(
   /** これより下は首。横を削らずに守る（削ると首がくびれる）。 */
   const neckTop = topZ - 0.235;
 
-  // 帯の中の頭の中心（腕・肩を除くため中心軸の近くだけ見る）
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  // 作り直す窓は**この部位自身**のセルから取る（髭は顔の前面にしか無い）。
+  // ⚠️ ここで |x| を絞らずに窓を取ると、窓が腕・肩まで広がる。窓の中の元セルは下で
+  //    消すので、T-pose の腕（|x| 最大 0.9）が丸ごと消えた。頭・首の柱だけにすること。
+  const { cx, cy } = fit;
   let iMin = Infinity, iMax = -Infinity, jMin = Infinity, jMax = -Infinity;
-  // ⚠️ ここで |x| を絞らずに i/j の窓を取ると、窓が腕・肩まで広がる。
-  //    窓の中の元セルは下で消すので、T-pose の腕（|x| 最大 0.9）が丸ごと消えた。
-  //    窓は頭・首の柱だけにすること。
   for (const c of cells) {
     const z = wz(c.c[2]);
     if (z < jawBottom || z > jawTop) continue;
-    const x = wx(c.c[0]), y = wy(c.c[1]);
-    if (Math.abs(x) > 0.16) continue;
+    if (Math.abs(wx(c.c[0])) > 0.16) continue;
     iMin = Math.min(iMin, c.c[0]); iMax = Math.max(iMax, c.c[0]);
     jMin = Math.min(jMin, c.c[1]); jMax = Math.max(jMax, c.c[1]);
-    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
   }
-  if (!isFinite(minX) || !isFinite(iMin)) return cells;
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  let maxYAll = -Infinity;
-  for (const c of cells) {
-    const z = wz(c.c[2]);
-    if (z >= jawBottom && z <= jawTop && Math.abs(wx(c.c[0])) < 0.16) maxYAll = Math.max(maxYAll, wy(c.c[1]));
-  }
+  if (!isFinite(iMin)) return cells;
 
   const smooth = (u: number): number => {
     const v = u < 0 ? 0 : (u > 1 ? 1 : u);
@@ -323,7 +442,7 @@ function reshapeJaw(
    *    （耳〜えらの高さ）にある。守りたいのは首の後ろだけなので、帯の後端から
    *    4.5cm ぶんだけ効果を落とす。
    */
-  const backY = maxYAll;
+  const backY = fit.backY;
   const frontness = (y: number): number => smooth((backY - 0.006 - y) / 0.045);
 
   const srcMap = new Map<number, Cell>();
@@ -346,8 +465,9 @@ function reshapeJaw(
     //    （実測 頭頂から0.250m で幅0.256m）で、そのまま持ち上げるとあごの底が標準より
     //    42%太くなった。細い首が残っている高さで止める。
     const kFloor = Math.ceil((topZ - 0.245 - O[2]) / S - 0.5);
-    const zSrcA = (zTgt - S / 2) - shorten * liftAt(zTgt - S / 2);
-    const zSrcB = (zTgt + S / 2) - shorten * liftAt(zTgt + S / 2);
+    const HZ = S * 0.49;
+    const zSrcA = (zTgt - HZ) - shorten * liftAt(zTgt - HZ);
+    const zSrcB = (zTgt + HZ) - shorten * liftAt(zTgt + HZ);
     const ksLo = Math.max(kFloor, Math.round((Math.min(zSrcA, zSrcB) - O[2]) / S - 0.5));
     const ksHi = Math.max(ksLo, Math.round((Math.max(zSrcA, zSrcB) - O[2]) / S - 0.5));
     void zSrc;
@@ -365,15 +485,19 @@ function reshapeJaw(
       //    1.25 個おきに飛ばして拾うことになり、薄い表面が抜けて穴が開く。
       //    実測: 丸顔で Blender Y=0 の面が丸ごと消え、左右からレイが貫通していた。
       //    このセルが覆う範囲（±半ボクセル）を写した先を全部見る。
-      const syA = y - S / 2 < cy ? cy + (y - S / 2 - cy) / dep : y - S / 2;
-      const syB = y + S / 2 < cy ? cy + (y + S / 2 - cy) / dep : y + S / 2;
+      // ⚠️ 半ボクセルちょうどにすると、倍率1.0（変形なし）でも範囲の端が格子の境界に
+      //    乗って隣のセルまで拾い、あご帯の上端で1ボクセル膨らむ。実測でそれが
+      //    目の高さの横線状の段差になっていた。ほんの少し内側にする。
+      const H = S * 0.49;
+      const syA = y - H < cy ? cy + (y - H - cy) / dep : y - H;
+      const syB = y + H < cy ? cy + (y + H - cy) / dep : y + H;
       const sjLo = Math.round((Math.min(syA, syB) - O[1]) / S - 0.5);
       const sjHi = Math.round((Math.max(syA, syB) - O[1]) / S - 0.5);
       const f = frontness(y);
       for (let i = iLo; i <= iHi; i++) {
         const x = wx(i);
         const wid = 1 + (P.width(t) - 1) * f * guard;
-        const sxA = cx + (x - S / 2 - cx) / wid, sxB = cx + (x + S / 2 - cx) / wid;
+        const sxA = cx + (x - H - cx) / wid, sxB = cx + (x + H - cx) / wid;
         const siLo = Math.round((Math.min(sxA, sxB) - O[0]) / S - 0.5);
         const siHi = Math.round((Math.max(sxA, sxB) - O[0]) / S - 0.5);
         let c: Cell | undefined;
@@ -386,6 +510,10 @@ function reshapeJaw(
       }
     }
   }
+  // ⚠️ ここから先（首の輪郭クリップ・隙間埋め）は body 専用。髪や髭に掛けると、
+  //    首の footprint の外にある髭が丸ごと消える。
+  if (!forBody) return out;
+
   // --- 仕上げ1: 顔の輪郭の外に残ったボクセルを消す ---------------------------
   // ⚠️ あごを持ち上げると、輪郭の外に取り残しが出て「あごの下に浮いたボクセル」に見える。
   //    あごより下は**首の footprint**（あごが届かない高さの (i,j) を1マス膨らませたもの）
@@ -532,17 +660,12 @@ export interface RawModel {
   /** 服に隠れて描かなかった肌のボクセル数。 */
   skinDropped: number;
   /**
-   * 髪の下になる頭皮を、その髪の色で塗る。戻り値は塗ったボクセル数。
-   * 髪型を切り替えるたびに呼ぶ。`""` を渡すと元の肌色へ戻す。
-   *
-   * なぜ要るか: 髪はメッシュの表面だけをボクセル化するので、髪の殻と頭皮の間に
-   * 隙間が残ると、そこから地肌が見えて「頭頂・後頭部が禿げている」ように見える。
-   * 幾何のフィット（voxel-pipeline 側）で隙間は 0〜4cm まで詰めたが、髪型ごとの
-   * 形の差までは吸収しきれないので、色でも塞ぐ。
-   */
-  applyScalpTint(part: string): number;
   /** あごの形を変える（顔のバリエーション）。body のメッシュだけ張り直す。 */
   setJaw(shape: JawShape): void;
+  /** 使える髪型の名前（データにあるもの全部）。メッシュはまだ作っていない。 */
+  hairNames: string[];
+  /** 髪型を1つ読み込んでメッシュにする。読み終えると byPart から取れる。 */
+  loadHair(name: string): Promise<boolean>;
   height: number;
   perBone: Map<string, number>;
 }
@@ -590,8 +713,7 @@ export async function buildRawModel(
     grid: PartGrid; w: PartWeights | null;
     chunks: { ch: VoxChunk; voxels: Uint8Array[]; palette: number[][] }[];
   };
-  const loaded: Loaded[] = [];
-  for (const part of manifest.parts) {
+  const loadPart = async (part: Loaded["part"]): Promise<Loaded> => {
     const grid = await get<PartGrid>(part.grid);
     const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
     const chunkDefs = grid.chunks?.length ? grid.chunks
@@ -603,7 +725,17 @@ export async function buildRawModel(
       const { voxels, palette } = parseVox(await res.arrayBuffer());
       chunks.push({ ch, voxels, palette });
     }
-    loaded.push({ part, grid, w, chunks });
+    return { part, grid, w, chunks };
+  };
+
+  // ⚠️ 差し替え用の髪型は 139 件・20MB ある。全部読むと確認ページが開かないので、
+  //    最初は読まず、選ばれたものだけ読む（loadHair）。
+  const hairParts = manifest.parts.filter((x) => x.prefix.startsWith("hairstyle_"));
+  const hairNames = hairParts.map((x) => x.prefix).sort();
+  const loaded: Loaded[] = [];
+  for (const part of manifest.parts) {
+    if (part.prefix.startsWith("hairstyle_")) continue;
+    loaded.push(await loadPart(part));
   }
 
   // --- 服の外径を測る（Blender 座標のまま。x=左右 / y=前後 / z=高さ）---
@@ -624,37 +756,52 @@ export async function buildRawModel(
   }
   const cover = clothPts.length ? clothCover(clothPts, clothLayer) : null;
 
-  // --- 髪ごとの「外径」と色（頭皮を塗るのに使う）---
-  type Cover = (x: number, y: number, z: number, margin: number) => boolean;
-  const hairCover = new Map<string, Cover>();
-  const hairColor = new Map<string, number[]>();
-  const hairVoxel = new Map<string, number>();
-  for (const L of loaded) {
-    if (!isHairPart(L.part.prefix)) continue;
-    const pts: { x: number; y: number; z: number }[] = [];
-    let color: number[] | null = null;
-    for (const { ch, voxels, palette } of L.chunks) {
-      for (const v of voxels) {
-        pts.push({
-          x: ch.grid_origin[0] + (v[0] + 0.5) * L.grid.voxel_size,
-          y: ch.grid_origin[1] + (v[1] + 0.5) * L.grid.voxel_size,
-          z: ch.grid_origin[2] + (v[2] + 0.5) * L.grid.voxel_size,
-        });
-        if (!color) color = palette[v[3] - 1] ?? null;
-      }
-    }
-    if (!pts.length) continue;
-    hairCover.set(L.part.prefix, clothCover(pts, Math.max(0.02, L.grid.voxel_size * 2)).under);
-    hairColor.set(L.part.prefix, color ?? [60, 45, 35]);
-    hairVoxel.set(L.part.prefix, L.grid.voxel_size);
-  }
-  /** body のボクセルごとの色バッファ上の範囲（頭皮を塗り替えるため）。 */
-  const bodyVox: { x: number; y: number; z: number; s: number; e: number }[] = [];
   let bodyMesh: Mesh | null = null;
-  let bodyCol: number[] = [];
   let jaw: JawShape = opts?.jaw ?? "normal";
   /** body ぶんの内訳。あごを変えて張り直すとき二重に数えないため。 */
   let bodyStat = { vox: 0, tri: 0, drop: 0 };
+  /** body のボクセル。顔に目・口を貼る位置を出すのに使う。 */
+  let bodyCells: Cell[] = [];
+  /** 体から求めたあごの情報。髭付きの髪型を同じ形に変えるのに使う。 */
+  let jawFit: JawFit | null = null;
+
+  // --- モデル本来の髪の色の散り方 -------------------------------------------
+  // ⚠️ 差し替え用の髪型（Man Hair Collection）はテクスチャが無く**1色**で焼ける
+  //    （実測: hairstyle_001 は 14,6,6 の 1 種のみ）。本来の髪は 182 階調あり、
+  //    6,2,2 / 10,2,2 / 2,2,2 / 14,2,2 … と黒に近い色が散っている。
+  //    その分布をそのまま写して、同じようにまばらにする。
+  const hairDist: { col: number[]; acc: number }[] = [];
+  let hairDistTotal = 0;
+  {
+    const L = loaded.find((x) => x.part.prefix === "hair");
+    if (L) {
+      const n = new Map<string, { col: number[]; n: number }>();
+      for (const { voxels, palette } of L.chunks) {
+        for (const v of voxels) {
+          const c = palette[v[3] - 1];
+          if (!c) continue;
+          const k = c.join(",");
+          const e = n.get(k);
+          if (e) e.n++; else n.set(k, { col: c, n: 1 });
+        }
+      }
+      for (const e of n.values()) { hairDistTotal += e.n; hairDist.push({ col: e.col, acc: hairDistTotal }); }
+    }
+  }
+  /** 格子の位置から決まる色。同じ位置なら毎回同じ色になる（ちらつかない）。 */
+  const hairColorAt = (x: number, y: number, z: number): number[] | null => {
+    if (!hairDistTotal) return null;
+    let h = (Math.imul(x + 512, 73856093) ^ Math.imul(y + 512, 19349663) ^ Math.imul(z + 512, 83492791)) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0;
+    h = Math.imul(h, 1274126177) >>> 0;
+    const t = (h >>> 0) % hairDistTotal;
+    let lo = 0, hi = hairDist.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (hairDist[mid].acc <= t) lo = mid + 1; else hi = mid;
+    }
+    return hairDist[lo].col;
+  };
 
   /** 部位1つぶんのメッシュを作る。reuse を渡すと同じメッシュへ張り直す（あご変更時）。 */
   const buildPart = (L: Loaded, reuse?: Mesh): Mesh | null => {
@@ -703,8 +850,22 @@ export async function buildRawModel(
       }
     }
     if (!cells.length) return null;
+    // 差し替え用の髪型はモデル本来の髪と同じ色の散り方にする（上の注意を参照）
+    if (part.prefix.startsWith("hairstyle_") && hairDistTotal > 0) {
+      for (const c of cells) {
+        const col = hairColorAt(c.c[0], c.c[1], c.c[2]);
+        if (col) c.col = col;
+      }
+    }
     // 顔のバリエーション: あごだけ作り替える
-    if (isBody && jaw !== "normal") cells = reshapeJaw(cells, grid.grid_origin, S, jaw);
+    if (isBody) jawFit = jawFitFrom(cells, grid.grid_origin, S);
+    if (isBody && jaw !== "normal" && jawFit) {
+      cells = reshapeJaw(cells, grid.grid_origin, S, jaw, jawFit, true);
+    }
+    // 髭のある髪型は、あごの形に合わせて同じ変形を掛ける
+    if (part.prefix.startsWith("hairstyle_") && jaw !== "normal" && jawFit) {
+      cells = reshapeJaw(cells, grid.grid_origin, S, jaw, jawFit, false);
+    }
     // 首まわりの縫い目を埋める。服の判定で肌を間引くと1〜2個の抜けが残り、
     // そこから中が透けて「首に隙間」に見える。標準の顔でも起きるのでここで塞ぐ。
     if (isBody && bodyTopZ > -Infinity) {
@@ -741,7 +902,6 @@ export async function buildRawModel(
       if (domName) perBone.set(domName, (perBone.get(domName) ?? 0) + 1);
 
       // --- 露出面だけ張る ---
-      const colStart = col.length;
       const [cx, cy, cz] = cell.c;
       const wx = O[0] + (cx + 0.5) * S, wy = O[1] + (cy + 0.5) * S, wz = O[2] + (cz + 0.5) * S;
       for (const f of FACES) {
@@ -759,7 +919,6 @@ export async function buildRawModel(
         idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
         triangles += 2;
       }
-      if (isBody && col.length > colStart) bodyVox.push({ x: wx, y: wy, z: wz, s: colStart, e: col.length });
       voxelCount++;
     }
 
@@ -771,14 +930,13 @@ export async function buildRawModel(
     vd.matricesIndices = mIdx;
     vd.matricesWeights = mWgt;
     const mesh = reuse ?? new Mesh(`raw_${part.prefix}`, scene);
-    // ⚠️ body だけ updatable。頭皮の色を髪型に合わせて後から書き換えるため。
-    vd.applyToMesh(mesh, isBody);
+    vd.applyToMesh(mesh, false);
     mesh.material = mat;
     mesh.parent = root;
     mesh.skeleton = skel;
     mesh.numBoneInfluencers = 4;
     mesh.alwaysSelectAsActiveMesh = true;
-    if (isBody) { bodyMesh = mesh; bodyCol = col; }
+    if (isBody) { bodyMesh = mesh; bodyCells = cells; }
     return mesh;
   };
 
@@ -793,31 +951,62 @@ export async function buildRawModel(
     byPart.set(L.part.prefix, mesh);
   }
 
-  // --- 髪の下の頭皮を髪色で塗る ---
-  // ⚠️ 顔（目・鼻・口）は塗らない。前髪のある髪型だと方位判定が顔まで覆ってしまい、
-  //    顔が髪色に染まる。頭頂から 9cm より下の前面は対象外にする。
-  const headTop = bodyVox.reduce((m, v) => Math.max(m, v.z), 0);
-  const faceZ = headTop - 0.09;
-  let tintedWith = "";
-  const applyScalpTint = (name: string): number => {
-    tintedWith = name;
-    if (!bodyMesh || !bodyCol.length) return 0;
-    const cover = hairCover.get(name);
-    const hc = hairColor.get(name);
-    const cols = bodyCol.slice();
-    let n = 0;
-    if (cover && hc) {
-      const margin = -(hairVoxel.get(name) ?? 0.005);
-      const [r, g, b] = [hc[0] / 255, hc[1] / 255, hc[2] / 255];
-      for (const v of bodyVox) {
-        if (v.y < -0.01 && v.z < faceZ) continue;
-        if (!cover(v.x, v.y, v.z, margin)) continue;
-        for (let i = v.s; i < v.e; i += 4) { cols[i] = r; cols[i + 1] = g; cols[i + 2] = b; }
-        n++;
+
+  /** 顔に描いた目・口を、半分の大きさの立方体のメッシュにする。 */
+  let markMesh: Mesh | null = null;
+  const buildMarks = (): void => {
+    const L = loaded.find((x) => x.part.prefix === "body");
+    if (!L || !bodyCells.length) return;
+    const S = L.grid.voxel_size, H = S * MARK_HALF, O = L.grid.grid_origin;
+    const list = faceMarks(bodyCells, O, S);
+    const head = index.get("Head") ?? index.get("Hips") ?? 0;
+    const pos: number[] = [], nrm: number[] = [], col: number[] = [];
+    const mIdx: number[] = [], mWgt: number[] = [], idx: number[] = [];
+    for (const mk of list) {
+      for (const f of FACES) {
+        const b = pos.length / 3;
+        for (const q of f.q) {
+          const [px, py, pz] = toBabylon(mk.x + q[0] * H, mk.y + q[1] * H, mk.z + q[2] * H);
+          pos.push(px, py, pz);
+          const [nx, ny, nz] = toBabylon(f.n[0], f.n[1], f.n[2]);
+          nrm.push(nx, ny, nz);
+          col.push(mk.col[0] / 255, mk.col[1] / 255, mk.col[2] / 255, 1);
+          mIdx.push(head, 0, 0, 0);
+          mWgt.push(1, 0, 0, 0);
+        }
+        idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
       }
     }
-    bodyMesh.updateVerticesData(VertexBuffer.ColorKind, cols);
-    return n;
+    const vd = new VertexData();
+    vd.positions = pos; vd.normals = nrm; vd.colors = col; vd.indices = idx;
+    vd.matricesIndices = mIdx; vd.matricesWeights = mWgt;
+    const mesh = markMesh ?? new Mesh("raw_face", scene);
+    vd.applyToMesh(mesh, true);
+    mesh.material = mat;
+    mesh.parent = root;
+    mesh.skeleton = skel;
+    mesh.numBoneInfluencers = 4;
+    mesh.alwaysSelectAsActiveMesh = true;
+    if (!markMesh) { markMesh = mesh; meshes.push(mesh); byPart.set("face", mesh); }
+  };
+  buildMarks();
+
+  /**
+   * 髪型を1つ読み込んでメッシュにする（既に読んであれば何もしない）。
+   * ⚠️ 髭のある髪型（実測 67/139 件）はあごの形に追従させるので、あごを変えたあとに
+   *    読んだものも同じ変形が掛かる（buildPart の中で jawFit を見る）。
+   */
+  const hairLoaded = new Map<string, Loaded>();
+  const loadHair = async (name: string): Promise<boolean> => {
+    if (!name || hairLoaded.has(name)) return hairLoaded.has(name);
+    const part = hairParts.find((x) => x.prefix === name);
+    if (!part) return false;
+    const L = await loadPart(part);
+    hairLoaded.set(name, L);
+    loaded.push(L);                 // あごを変えたとき張り直せるように
+    const mesh = buildPart(L);
+    if (mesh) { meshes.push(mesh); byPart.set(name, mesh); }
+    return true;
   };
 
   /** あごの形を変える。body のメッシュだけを張り直す。 */
@@ -829,16 +1018,17 @@ export async function buildRawModel(
     // 統計と頭皮の位置は作り直す（二重に数えないため）
     voxelCount -= bodyStat.vox; triangles -= bodyStat.tri; skinDropped -= bodyStat.drop;
     const v0 = voxelCount, t0 = triangles, d0 = skinDropped;
-    bodyVox.length = 0;
     buildPart(L, bodyMesh);
     bodyStat = { vox: voxelCount - v0, tri: triangles - t0, drop: skinDropped - d0 };
     model.voxelCount = voxelCount; model.triangles = triangles; model.skinDropped = skinDropped;
-    applyScalpTint(tintedWith);       // 頂点が変わったので塗り直す
+    buildMarks();                     // 顔の表面が動いたので目・口も貼り直す
+    // 髭のある髪型はあごの形に追従するので、読んであるものは張り直す
+    for (const [name, HL] of hairLoaded) buildPart(HL, byPart.get(name));
   };
 
   const model: RawModel = {
     rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped,
-    applyScalpTint, setJaw,
+    setJaw, hairNames, loadHair,
   };
   return model;
 }

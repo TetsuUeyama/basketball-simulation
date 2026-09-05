@@ -48,20 +48,26 @@ let bonesLine = "";
 const infoText = (): string => {
   if (!model) return "読み込み中…";
   return `ボクセル ${model.voxelCount.toLocaleString()} / 三角形 ${model.triangles.toLocaleString()}`
-    + ` / メッシュ ${model.meshes.length}\n${bonesLine}\n身長 ${model.height.toFixed(3)}m`;
+    + ` / 髪型 ${model.hairNames.length}種 / メッシュ ${model.meshes.length}\n${bonesLine}\n身長 ${model.height.toFixed(3)}m`;
 };
-/** 髪色に塗り替えた頭皮ボクセル数（表示用）。 */
-let tinted = 0;
 
 /** 髪型を1つだけ表示する。 */
-function showHair(name: string): void {
+/** 読み込み中の表示。髪型は 139 件・20MB あるので選んだときに読む。 */
+let loadingHair = "";
+
+async function showHair(name: string): Promise<void> {
   if (!model) return;
+  if (name.startsWith("hairstyle_") && !model.byPart.has(name)) {
+    loadingHair = name;
+    await model.loadHair(name);
+    loadingHair = "";
+    if (!model) return;
+  }
   for (const [part, mesh] of model.byPart) {
     if (part === "hair" || part.startsWith("hairstyle_")) mesh.setEnabled(part === name);
   }
   hairPart = name;
-  // 髪の殻と頭皮の隙間から地肌が見えないよう、髪の下の頭皮を髪色に塗る
-  tinted = model.applyScalpTint(name);
+  info = infoText();
 }
 
 /** 選んだクリップの t 秒地点をモデル自身のリグへ当てる。 */
@@ -83,7 +89,7 @@ async function load(): Promise<void> {
   // 髪型セレクタの中身を、読み込んだ部位から作る
   hairSel.replaceChildren();
   const opts: [string, string][] = [["hair", "モデル本来の髪"], ["", "髪なし"]];
-  for (const part of [...model.byPart.keys()].filter((k) => k.startsWith("hairstyle_")).sort()) {
+  for (const part of model.hairNames) {
     opts.push([part, "髪型 " + part.replace("hairstyle_", "")]);
   }
   for (const [v, label] of opts) {
@@ -94,7 +100,7 @@ async function load(): Promise<void> {
   }
   bonesLine = bones.join("  ");
   info = infoText();
-  showHair(hairPart);
+  await showHair(hairPart);
   applyPose(0);
 }
 
@@ -156,7 +162,7 @@ Object.assign(hairSel.style, {
   background: "rgba(20,24,34,0.95)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)",
   borderRadius: "8px", padding: "4px 6px", fontSize: "12px", flex: "1", minWidth: "0",
 } as Partial<CSSStyleDeclaration>);
-hairSel.onchange = () => showHair(hairSel.value);
+hairSel.onchange = () => { void showHair(hairSel.value); };
 row("髪型").appendChild(hairSel);
 
 // 顔（あご）のバリエーション。body のメッシュだけ張り直す。
@@ -205,9 +211,7 @@ engine.runRenderLoop(() => {
   if (playing && model) { t += dt * speed; applyPose(t); }
   const clip = motionClip(motion);
   const dur = clip ? motionDuration(clip) : 0;
-  infoEl.textContent = info
-    + `
-髪の下の頭皮を髪色に塗り替え ${tinted.toLocaleString()} ボクセル`
+  infoEl.textContent = (loadingHair ? `読み込み中 ${loadingHair}…\n` : "") + info
     + `\n${motion} ${dur ? (t % dur).toFixed(2) : "0.00"}/${dur.toFixed(2)}s`
     + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   scene.render();

@@ -12,22 +12,7 @@
    "chunks": [
     "body.vox"
    ],
-   "voxel_count": 18136,
-   "default_visible": true,
-   "duplicate_of": null,
-   "color_variants": [],
-   "morphs": [],
-   "effects": []
-  },
-  {
-   "prefix": "eyes",
-   "kind": "eyes",
-   "grid": "eyes.grid.json",
-   "weights": "eyes.weights.json",
-   "chunks": [
-    "eyes.vox"
-   ],
-   "voxel_count": 673,
+   "voxel_count": 15613,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -42,7 +27,7 @@
    "chunks": [
     "hair.vox"
    ],
-   "voxel_count": 2511,
+   "voxel_count": 2184,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -57,7 +42,7 @@
    "chunks": [
     "hairstyle_001.vox"
    ],
-   "voxel_count": 4305,
+   "voxel_count": 3718,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -72,7 +57,7 @@
    "chunks": [
     "hairstyle_002.vox"
    ],
-   "voxel_count": 3827,
+   "voxel_count": 3351,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -87,7 +72,7 @@
    "chunks": [
     "hairstyle_003.vox"
    ],
-   "voxel_count": 2421,
+   "voxel_count": 2108,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -102,7 +87,7 @@
    "chunks": [
     "hairstyle_004.vox"
    ],
-   "voxel_count": 3083,
+   "voxel_count": 2419,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -117,7 +102,7 @@
    "chunks": [
     "hairstyle_005.vox"
    ],
-   "voxel_count": 3355,
+   "voxel_count": 2932,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -132,7 +117,7 @@
    "chunks": [
     "hairstyle_006.vox"
    ],
-   "voxel_count": 3875,
+   "voxel_count": 3361,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -147,7 +132,7 @@
    "chunks": [
     "hairstyle_007.vox"
    ],
-   "voxel_count": 2868,
+   "voxel_count": 2429,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -162,7 +147,7 @@
    "chunks": [
     "hairstyle_008.vox"
    ],
-   "voxel_count": 2761,
+   "voxel_count": 2397,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -177,7 +162,7 @@
    "chunks": [
     "hairstyle_009.vox"
    ],
-   "voxel_count": 3702,
+   "voxel_count": 3190,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -192,7 +177,7 @@
    "chunks": [
     "hairstyle_010.vox"
    ],
-   "voxel_count": 4258,
+   "voxel_count": 3708,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -207,7 +192,7 @@
    "chunks": [
     "hairstyle_011.vox"
    ],
-   "voxel_count": 3288,
+   "voxel_count": 2813,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -222,7 +207,1912 @@
    "chunks": [
     "hairstyle_012.vox"
    ],
-   "voxel_count": 4595,
+   "voxel_count": 3888,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_013",
+   "kind": "hair",
+   "grid": "hairstyle_013.grid.json",
+   "weights": "hairstyle_013.weights.json",
+   "chunks": [
+    "hairstyle_013.vox"
+   ],
+   "voxel_count": 5630,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_014",
+   "kind": "hair",
+   "grid": "hairstyle_014.grid.json",
+   "weights": "hairstyle_014.weights.json",
+   "chunks": [
+    "hairstyle_014.vox"
+   ],
+   "voxel_count": 2358,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_015",
+   "kind": "hair",
+   "grid": "hairstyle_015.grid.json",
+   "weights": "hairstyle_015.weights.json",
+   "chunks": [
+    "hairstyle_015.vox"
+   ],
+   "voxel_count": 1478,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_016",
+   "kind": "hair",
+   "grid": "hairstyle_016.grid.json",
+   "weights": "hairstyle_016.weights.json",
+   "chunks": [
+    "hairstyle_016.vox"
+   ],
+   "voxel_count": 1948,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_017",
+   "kind": "hair",
+   "grid": "hairstyle_017.grid.json",
+   "weights": "hairstyle_017.weights.json",
+   "chunks": [
+    "hairstyle_017.vox"
+   ],
+   "voxel_count": 3998,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_019",
+   "kind": "hair",
+   "grid": "hairstyle_019.grid.json",
+   "weights": "hairstyle_019.weights.json",
+   "chunks": [
+    "hairstyle_019.vox"
+   ],
+   "voxel_count": 1540,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_020",
+   "kind": "hair",
+   "grid": "hairstyle_020.grid.json",
+   "weights": "hairstyle_020.weights.json",
+   "chunks": [
+    "hairstyle_020.vox"
+   ],
+   "voxel_count": 3639,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_021",
+   "kind": "hair",
+   "grid": "hairstyle_021.grid.json",
+   "weights": "hairstyle_021.weights.json",
+   "chunks": [
+    "hairstyle_021.vox"
+   ],
+   "voxel_count": 3864,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_022",
+   "kind": "hair",
+   "grid": "hairstyle_022.grid.json",
+   "weights": "hairstyle_022.weights.json",
+   "chunks": [
+    "hairstyle_022.vox"
+   ],
+   "voxel_count": 2330,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_023",
+   "kind": "hair",
+   "grid": "hairstyle_023.grid.json",
+   "weights": "hairstyle_023.weights.json",
+   "chunks": [
+    "hairstyle_023.vox"
+   ],
+   "voxel_count": 4438,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_024",
+   "kind": "hair",
+   "grid": "hairstyle_024.grid.json",
+   "weights": "hairstyle_024.weights.json",
+   "chunks": [
+    "hairstyle_024.vox"
+   ],
+   "voxel_count": 7117,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_025",
+   "kind": "hair",
+   "grid": "hairstyle_025.grid.json",
+   "weights": "hairstyle_025.weights.json",
+   "chunks": [
+    "hairstyle_025.vox"
+   ],
+   "voxel_count": 3025,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_026",
+   "kind": "hair",
+   "grid": "hairstyle_026.grid.json",
+   "weights": "hairstyle_026.weights.json",
+   "chunks": [
+    "hairstyle_026.vox"
+   ],
+   "voxel_count": 5577,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_027",
+   "kind": "hair",
+   "grid": "hairstyle_027.grid.json",
+   "weights": "hairstyle_027.weights.json",
+   "chunks": [
+    "hairstyle_027.vox"
+   ],
+   "voxel_count": 2688,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_028",
+   "kind": "hair",
+   "grid": "hairstyle_028.grid.json",
+   "weights": "hairstyle_028.weights.json",
+   "chunks": [
+    "hairstyle_028.vox"
+   ],
+   "voxel_count": 4298,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_029",
+   "kind": "hair",
+   "grid": "hairstyle_029.grid.json",
+   "weights": "hairstyle_029.weights.json",
+   "chunks": [
+    "hairstyle_029.vox"
+   ],
+   "voxel_count": 3173,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_030",
+   "kind": "hair",
+   "grid": "hairstyle_030.grid.json",
+   "weights": "hairstyle_030.weights.json",
+   "chunks": [
+    "hairstyle_030.vox"
+   ],
+   "voxel_count": 5652,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_031",
+   "kind": "hair",
+   "grid": "hairstyle_031.grid.json",
+   "weights": "hairstyle_031.weights.json",
+   "chunks": [
+    "hairstyle_031.vox"
+   ],
+   "voxel_count": 2958,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_032",
+   "kind": "hair",
+   "grid": "hairstyle_032.grid.json",
+   "weights": "hairstyle_032.weights.json",
+   "chunks": [
+    "hairstyle_032.vox"
+   ],
+   "voxel_count": 5033,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_033",
+   "kind": "hair",
+   "grid": "hairstyle_033.grid.json",
+   "weights": "hairstyle_033.weights.json",
+   "chunks": [
+    "hairstyle_033.vox"
+   ],
+   "voxel_count": 4956,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_034",
+   "kind": "hair",
+   "grid": "hairstyle_034.grid.json",
+   "weights": "hairstyle_034.weights.json",
+   "chunks": [
+    "hairstyle_034.vox"
+   ],
+   "voxel_count": 1842,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_035",
+   "kind": "hair",
+   "grid": "hairstyle_035.grid.json",
+   "weights": "hairstyle_035.weights.json",
+   "chunks": [
+    "hairstyle_035.vox"
+   ],
+   "voxel_count": 1820,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_036",
+   "kind": "hair",
+   "grid": "hairstyle_036.grid.json",
+   "weights": "hairstyle_036.weights.json",
+   "chunks": [
+    "hairstyle_036.vox"
+   ],
+   "voxel_count": 2941,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_037",
+   "kind": "hair",
+   "grid": "hairstyle_037.grid.json",
+   "weights": "hairstyle_037.weights.json",
+   "chunks": [
+    "hairstyle_037.vox"
+   ],
+   "voxel_count": 4852,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_038",
+   "kind": "hair",
+   "grid": "hairstyle_038.grid.json",
+   "weights": "hairstyle_038.weights.json",
+   "chunks": [
+    "hairstyle_038.vox"
+   ],
+   "voxel_count": 3109,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_039",
+   "kind": "hair",
+   "grid": "hairstyle_039.grid.json",
+   "weights": "hairstyle_039.weights.json",
+   "chunks": [
+    "hairstyle_039.vox"
+   ],
+   "voxel_count": 3492,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_040",
+   "kind": "hair",
+   "grid": "hairstyle_040.grid.json",
+   "weights": "hairstyle_040.weights.json",
+   "chunks": [
+    "hairstyle_040.vox"
+   ],
+   "voxel_count": 1367,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_041",
+   "kind": "hair",
+   "grid": "hairstyle_041.grid.json",
+   "weights": "hairstyle_041.weights.json",
+   "chunks": [
+    "hairstyle_041.vox"
+   ],
+   "voxel_count": 636,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_042",
+   "kind": "hair",
+   "grid": "hairstyle_042.grid.json",
+   "weights": "hairstyle_042.weights.json",
+   "chunks": [
+    "hairstyle_042.vox"
+   ],
+   "voxel_count": 639,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_043",
+   "kind": "hair",
+   "grid": "hairstyle_043.grid.json",
+   "weights": "hairstyle_043.weights.json",
+   "chunks": [
+    "hairstyle_043.vox"
+   ],
+   "voxel_count": 6088,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_044",
+   "kind": "hair",
+   "grid": "hairstyle_044.grid.json",
+   "weights": "hairstyle_044.weights.json",
+   "chunks": [
+    "hairstyle_044.vox"
+   ],
+   "voxel_count": 5837,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_045",
+   "kind": "hair",
+   "grid": "hairstyle_045.grid.json",
+   "weights": "hairstyle_045.weights.json",
+   "chunks": [
+    "hairstyle_045.vox"
+   ],
+   "voxel_count": 2153,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_046",
+   "kind": "hair",
+   "grid": "hairstyle_046.grid.json",
+   "weights": "hairstyle_046.weights.json",
+   "chunks": [
+    "hairstyle_046.vox"
+   ],
+   "voxel_count": 3122,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_047",
+   "kind": "hair",
+   "grid": "hairstyle_047.grid.json",
+   "weights": "hairstyle_047.weights.json",
+   "chunks": [
+    "hairstyle_047.vox"
+   ],
+   "voxel_count": 636,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_048",
+   "kind": "hair",
+   "grid": "hairstyle_048.grid.json",
+   "weights": "hairstyle_048.weights.json",
+   "chunks": [
+    "hairstyle_048.vox"
+   ],
+   "voxel_count": 1795,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_049",
+   "kind": "hair",
+   "grid": "hairstyle_049.grid.json",
+   "weights": "hairstyle_049.weights.json",
+   "chunks": [
+    "hairstyle_049.vox"
+   ],
+   "voxel_count": 1443,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_050",
+   "kind": "hair",
+   "grid": "hairstyle_050.grid.json",
+   "weights": "hairstyle_050.weights.json",
+   "chunks": [
+    "hairstyle_050.vox"
+   ],
+   "voxel_count": 7364,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_051",
+   "kind": "hair",
+   "grid": "hairstyle_051.grid.json",
+   "weights": "hairstyle_051.weights.json",
+   "chunks": [
+    "hairstyle_051.vox"
+   ],
+   "voxel_count": 4544,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_052",
+   "kind": "hair",
+   "grid": "hairstyle_052.grid.json",
+   "weights": "hairstyle_052.weights.json",
+   "chunks": [
+    "hairstyle_052.vox"
+   ],
+   "voxel_count": 1924,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_053",
+   "kind": "hair",
+   "grid": "hairstyle_053.grid.json",
+   "weights": "hairstyle_053.weights.json",
+   "chunks": [
+    "hairstyle_053.vox"
+   ],
+   "voxel_count": 2820,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_054",
+   "kind": "hair",
+   "grid": "hairstyle_054.grid.json",
+   "weights": "hairstyle_054.weights.json",
+   "chunks": [
+    "hairstyle_054.vox"
+   ],
+   "voxel_count": 3773,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_055",
+   "kind": "hair",
+   "grid": "hairstyle_055.grid.json",
+   "weights": "hairstyle_055.weights.json",
+   "chunks": [
+    "hairstyle_055.vox"
+   ],
+   "voxel_count": 4045,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_056",
+   "kind": "hair",
+   "grid": "hairstyle_056.grid.json",
+   "weights": "hairstyle_056.weights.json",
+   "chunks": [
+    "hairstyle_056.vox"
+   ],
+   "voxel_count": 3664,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_057",
+   "kind": "hair",
+   "grid": "hairstyle_057.grid.json",
+   "weights": "hairstyle_057.weights.json",
+   "chunks": [
+    "hairstyle_057.vox"
+   ],
+   "voxel_count": 3238,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_058",
+   "kind": "hair",
+   "grid": "hairstyle_058.grid.json",
+   "weights": "hairstyle_058.weights.json",
+   "chunks": [
+    "hairstyle_058.vox"
+   ],
+   "voxel_count": 3541,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_059",
+   "kind": "hair",
+   "grid": "hairstyle_059.grid.json",
+   "weights": "hairstyle_059.weights.json",
+   "chunks": [
+    "hairstyle_059.vox"
+   ],
+   "voxel_count": 2919,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_060",
+   "kind": "hair",
+   "grid": "hairstyle_060.grid.json",
+   "weights": "hairstyle_060.weights.json",
+   "chunks": [
+    "hairstyle_060.vox"
+   ],
+   "voxel_count": 9060,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_061",
+   "kind": "hair",
+   "grid": "hairstyle_061.grid.json",
+   "weights": "hairstyle_061.weights.json",
+   "chunks": [
+    "hairstyle_061.vox"
+   ],
+   "voxel_count": 2216,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_062",
+   "kind": "hair",
+   "grid": "hairstyle_062.grid.json",
+   "weights": "hairstyle_062.weights.json",
+   "chunks": [
+    "hairstyle_062.vox"
+   ],
+   "voxel_count": 5818,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_063",
+   "kind": "hair",
+   "grid": "hairstyle_063.grid.json",
+   "weights": "hairstyle_063.weights.json",
+   "chunks": [
+    "hairstyle_063.vox"
+   ],
+   "voxel_count": 6251,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_064",
+   "kind": "hair",
+   "grid": "hairstyle_064.grid.json",
+   "weights": "hairstyle_064.weights.json",
+   "chunks": [
+    "hairstyle_064.vox"
+   ],
+   "voxel_count": 3198,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_065",
+   "kind": "hair",
+   "grid": "hairstyle_065.grid.json",
+   "weights": "hairstyle_065.weights.json",
+   "chunks": [
+    "hairstyle_065.vox"
+   ],
+   "voxel_count": 4146,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_066",
+   "kind": "hair",
+   "grid": "hairstyle_066.grid.json",
+   "weights": "hairstyle_066.weights.json",
+   "chunks": [
+    "hairstyle_066.vox"
+   ],
+   "voxel_count": 2811,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_067",
+   "kind": "hair",
+   "grid": "hairstyle_067.grid.json",
+   "weights": "hairstyle_067.weights.json",
+   "chunks": [
+    "hairstyle_067.vox"
+   ],
+   "voxel_count": 3353,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_068",
+   "kind": "hair",
+   "grid": "hairstyle_068.grid.json",
+   "weights": "hairstyle_068.weights.json",
+   "chunks": [
+    "hairstyle_068.vox"
+   ],
+   "voxel_count": 5275,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_069",
+   "kind": "hair",
+   "grid": "hairstyle_069.grid.json",
+   "weights": "hairstyle_069.weights.json",
+   "chunks": [
+    "hairstyle_069.vox"
+   ],
+   "voxel_count": 3476,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_070",
+   "kind": "hair",
+   "grid": "hairstyle_070.grid.json",
+   "weights": "hairstyle_070.weights.json",
+   "chunks": [
+    "hairstyle_070.vox"
+   ],
+   "voxel_count": 5002,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_071",
+   "kind": "hair",
+   "grid": "hairstyle_071.grid.json",
+   "weights": "hairstyle_071.weights.json",
+   "chunks": [
+    "hairstyle_071.vox"
+   ],
+   "voxel_count": 6539,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_072",
+   "kind": "hair",
+   "grid": "hairstyle_072.grid.json",
+   "weights": "hairstyle_072.weights.json",
+   "chunks": [
+    "hairstyle_072.vox"
+   ],
+   "voxel_count": 1535,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_073",
+   "kind": "hair",
+   "grid": "hairstyle_073.grid.json",
+   "weights": "hairstyle_073.weights.json",
+   "chunks": [
+    "hairstyle_073.vox"
+   ],
+   "voxel_count": 3913,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_074",
+   "kind": "hair",
+   "grid": "hairstyle_074.grid.json",
+   "weights": "hairstyle_074.weights.json",
+   "chunks": [
+    "hairstyle_074.vox"
+   ],
+   "voxel_count": 5041,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_075",
+   "kind": "hair",
+   "grid": "hairstyle_075.grid.json",
+   "weights": "hairstyle_075.weights.json",
+   "chunks": [
+    "hairstyle_075.vox"
+   ],
+   "voxel_count": 3199,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_076",
+   "kind": "hair",
+   "grid": "hairstyle_076.grid.json",
+   "weights": "hairstyle_076.weights.json",
+   "chunks": [
+    "hairstyle_076.vox"
+   ],
+   "voxel_count": 2566,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_077",
+   "kind": "hair",
+   "grid": "hairstyle_077.grid.json",
+   "weights": "hairstyle_077.weights.json",
+   "chunks": [
+    "hairstyle_077.vox"
+   ],
+   "voxel_count": 4291,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_078",
+   "kind": "hair",
+   "grid": "hairstyle_078.grid.json",
+   "weights": "hairstyle_078.weights.json",
+   "chunks": [
+    "hairstyle_078.vox"
+   ],
+   "voxel_count": 4336,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_079",
+   "kind": "hair",
+   "grid": "hairstyle_079.grid.json",
+   "weights": "hairstyle_079.weights.json",
+   "chunks": [
+    "hairstyle_079.vox"
+   ],
+   "voxel_count": 1716,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_080",
+   "kind": "hair",
+   "grid": "hairstyle_080.grid.json",
+   "weights": "hairstyle_080.weights.json",
+   "chunks": [
+    "hairstyle_080.vox"
+   ],
+   "voxel_count": 148,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_081",
+   "kind": "hair",
+   "grid": "hairstyle_081.grid.json",
+   "weights": "hairstyle_081.weights.json",
+   "chunks": [
+    "hairstyle_081.vox"
+   ],
+   "voxel_count": 3861,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_082",
+   "kind": "hair",
+   "grid": "hairstyle_082.grid.json",
+   "weights": "hairstyle_082.weights.json",
+   "chunks": [
+    "hairstyle_082.vox"
+   ],
+   "voxel_count": 6771,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_083",
+   "kind": "hair",
+   "grid": "hairstyle_083.grid.json",
+   "weights": "hairstyle_083.weights.json",
+   "chunks": [
+    "hairstyle_083.vox"
+   ],
+   "voxel_count": 3718,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_084",
+   "kind": "hair",
+   "grid": "hairstyle_084.grid.json",
+   "weights": "hairstyle_084.weights.json",
+   "chunks": [
+    "hairstyle_084.vox"
+   ],
+   "voxel_count": 4042,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_085",
+   "kind": "hair",
+   "grid": "hairstyle_085.grid.json",
+   "weights": "hairstyle_085.weights.json",
+   "chunks": [
+    "hairstyle_085.vox"
+   ],
+   "voxel_count": 3724,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_086",
+   "kind": "hair",
+   "grid": "hairstyle_086.grid.json",
+   "weights": "hairstyle_086.weights.json",
+   "chunks": [
+    "hairstyle_086.vox"
+   ],
+   "voxel_count": 4283,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_087",
+   "kind": "hair",
+   "grid": "hairstyle_087.grid.json",
+   "weights": "hairstyle_087.weights.json",
+   "chunks": [
+    "hairstyle_087.vox"
+   ],
+   "voxel_count": 4405,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_088",
+   "kind": "hair",
+   "grid": "hairstyle_088.grid.json",
+   "weights": "hairstyle_088.weights.json",
+   "chunks": [
+    "hairstyle_088.vox"
+   ],
+   "voxel_count": 2813,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_089",
+   "kind": "hair",
+   "grid": "hairstyle_089.grid.json",
+   "weights": "hairstyle_089.weights.json",
+   "chunks": [
+    "hairstyle_089.vox"
+   ],
+   "voxel_count": 3524,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_090",
+   "kind": "hair",
+   "grid": "hairstyle_090.grid.json",
+   "weights": "hairstyle_090.weights.json",
+   "chunks": [
+    "hairstyle_090.vox"
+   ],
+   "voxel_count": 1271,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_091",
+   "kind": "hair",
+   "grid": "hairstyle_091.grid.json",
+   "weights": "hairstyle_091.weights.json",
+   "chunks": [
+    "hairstyle_091.vox"
+   ],
+   "voxel_count": 3965,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_092",
+   "kind": "hair",
+   "grid": "hairstyle_092.grid.json",
+   "weights": "hairstyle_092.weights.json",
+   "chunks": [
+    "hairstyle_092.vox"
+   ],
+   "voxel_count": 4361,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_093",
+   "kind": "hair",
+   "grid": "hairstyle_093.grid.json",
+   "weights": "hairstyle_093.weights.json",
+   "chunks": [
+    "hairstyle_093.vox"
+   ],
+   "voxel_count": 4542,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_094",
+   "kind": "hair",
+   "grid": "hairstyle_094.grid.json",
+   "weights": "hairstyle_094.weights.json",
+   "chunks": [
+    "hairstyle_094.vox"
+   ],
+   "voxel_count": 7579,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_095",
+   "kind": "hair",
+   "grid": "hairstyle_095.grid.json",
+   "weights": "hairstyle_095.weights.json",
+   "chunks": [
+    "hairstyle_095.vox"
+   ],
+   "voxel_count": 1790,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_096",
+   "kind": "hair",
+   "grid": "hairstyle_096.grid.json",
+   "weights": "hairstyle_096.weights.json",
+   "chunks": [
+    "hairstyle_096.vox"
+   ],
+   "voxel_count": 2561,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_097",
+   "kind": "hair",
+   "grid": "hairstyle_097.grid.json",
+   "weights": "hairstyle_097.weights.json",
+   "chunks": [
+    "hairstyle_097.vox"
+   ],
+   "voxel_count": 4220,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_098",
+   "kind": "hair",
+   "grid": "hairstyle_098.grid.json",
+   "weights": "hairstyle_098.weights.json",
+   "chunks": [
+    "hairstyle_098.vox"
+   ],
+   "voxel_count": 272,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_099",
+   "kind": "hair",
+   "grid": "hairstyle_099.grid.json",
+   "weights": "hairstyle_099.weights.json",
+   "chunks": [
+    "hairstyle_099.vox"
+   ],
+   "voxel_count": 5409,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_100",
+   "kind": "hair",
+   "grid": "hairstyle_100.grid.json",
+   "weights": "hairstyle_100.weights.json",
+   "chunks": [
+    "hairstyle_100.vox"
+   ],
+   "voxel_count": 6541,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_101",
+   "kind": "hair",
+   "grid": "hairstyle_101.grid.json",
+   "weights": "hairstyle_101.weights.json",
+   "chunks": [
+    "hairstyle_101.vox"
+   ],
+   "voxel_count": 1740,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_102",
+   "kind": "hair",
+   "grid": "hairstyle_102.grid.json",
+   "weights": "hairstyle_102.weights.json",
+   "chunks": [
+    "hairstyle_102.vox"
+   ],
+   "voxel_count": 14196,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_103",
+   "kind": "hair",
+   "grid": "hairstyle_103.grid.json",
+   "weights": "hairstyle_103.weights.json",
+   "chunks": [
+    "hairstyle_103.vox"
+   ],
+   "voxel_count": 8993,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_104",
+   "kind": "hair",
+   "grid": "hairstyle_104.grid.json",
+   "weights": "hairstyle_104.weights.json",
+   "chunks": [
+    "hairstyle_104.vox"
+   ],
+   "voxel_count": 3012,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_105",
+   "kind": "hair",
+   "grid": "hairstyle_105.grid.json",
+   "weights": "hairstyle_105.weights.json",
+   "chunks": [
+    "hairstyle_105.vox"
+   ],
+   "voxel_count": 2549,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_106",
+   "kind": "hair",
+   "grid": "hairstyle_106.grid.json",
+   "weights": "hairstyle_106.weights.json",
+   "chunks": [
+    "hairstyle_106.vox"
+   ],
+   "voxel_count": 3945,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_107",
+   "kind": "hair",
+   "grid": "hairstyle_107.grid.json",
+   "weights": "hairstyle_107.weights.json",
+   "chunks": [
+    "hairstyle_107.vox"
+   ],
+   "voxel_count": 6188,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_108",
+   "kind": "hair",
+   "grid": "hairstyle_108.grid.json",
+   "weights": "hairstyle_108.weights.json",
+   "chunks": [
+    "hairstyle_108.vox"
+   ],
+   "voxel_count": 1494,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_109",
+   "kind": "hair",
+   "grid": "hairstyle_109.grid.json",
+   "weights": "hairstyle_109.weights.json",
+   "chunks": [
+    "hairstyle_109.vox"
+   ],
+   "voxel_count": 7972,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_110",
+   "kind": "hair",
+   "grid": "hairstyle_110.grid.json",
+   "weights": "hairstyle_110.weights.json",
+   "chunks": [
+    "hairstyle_110.vox"
+   ],
+   "voxel_count": 4843,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_111",
+   "kind": "hair",
+   "grid": "hairstyle_111.grid.json",
+   "weights": "hairstyle_111.weights.json",
+   "chunks": [
+    "hairstyle_111.vox"
+   ],
+   "voxel_count": 5371,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_112",
+   "kind": "hair",
+   "grid": "hairstyle_112.grid.json",
+   "weights": "hairstyle_112.weights.json",
+   "chunks": [
+    "hairstyle_112.vox"
+   ],
+   "voxel_count": 3624,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_113",
+   "kind": "hair",
+   "grid": "hairstyle_113.grid.json",
+   "weights": "hairstyle_113.weights.json",
+   "chunks": [
+    "hairstyle_113.vox"
+   ],
+   "voxel_count": 2037,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_114",
+   "kind": "hair",
+   "grid": "hairstyle_114.grid.json",
+   "weights": "hairstyle_114.weights.json",
+   "chunks": [
+    "hairstyle_114.vox"
+   ],
+   "voxel_count": 1489,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_115",
+   "kind": "hair",
+   "grid": "hairstyle_115.grid.json",
+   "weights": "hairstyle_115.weights.json",
+   "chunks": [
+    "hairstyle_115.vox"
+   ],
+   "voxel_count": 4775,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_116",
+   "kind": "hair",
+   "grid": "hairstyle_116.grid.json",
+   "weights": "hairstyle_116.weights.json",
+   "chunks": [
+    "hairstyle_116.vox"
+   ],
+   "voxel_count": 3324,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_117",
+   "kind": "hair",
+   "grid": "hairstyle_117.grid.json",
+   "weights": "hairstyle_117.weights.json",
+   "chunks": [
+    "hairstyle_117.vox"
+   ],
+   "voxel_count": 2643,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_118",
+   "kind": "hair",
+   "grid": "hairstyle_118.grid.json",
+   "weights": "hairstyle_118.weights.json",
+   "chunks": [
+    "hairstyle_118.vox"
+   ],
+   "voxel_count": 3808,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_119",
+   "kind": "hair",
+   "grid": "hairstyle_119.grid.json",
+   "weights": "hairstyle_119.weights.json",
+   "chunks": [
+    "hairstyle_119.vox"
+   ],
+   "voxel_count": 1307,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_120",
+   "kind": "hair",
+   "grid": "hairstyle_120.grid.json",
+   "weights": "hairstyle_120.weights.json",
+   "chunks": [
+    "hairstyle_120.vox"
+   ],
+   "voxel_count": 2010,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_121",
+   "kind": "hair",
+   "grid": "hairstyle_121.grid.json",
+   "weights": "hairstyle_121.weights.json",
+   "chunks": [
+    "hairstyle_121.vox"
+   ],
+   "voxel_count": 3025,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_122",
+   "kind": "hair",
+   "grid": "hairstyle_122.grid.json",
+   "weights": "hairstyle_122.weights.json",
+   "chunks": [
+    "hairstyle_122.vox"
+   ],
+   "voxel_count": 8479,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_123",
+   "kind": "hair",
+   "grid": "hairstyle_123.grid.json",
+   "weights": "hairstyle_123.weights.json",
+   "chunks": [
+    "hairstyle_123.vox"
+   ],
+   "voxel_count": 7665,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_124",
+   "kind": "hair",
+   "grid": "hairstyle_124.grid.json",
+   "weights": "hairstyle_124.weights.json",
+   "chunks": [
+    "hairstyle_124.vox"
+   ],
+   "voxel_count": 3095,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_125",
+   "kind": "hair",
+   "grid": "hairstyle_125.grid.json",
+   "weights": "hairstyle_125.weights.json",
+   "chunks": [
+    "hairstyle_125.vox"
+   ],
+   "voxel_count": 2857,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_126",
+   "kind": "hair",
+   "grid": "hairstyle_126.grid.json",
+   "weights": "hairstyle_126.weights.json",
+   "chunks": [
+    "hairstyle_126.vox"
+   ],
+   "voxel_count": 1300,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_127",
+   "kind": "hair",
+   "grid": "hairstyle_127.grid.json",
+   "weights": "hairstyle_127.weights.json",
+   "chunks": [
+    "hairstyle_127.vox"
+   ],
+   "voxel_count": 9988,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_128",
+   "kind": "hair",
+   "grid": "hairstyle_128.grid.json",
+   "weights": "hairstyle_128.weights.json",
+   "chunks": [
+    "hairstyle_128.vox"
+   ],
+   "voxel_count": 3506,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_129",
+   "kind": "hair",
+   "grid": "hairstyle_129.grid.json",
+   "weights": "hairstyle_129.weights.json",
+   "chunks": [
+    "hairstyle_129.vox"
+   ],
+   "voxel_count": 3821,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_130",
+   "kind": "hair",
+   "grid": "hairstyle_130.grid.json",
+   "weights": "hairstyle_130.weights.json",
+   "chunks": [
+    "hairstyle_130.vox"
+   ],
+   "voxel_count": 4685,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_131",
+   "kind": "hair",
+   "grid": "hairstyle_131.grid.json",
+   "weights": "hairstyle_131.weights.json",
+   "chunks": [
+    "hairstyle_131.vox"
+   ],
+   "voxel_count": 5078,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_132",
+   "kind": "hair",
+   "grid": "hairstyle_132.grid.json",
+   "weights": "hairstyle_132.weights.json",
+   "chunks": [
+    "hairstyle_132.vox"
+   ],
+   "voxel_count": 3510,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_133",
+   "kind": "hair",
+   "grid": "hairstyle_133.grid.json",
+   "weights": "hairstyle_133.weights.json",
+   "chunks": [
+    "hairstyle_133.vox"
+   ],
+   "voxel_count": 212,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_134",
+   "kind": "hair",
+   "grid": "hairstyle_134.grid.json",
+   "weights": "hairstyle_134.weights.json",
+   "chunks": [
+    "hairstyle_134.vox"
+   ],
+   "voxel_count": 9377,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_135",
+   "kind": "hair",
+   "grid": "hairstyle_135.grid.json",
+   "weights": "hairstyle_135.weights.json",
+   "chunks": [
+    "hairstyle_135.vox"
+   ],
+   "voxel_count": 3315,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_136",
+   "kind": "hair",
+   "grid": "hairstyle_136.grid.json",
+   "weights": "hairstyle_136.weights.json",
+   "chunks": [
+    "hairstyle_136.vox"
+   ],
+   "voxel_count": 3190,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_137",
+   "kind": "hair",
+   "grid": "hairstyle_137.grid.json",
+   "weights": "hairstyle_137.weights.json",
+   "chunks": [
+    "hairstyle_137.vox"
+   ],
+   "voxel_count": 3237,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_138",
+   "kind": "hair",
+   "grid": "hairstyle_138.grid.json",
+   "weights": "hairstyle_138.weights.json",
+   "chunks": [
+    "hairstyle_138.vox"
+   ],
+   "voxel_count": 2720,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_139",
+   "kind": "hair",
+   "grid": "hairstyle_139.grid.json",
+   "weights": "hairstyle_139.weights.json",
+   "chunks": [
+    "hairstyle_139.vox"
+   ],
+   "voxel_count": 2495,
+   "default_visible": true,
+   "duplicate_of": null,
+   "color_variants": [],
+   "morphs": [],
+   "effects": []
+  },
+  {
+   "prefix": "hairstyle_140",
+   "kind": "hair",
+   "grid": "hairstyle_140.grid.json",
+   "weights": "hairstyle_140.weights.json",
+   "chunks": [
+    "hairstyle_140.vox"
+   ],
+   "voxel_count": 3856,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -237,7 +2127,7 @@
    "chunks": [
     "jersey.vox"
    ],
-   "voxel_count": 40565,
+   "voxel_count": 35181,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -252,7 +2142,7 @@
    "chunks": [
     "shoes.vox"
    ],
-   "voxel_count": 7394,
+   "voxel_count": 6391,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -267,7 +2157,7 @@
    "chunks": [
     "shorts.vox"
    ],
-   "voxel_count": 25452,
+   "voxel_count": 22089,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
@@ -282,7 +2172,7 @@
    "chunks": [
     "socks.vox"
    ],
-   "voxel_count": 20731,
+   "voxel_count": 18071,
    "default_visible": true,
    "duplicate_of": null,
    "color_variants": [],
