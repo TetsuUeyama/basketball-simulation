@@ -26,17 +26,33 @@ import type { BoneMap, VoxelBody, VoxelBodyOptions } from "./player-voxel";
 const RAW_URL = "/vox/player_one";
 let source: RawSource | null = null;
 let loading: Promise<void> | null = null;
+/**
+ * 読み終わったときに呼ぶ約束。
+ * ⚠️ 選手を組むのは同期処理なので、間に合わなければ従来モデルで組まれてしまう。
+ *    ブラウザでは本体の JS 読み込みと競合して実際に間に合わず、試合中のモデルが
+ *    旧モデルのままになった。**後から届いたら組み直す**ための入口。
+ */
+const readyCbs: (() => void)[] = [];
 
 /** 起動時に一度だけ呼ぶ。読み終えるまで `rawReady()` は偽。 */
 export function startRawPreload(): Promise<void> {
   if (loading) return loading;
+  const t0 = Date.now();
   loading = preloadRawSource(RAW_URL)
-    .then((s) => { source = s; })
+    .then((s) => {
+      source = s;
+      console.info(`生ボクセルの素体を読み込んだ (${Date.now() - t0}ms)`);
+    })
     .catch((e: unknown) => {
       console.warn("生ボクセルの読み込みに失敗。従来のモデルを使う:", e);
       source = null;
-    });
+    })
+    .then(() => { const cbs = readyCbs.splice(0); for (const cb of cbs) cb(); });
   return loading;
+}
+/** 読み込みが終わったら（既に終わっていれば即座に）呼ぶ。 */
+export function onRawReady(cb: () => void): void {
+  if (source) cb(); else readyCbs.push(cb);
 }
 export function rawReady(): boolean { return source !== null; }
 /** 全選手を生モデルにする。 */

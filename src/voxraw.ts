@@ -752,29 +752,32 @@ export async function preloadRawSource(baseUrl: string): Promise<RawSource> {
     if (!r.ok) throw new Error(`${f} が読めない (HTTP ${r.status})。scripts/sync-voxraw.mjs を流したか？`);
     return await r.json() as T;
   };
+  // ⚠️ 1つずつ await で繋ぐと、部位7つで21回の往復が直列になる。ブラウザでは他の
+  //    読み込みと競合して秒単位になり、選手を組む時刻に間に合わず従来モデルへ落ちた。
+  //    独立した取得はまとめて投げる。
   const loadPart = async (part: LoadedPart["part"]): Promise<LoadedPart> => {
-    const grid = await get<PartGrid>(part.grid);
-    const w = part.weights ? await get<PartWeights>(part.weights).catch(() => null) : null;
+    const [grid, w] = await Promise.all([
+      get<PartGrid>(part.grid),
+      part.weights ? get<PartWeights>(part.weights).catch(() => null) : Promise.resolve(null),
+    ]);
     const chunkDefs = grid.chunks?.length ? grid.chunks
       : [{ vox_file: `${part.prefix}.vox`, grid_origin: grid.grid_origin } as VoxChunk];
-    const chunks: LoadedPart["chunks"] = [];
-    for (const ch of chunkDefs) {
+    const got = await Promise.all(chunkDefs.map(async (ch) => {
       const res = await fetch(`${baseUrl}/${ch.vox_file}`);
-      if (!res.ok) continue;
+      if (!res.ok) return null;
       const { voxels, palette } = parseVox(await res.arrayBuffer());
-      chunks.push({ ch, voxels, palette });
-    }
-    return { part, grid, w, chunks };
+      return { ch, voxels, palette };
+    }));
+    return { part, grid, w, chunks: got.filter((x): x is LoadedPart["chunks"][number] => !!x) };
   };
-  const manifest = await get<{ parts: { prefix: string; grid: string; weights?: string }[] }>("manifest.json");
-  const skelJson = await get<SkeletonJson>("skeleton.json");
-  const rootGrid = await get<{ bb_min: number[]; bb_max: number[] }>("grid.json");
+  const [manifest, skelJson, rootGrid] = await Promise.all([
+    get<{ parts: { prefix: string; grid: string; weights?: string }[] }>("manifest.json"),
+    get<SkeletonJson>("skeleton.json"),
+    get<{ bb_min: number[]; bb_max: number[] }>("grid.json"),
+  ]);
   const hairParts = manifest.parts.filter((x) => x.prefix.startsWith("hairstyle_"));
-  const parts: LoadedPart[] = [];
-  for (const part of manifest.parts) {
-    if (part.prefix.startsWith("hairstyle_")) continue;
-    parts.push(await loadPart(part));
-  }
+  const parts: LoadedPart[] = await Promise.all(
+    manifest.parts.filter((x) => !x.prefix.startsWith("hairstyle_")).map(loadPart));
   return {
     baseUrl, skelJson, height: rootGrid.bb_max[2] - rootGrid.bb_min[2],
     hairParts, hairNames: hairParts.map((x) => x.prefix).sort(), parts, get, loadPart,

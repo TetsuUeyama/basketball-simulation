@@ -5,7 +5,7 @@ import {
 } from "@babylonjs/core";
 import { buildCourt } from "./objects/court";
 import { makeMat } from "./objects/materials";
-import { addLights, addShadows } from "./scene-setup";
+import { addLights, addShadows, setPlayerShadow } from "./scene-setup";
 import { BroadcastCamera } from "./camera";
 import { Game } from "./game";
 import { optimizeLineups } from "./ai/lineups";
@@ -21,7 +21,7 @@ import "./ui/ui-pickers";
 import "./ui/ui-result";
 import "./ui/ui-hud";
 import "./ui/ui-poker";
-import { startRawPreload } from "./objects/player/player-raw";
+import { onRawReady, startRawPreload } from "./objects/player/player-raw";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 // preserveDrawingBuffer は意図的にOFF（モバイルGPUのちらつき防止。スクショ時のみ有効化）。
@@ -35,9 +35,19 @@ const { sun } = addLights(scene);
 const camera = new BroadcastCamera(scene, canvas);
 
 // ---- 生ボクセルの素体を先に読み込む ----------------------------------------
-// ⚠️ 選手を組むのは同期処理なので、チーム決定までに読み終えておく必要がある。
-//    間に合わなければ従来のモデルで組まれる（動作は同じ）。
+// ⚠️ 選手を組むのは同期処理なので、間に合わなければ従来のモデルで組まれる。
+//    タイトルを離れるまでには終わる想定だが、実際には本体の JS 読み込みと競合して
+//    間に合わず、試合中が旧モデルのままになった。**遅れて届いたら組み直す**。
 void startRawPreload();
+onRawReady(() => {
+  if (!game) return;                       // まだ組んでいなければ、組むときに使われる
+  for (let t = 0; t < 2; t++) {
+    for (const p of game.allPlayers(t)) {
+      p.rebuildVoxel();
+      setPlayerShadow(p, !p.seated);       // 影キャスターは作り直したメッシュで登録し直す
+    }
+  }
+});
 
 // ---- 3Dの実体はチーム決定後に組む -----------------------------------------
 // タイトル/クラブ選択の間はコートも選手も作らない。26人ぶんのボクセル生成と、その
