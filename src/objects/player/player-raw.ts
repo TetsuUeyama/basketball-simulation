@@ -15,7 +15,7 @@ import {
   Vector3, VertexData,
 } from "@babylonjs/core";
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
-import { partRestRotation } from "@objcts/player/voxel/voxelBody";
+import type { RigHandle } from "@objcts/player/rig";
 import {
   buildRawModelFrom, buildRawRig, preloadRawSource, type RawModel, type RawSource,
 } from "../../voxraw";
@@ -147,8 +147,27 @@ function backPanel(jersey: Mesh, band: { yLo: number; yHi: number; xLo: number; 
   return vd;
 }
 
+/**
+ * 胴（腰）の半幅を測る。腕を真下へ垂らしたとき胴に当たるかの判定に使う。
+ * ⚠️ ジャージで測ってはいけない。静止姿勢は腕を開いた形なので、同じ高さに袖が入る。
+ *    ショーツの一番上なら腕は無い。
+ */
+function torsoHalfWidth(shorts: Mesh): number {
+  const p = shorts.getVerticesData("position");
+  if (!p) return 0.17;
+  let top = -Infinity;
+  for (let i = 1; i < p.length; i += 3) if (p[i] > top) top = p[i];
+  let x = 0;
+  for (let i = 0; i < p.length / 3; i++) {
+    if (p[i * 3 + 1] < top - 0.06) continue;
+    const v = Math.abs(p[i * 3]);
+    if (v > x) x = v;
+  }
+  return x;
+}
+
 /** 形ごとの見本。メッシュのジオメトリだけ使い、描画はしない。 */
-interface Proto { model: RawModel; panel: VertexData | null }
+interface Proto { model: RawModel; panel: VertexData | null; torsoHalf: number }
 const PROTO = new WeakMap<Scene, Map<number, Proto>>();
 function proto(scene: Scene, bucket: number): Proto | null {
   if (!source) return null;
@@ -177,7 +196,8 @@ function proto(scene: Scene, bucket: number): Proto | null {
     }
     for (const mesh of model.meshes) mesh.setEnabled(false);
     model.root.setEnabled(false);
-    e = { model, panel };
+    const shorts = model.byPart.get("shorts");
+    e = { model, panel, torsoHalf: shorts ? torsoHalfWidth(shorts) : 0.17 };
     store.set(bucket, e);
   }
   return e;
@@ -207,31 +227,78 @@ export function hairPartName(hairNo: number): string | null {
  *    おり、post = rr(部位) の逆 でそれを打ち消している。生モデルでも同じ読み替えが要る。
  *    恒等にしたら、ゲーム内で腕を横に広げた格好のまま動いた（ズレ量が 62.6° と一致）。
  */
-const CHAIN: [string, string, string | null][] = [
-  ["Hips", "hips", null],
-  ["Spine", "torso", "hips"],
-  ["Head", "head", "torso"],
-  ["LeftUpperArm", "upperArmL", "torso"], ["RightUpperArm", "upperArmR", "torso"],
-  ["LeftLowerArm", "foreArmL", "upperArmL"], ["RightLowerArm", "foreArmR", "upperArmR"],
-  ["LeftHand", "handL", "foreArmL"], ["RightHand", "handR", "foreArmR"],
-  ["LeftUpperLeg", "thighL", "hips"], ["RightUpperLeg", "thighR", "hips"],
-  ["LeftLowerLeg", "shinL", "thighL"], ["RightLowerLeg", "shinR", "thighR"],
-  ["LeftFoot", "footL", "shinL"], ["RightFoot", "footR", "shinR"],
+/**
+ * 標準ボーン、アニメ側がその親とみなすボーン、静止時の向きを決める先。
+ * ⚠️ 向きを決める先は「rig.restDirection」ではなく明示する。restDirection は
+ *    子が複数ある骨（Hips は脚2本と Spine）で、どの子が最後に処理されたかで
+ *    値が変わってしまう。実測でそれが原因で上腕が真上を向いた（143.6°）。
+ * ⚠️ 胴と腰は仮想側も回さない前提なので向きの補正を入れない（単位）。ここに
+ *    補正を入れると、下の骨まで連鎖してすべて狂う。
+ */
+const CHAIN: [string, string | null, string | null][] = [
+  ["Hips", null, null],
+  ["Spine", "Hips", null],
+  ["Head", "Spine", null],
+  ["LeftUpperArm", "Spine", "LeftLowerArm"], ["RightUpperArm", "Spine", "RightLowerArm"],
+  ["LeftLowerArm", "LeftUpperArm", "LeftHand"], ["RightLowerArm", "RightUpperArm", "RightHand"],
+  ["LeftHand", "LeftLowerArm", null], ["RightHand", "RightLowerArm", null],
+  ["LeftUpperLeg", "Hips", "LeftLowerLeg"], ["RightUpperLeg", "Hips", "RightLowerLeg"],
+  ["LeftLowerLeg", "LeftUpperLeg", "LeftFoot"], ["RightLowerLeg", "RightUpperLeg", "RightFoot"],
+  ["LeftFoot", "LeftLowerLeg", null], ["RightFoot", "RightLowerLeg", null],
 ];
-function boneMap(): VoxelBody["map"] {
-  const rr = (part: string): Quaternion => {
-    const q = partRestRotation(part);
-    return new Quaternion(q[0], q[1], q[2], q[3]);
+const DOWN = new Vector3(0, -1, 0);
+/**
+ * アニメの回転を、このモデルのボーン回転へ読み替える表を作る。
+ *
+ * アニメ側は「骨が真下(0,-1,0)を向いている」前提の仮想の骨組みで回転 V を作る。
+ * モデルの骨は静止姿勢でそれぞれ別の向きを向いているので、その差を打ち消す:
+ *   ノードの回転 = restRot(親) ⊗ V ⊗ restRot(自分)⁻¹
+ *
+ * ⚠️ restRot は**このモデル自身の静止姿勢**から出すこと。焼き込みモデルの
+ *    partRestRotation を流用していたが、生モデルの静止姿勢は別物なので打ち消し
+ *    きれず、真下を向かせたはずの上腕が 33.8° 開いたままだった（手が体の中心から
+ *    32cm 外。仮想の骨組みでは 19cm）。これが「肩を広げた不自然な立ち姿」の正体。
+ */
+function boneMap(rig: RigHandle): VoxelBody["map"] {
+  const toward = new Map(CHAIN.map(([b, , t]) => [b, t]));
+  const cache = new Map<string, Quaternion>();
+  const restRot = (b: string | null): Quaternion => {
+    if (!b) return Quaternion.Identity();
+    const hit = cache.get(b);
+    if (hit) return hit;
+    const t = toward.get(b) ?? null;
+    let q = Quaternion.Identity();
+    if (t) {
+      const a = rig.restPosition(b as StandardBoneName), c = rig.restPosition(t as StandardBoneName);
+      if (a && c && Vector3.DistanceSquared(a, c) > 1e-9) q = rotationBetween(DOWN, c.subtract(a).normalize());
+    }
+    cache.set(b, q);
+    return q;
   };
   const map = new Map<string, BoneMap>();
-  for (const [b, part, parent] of CHAIN) {
+  for (const [b, parent] of CHAIN) {
     map.set(b, {
       bone: b as StandardBoneName,
-      pre: parent ? rr(parent) : Quaternion.Identity(),
-      post: rr(part).conjugate(),
+      pre: restRot(parent),
+      post: restRot(b).conjugate(),
     });
   }
   return map;
+}
+/** a を b へ向ける最小の回転。 */
+function rotationBetween(a: Vector3, b: Vector3): Quaternion {
+  const dot = Vector3.Dot(a, b);
+  if (dot > 0.999999) return Quaternion.Identity();
+  if (dot < -0.999999) {
+    // 真逆。直交する軸を1本選んで180°回す
+    const axis = Math.abs(a.x) < 0.9 ? Vector3.Cross(a, Vector3.Right()) : Vector3.Cross(a, Vector3.Up());
+    axis.normalize();
+    return Quaternion.RotationAxis(axis, Math.PI);
+  }
+  const axis = Vector3.Cross(a, b);
+  const q = new Quaternion(axis.x, axis.y, axis.z, 1 + dot);
+  q.normalize();
+  return q;
 }
 
 // ───────────────────────── 色 ─────────────────────────
@@ -279,6 +346,9 @@ const tinted = new WeakSet<Mesh>();
 // ⚠️ 26人を近景の細かさで描くと毎フレーム 3.8M 三角形になり、実機でカクついた。
 //    数メートル離れれば 1ボクセルは1画素にも満たないので、遠い選手はボクセル2個ぶんに
 //    まとめた版（面はおよそ 1/4）へ切り替える。
+// 立ち姿で腕を最低これだけは開く（rad）。0 だと腕が体に貼り付いて棒立ちに見える。
+const MIN_SPLAY = 0.06;              // ≈3.4°
+const ARM_RADIUS = 0.05;             // 上腕の太さの半分（m）
 const LOD_DIST = 12;                 // これより遠い選手は粗い版（m）
 const LOD_HYST = 1.5;                // 境目で行ったり来たりしないための余裕（m）
 /** 粗い版を持たせる部位。目・口・エンブレム・背番号は遠景では見えないので消すだけ。 */
@@ -529,7 +599,7 @@ export function buildRawVoxelBody(
   lodList(scene).push(lodEntry);
 
   const body: VoxelBody = {
-    root, rig, skel, map: boneMap(),
+    root, rig, skel, map: boneMap(rig),
     spineRest: spineNode ? spineNode.position.clone() : Vector3.Zero(),
     hipsRest: hipsNode ? hipsNode.position.clone() : Vector3.Zero(),
     handRest, wristPivot,
@@ -538,6 +608,12 @@ export function buildRawVoxelBody(
     shoulder: { x: sh.x, y: sh.y, z: sh.z },
     hipY: hip.y, kneeY: knee.y, ankleY: ankle.y,
     upperArm: Vector3.Distance(sh, el),
+    // 腕を真下へ垂らしたとき、上腕が胴に触れないぶんだけ開く。
+    // ⚠️ 焼き込み素体の 35° を流用してはいけない。あちらは肩の関節が胴の内側に
+    //    あるための値で、生素体は肩が胴より 4cm 外にあるので開く必要がほぼ無い。
+    minArmSplay: Math.max(MIN_SPLAY,
+      Math.atan2(Math.max(0, pe.torsoHalf * k + ARM_RADIUS * k - Math.abs(sh.x)),
+        Vector3.Distance(sh, el))),
     // ⚠️ 焼き込みモデルは手のひらの中心までを実効長にしている。生モデルは手ボーンが
     //    手首にあるので、手のひらぶんを足す。
     foreArm: Vector3.Distance(el, hand) * 1.12,

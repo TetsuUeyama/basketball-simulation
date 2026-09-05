@@ -45,8 +45,11 @@ export function voxHairIndex(hairNo: number): number {
   return hit ?? (hairNo - 1) % HAIR_INDEX.size;
 }
 
-/** 腕を胴へ埋めないための外向き角の下限(rad)。ボクセル素体は肩の関節が胴の内側
- *  （x=±0.12、胴の半幅は 0.21）にあるので、真下へ垂らすと腕が胴に埋まる。 */
+/** 腕を胴へ埋めないための外向き角の下限(rad)。焼き込み素体は肩の関節が胴の内側
+ *  （x=±0.12、胴の半幅は 0.21）にあるので、真下へ垂らすと腕が胴に埋まる。
+ *  ⚠️ これは**素体ごとの値**。生ボクセル素体は肩が胴より 4cm 外にあるので、同じ
+ *     35°を掛けると腕が大きく開いて「肩を広げた不自然な立ち姿」になる（実測で
+ *     上腕が真下から 33.8°、手が体の中心から 32cm 外。仮想の骨組みでは 19cm）。 */
 const MIN_ARM_SPLAY = 0.61;   // ≈35°
 
 export interface VoxelKit { top: RGB; bottom: RGB; shoes: RGB }
@@ -189,6 +192,8 @@ export interface VoxelBody {
   /** IK 用の実効長。前腕は手のひらの中心まで（手首ボーンより先に手が出るため）。 */
   readonly upperArm: number;
   readonly foreArm: number;
+  /** 腕を胴へ埋めないための外向き角の下限(rad)。素体の肩幅と胴幅から決まる。 */
+  readonly minArmSplay: number;
   /** 手ボーンの静止ローカル位置（手首を軸に回すとき position を戻す基準）。 */
   readonly handRest: Map<string, Vector3>;
   /** 手ボーン原点から見た手首（手メッシュの内側の端）。ここを固定して手を回す。 */
@@ -671,6 +676,7 @@ export function buildVoxelBody(scene: Scene, parent: TransformNode, o: VoxelBody
     ankleY: ankle.y,
     upperArm: Vector3.Distance(sh, el),
     foreArm: (fixL.len + fixR.len) / 2,
+    minArmSplay: MIN_ARM_SPLAY,
     setSkinColor: (c) => {
       const b = skinBaseColor(variant);
       skinMat.unfreeze();
@@ -733,7 +739,7 @@ const _old = new Quaternion();
  * 「前腕へ掛ける打ち消し回転」`cancel = 上腕の新しい向き⁻¹ ⊗ 元の向き` を返す。
  * 打ち消さないと前腕も一緒に外へ流れ、脇を開いて手が体から離れた形になる。
  */
-function splayArm(q: Quaternion, side: number, cancel: Quaternion): void {
+function splayArm(q: Quaternion, side: number, cancel: Quaternion, minSplay: number): void {
   _old.copyFrom(q);
   DOWN.rotateByQuaternionToRef(q, _d);
   if (_d.y < 0) {
@@ -742,7 +748,7 @@ function splayArm(q: Quaternion, side: number, cancel: Quaternion): void {
     //    外向きだけで見ると IK が解いた手先を後から外へ押し出してしまう
     //    （実測: 手のひらが狙いから 0.15m 外れ、両手の間隔が 0.57m に開いた）。
     const horiz = Math.hypot(_d.x, _d.z);
-    const need = Math.tan(MIN_ARM_SPLAY) * -_d.y;
+    const need = Math.tan(minSplay) * -_d.y;
     if (horiz < need) {
       // 前後(z)はそのまま、外向き(x)だけ足して水平量を need にする
       _d.x = side * Math.sqrt(Math.max(0, need * need - _d.z * _d.z));
@@ -841,14 +847,14 @@ function putArms(vb: VoxelBody, back: boolean, armL: TransformNode, armR: Transf
   if (doLeftBone) {
   localQuat(back ? armR : armL, _q);
   if (back) flipQ(_q);
-  if (back ? ikR : ikL) _cancelL.copyFromFloats(0, 0, 0, 1); else splayArm(_q, -1, _cancelL);
+  if (back ? ikR : ikL) _cancelL.copyFromFloats(0, 0, 0, 1); else splayArm(_q, -1, _cancelL, vb.minArmSplay);
   put(vb, "LeftUpperArm", _q);
   }
 
   if (doRightBone) {
   localQuat(back ? armL : armR, _q);
   if (back) flipQ(_q);
-  if (back ? ikL : ikR) _cancelR.copyFromFloats(0, 0, 0, 1); else splayArm(_q, 1, _cancelR);
+  if (back ? ikL : ikR) _cancelR.copyFromFloats(0, 0, 0, 1); else splayArm(_q, 1, _cancelR, vb.minArmSplay);
   put(vb, "RightUpperArm", _q);
   }
 

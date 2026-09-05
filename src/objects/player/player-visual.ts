@@ -4,7 +4,8 @@
 import { HUD_OPTS, uniformOf } from "../../config";
 import { clamp } from "../../util";
 import { Player } from "./player";
-import { buildVoxelBody, syncVoxelPose } from "./player-voxel";
+import { Quaternion, Vector3 } from "@babylonjs/core";
+import { buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
 import { applyClipPose } from "../../animation/voxel-motion";
 import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 
@@ -70,13 +71,83 @@ Player.prototype.rebuildVoxel = function(): void {
     this.ensureVoxel();
 };
 
+// ───────────────────────── 姿勢の繋ぎ ─────────────────────────
+// ⚠️ クリップの切り替えも、クリップ⇄手続きポーズの切り替えも、これまでは**即座に**
+//    差し替えていた。前の姿勢と次の姿勢は当然別物なので、モーションが唐突に始まり
+//    唐突に終わって見える。切り替わった瞬間の姿勢を控えて、そこから数フレームかけて
+//    新しい姿勢へ寄せる。IK ではなく姿勢の混ぜ合わせ（クロスフェード）で直す。
+const POSE_BLEND = 0.14;        // 繋ぎに使う時間（秒）
+
+type PoseState = {
+  mode: string;                 // いま流している姿勢の識別子（クリップ名 / "" は手続き）
+  t: number;                    // 繋ぎの進み（0→1）
+  prevQ: Map<string, Quaternion>;   // 1フレーム前の姿勢
+  prevP: Map<string, Vector3>;
+  fromQ: Map<string, Quaternion>;   // 繋ぎの起点（切り替わった瞬間の姿勢）
+  fromP: Map<string, Vector3>;
+};
+const POSE = new WeakMap<Player, PoseState>();
+const _bq = new Quaternion();
+
+/**
+ * 切り替わりの直後だけ、前の姿勢から新しい姿勢へ寄せる。
+ * ⚠️ 切り替えに気づいた時点で rig には**もう新しい姿勢**が入っている。前の姿勢は
+ *    毎フレーム控えておいたものを使う。
+ */
+function blendPose(p: Player, vb: VoxelBody, mode: string, dt: number): void {
+  let st = POSE.get(p);
+  if (!st) {
+    st = { mode, t: 1, prevQ: new Map(), prevP: new Map(), fromQ: new Map(), fromP: new Map() };
+    POSE.set(p, st);
+  }
+  if (mode !== st.mode) {
+    st.mode = mode;
+    st.t = 0;
+    st.fromQ = new Map(st.prevQ);
+    st.fromP = new Map(st.prevP);
+  }
+  if (st.t < 1) {
+    st.t = Math.min(1, st.t + (dt > 0 ? dt : 1 / 60) / POSE_BLEND);
+    // なめらかに入って抜ける（等速だと繋ぎ目が見える）
+    const w = 1 - (st.t * st.t * (3 - 2 * st.t));
+    if (w > 0.001) {
+      for (const b of vb.rig.bones) {
+        const n = vb.rig.node(b);
+        if (!n) continue;
+        const q0 = st.fromQ.get(b);
+        if (q0 && n.rotationQuaternion) {
+          Quaternion.SlerpToRef(n.rotationQuaternion, q0, w, _bq);
+          n.rotationQuaternion.copyFrom(_bq);
+        }
+        const p0 = st.fromP.get(b);
+        if (p0) Vector3.LerpToRef(n.position, p0, w, n.position);
+      }
+    }
+  }
+  // 次のフレームのために今の姿勢を控える
+  for (const b of vb.rig.bones) {
+    const n = vb.rig.node(b);
+    if (!n) continue;
+    if (n.rotationQuaternion) {
+      const c = st.prevQ.get(b);
+      if (c) c.copyFrom(n.rotationQuaternion); else st.prevQ.set(b, n.rotationQuaternion.clone());
+    }
+    const c2 = st.prevP.get(b);
+    if (c2) c2.copyFrom(n.position); else st.prevP.set(b, n.position.clone());
+  }
+}
+
 /** 姿勢をボクセルの標準ボーンへ流す（sync から毎フレーム）。
  *  歩く・走る・ドリブルは objcts/player/motion の焼き込みクリップ、それ以外は手続きポーズ。 */
 Player.prototype.syncVoxel = function(): void {
     const vb = this.vox;
     if (!vb) return;
     this.updateWristTrail();   // 手首は肩・肘が決まったあとに追従させる
-    if (applyClipPose(vb, this, this.lastDt)) { vb.skel.prepare(); return; }
+    if (applyClipPose(vb, this, this.lastDt)) {
+      blendPose(this, vb, this.clipName, this.lastDt);
+      vb.skel.prepare();
+      return;
+    }
     syncVoxelPose(vb, {
       numberSide: this.numberSide,
       torsoYaw: this.torsoNode.rotation.y,
@@ -92,6 +163,7 @@ Player.prototype.syncVoxel = function(): void {
       hipL: this.hipL, hipR: this.hipR,
       kneeL: this.kneeL, kneeR: this.kneeR,
     });
+    blendPose(this, vb, "", this.lastDt);
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
 };
 
