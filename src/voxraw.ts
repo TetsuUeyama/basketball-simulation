@@ -13,7 +13,8 @@
 //      （剛体で骨ごとに切ると関節で裂ける。ウェイトを混ぜて GPU に変形させる）
 //   5. applyMotion → skel.prepare() で変形
 import {
-  Bone, Color3, Matrix, Mesh, Scene, Skeleton, StandardMaterial, TransformNode, VertexData,
+  Bone, Color3, Matrix, Mesh, Scene, Skeleton, StandardMaterial, TransformNode, VertexBuffer,
+  VertexData,
 } from "@babylonjs/core";
 import { buildRig, type RigHandle } from "@objcts/player/rig";
 import { restPoseFrom } from "@objcts/player/restPose";
@@ -148,6 +149,8 @@ const FACES: { n: [number, number, number]; d: [number, number, number]; q: [num
 
 /** 服として扱う部位（この内側の肌は描かない）。 */
 const CLOTH_PARTS = new Set(["jersey", "shorts", "socks", "shoes", "tshirt", "jeans"]);
+/** 髪の部位か（モデル本来の hair と、差し替え用の hairstyle_NNN）。 */
+const isHairPart = (p: string): boolean => p === "hair" || p.startsWith("hairstyle_");
 /** 方位の分割数。高さ×方位ごとに「服の一番外側の半径」を持つ。 */
 const SECTORS = 24;
 
@@ -213,6 +216,16 @@ export interface RawModel {
   triangles: number;
   /** 服に隠れて描かなかった肌のボクセル数。 */
   skinDropped: number;
+  /**
+   * 髪の下になる頭皮を、その髪の色で塗る。戻り値は塗ったボクセル数。
+   * 髪型を切り替えるたびに呼ぶ。`""` を渡すと元の肌色へ戻す。
+   *
+   * なぜ要るか: 髪はメッシュの表面だけをボクセル化するので、髪の殻と頭皮の間に
+   * 隙間が残ると、そこから地肌が見えて「頭頂・後頭部が禿げている」ように見える。
+   * 幾何のフィット（voxel-pipeline 側）で隙間は 0〜4cm まで詰めたが、髪型ごとの
+   * 形の差までは吸収しきれないので、色でも塞ぐ。
+   */
+  applyScalpTint(part: string): number;
   height: number;
   perBone: Map<string, number>;
 }
@@ -292,11 +305,41 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
   }
   const covered = clothPts.length ? clothCover(clothPts, clothLayer) : null;
 
+  // --- 髪ごとの「外径」と色（頭皮を塗るのに使う）---
+  type Cover = (x: number, y: number, z: number, margin: number) => boolean;
+  const hairCover = new Map<string, Cover>();
+  const hairColor = new Map<string, number[]>();
+  const hairVoxel = new Map<string, number>();
+  for (const L of loaded) {
+    if (!isHairPart(L.part.prefix)) continue;
+    const pts: { x: number; y: number; z: number }[] = [];
+    let color: number[] | null = null;
+    for (const { ch, voxels, palette } of L.chunks) {
+      for (const v of voxels) {
+        pts.push({
+          x: ch.grid_origin[0] + (v[0] + 0.5) * L.grid.voxel_size,
+          y: ch.grid_origin[1] + (v[1] + 0.5) * L.grid.voxel_size,
+          z: ch.grid_origin[2] + (v[2] + 0.5) * L.grid.voxel_size,
+        });
+        if (!color) color = palette[v[3] - 1] ?? null;
+      }
+    }
+    if (!pts.length) continue;
+    hairCover.set(L.part.prefix, clothCover(pts, Math.max(0.02, L.grid.voxel_size * 2)));
+    hairColor.set(L.part.prefix, color ?? [60, 45, 35]);
+    hairVoxel.set(L.part.prefix, L.grid.voxel_size);
+  }
+  /** body のボクセルごとの色バッファ上の範囲（頭皮を塗り替えるため）。 */
+  const bodyVox: { x: number; y: number; z: number; s: number; e: number }[] = [];
+  let bodyMesh: Mesh | null = null;
+  let bodyCol: number[] = [];
+
   for (const { part, grid, w, chunks: loadedChunks } of loaded) {
     const chunks = loadedChunks.map((c) => c.ch);
     const S = grid.voxel_size;
     // 服の中に隠れる肌は描かない（body だけが対象。服・髪・目はそのまま）
     const cullSkin = covered && part.prefix === "body";
+    const isBody = part.prefix === "body";
 
     // 部位の格子で「そこにボクセルがあるか」を引けるようにする（隠れた面を描かないため）
     type Cell = { c: [number, number, number]; col: number[]; wi: number };
@@ -349,6 +392,7 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
       if (domName) perBone.set(domName, (perBone.get(domName) ?? 0) + 1);
 
       // --- 露出面だけ張る ---
+      const colStart = col.length;
       const [cx, cy, cz] = cell.c;
       const wx = O[0] + (cx + 0.5) * S, wy = O[1] + (cy + 0.5) * S, wz = O[2] + (cz + 0.5) * S;
       for (const f of FACES) {
@@ -366,6 +410,7 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
         idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
         triangles += 2;
       }
+      if (isBody && col.length > colStart) bodyVox.push({ x: wx, y: wy, z: wz, s: colStart, e: col.length });
       voxelCount++;
     }
 
@@ -377,7 +422,8 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     vd.matricesIndices = mIdx;
     vd.matricesWeights = mWgt;
     const mesh = new Mesh(`raw_${part.prefix}`, scene);
-    vd.applyToMesh(mesh, false);
+    // ⚠️ body だけ updatable。頭皮の色を髪型に合わせて後から書き換えるため。
+    vd.applyToMesh(mesh, isBody);
     mesh.material = mat;
     mesh.parent = root;
     mesh.skeleton = skel;
@@ -385,7 +431,36 @@ export async function buildRawModel(scene: Scene, baseUrl: string): Promise<RawM
     mesh.alwaysSelectAsActiveMesh = true;
     meshes.push(mesh);
     byPart.set(part.prefix, mesh);
+    if (isBody) { bodyMesh = mesh; bodyCol = col; }
   }
 
-  return { rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped };
+  // --- 髪の下の頭皮を髪色で塗る ---
+  // ⚠️ 顔（目・鼻・口）は塗らない。前髪のある髪型だと方位判定が顔まで覆ってしまい、
+  //    顔が髪色に染まる。頭頂から 9cm より下の前面は対象外にする。
+  const headTop = bodyVox.reduce((m, v) => Math.max(m, v.z), 0);
+  const faceZ = headTop - 0.09;
+  const applyScalpTint = (name: string): number => {
+    if (!bodyMesh || !bodyCol.length) return 0;
+    const cover = hairCover.get(name);
+    const hc = hairColor.get(name);
+    const cols = bodyCol.slice();
+    let n = 0;
+    if (cover && hc) {
+      const margin = -(hairVoxel.get(name) ?? 0.005);
+      const [r, g, b] = [hc[0] / 255, hc[1] / 255, hc[2] / 255];
+      for (const v of bodyVox) {
+        if (v.y < -0.01 && v.z < faceZ) continue;
+        if (!cover(v.x, v.y, v.z, margin)) continue;
+        for (let i = v.s; i < v.e; i += 4) { cols[i] = r; cols[i + 1] = g; cols[i + 2] = b; }
+        n++;
+      }
+    }
+    bodyMesh.updateVerticesData(VertexBuffer.ColorKind, cols);
+    return n;
+  };
+
+  return {
+    rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped,
+    applyScalpTint,
+  };
 }

@@ -41,6 +41,8 @@ let t = 0;
 let info = "読み込み中…";
 /** 表示中の髪型の部位名。"hair" = モデル本来の髪 / "" = 髪なし。 */
 let hairPart = "hair";
+/** 髪色に塗り替えた頭皮ボクセル数（表示用）。 */
+let tinted = 0;
 
 /** 髪型を1つだけ表示する。 */
 function showHair(name: string): void {
@@ -49,6 +51,8 @@ function showHair(name: string): void {
     if (part === "hair" || part.startsWith("hairstyle_")) mesh.setEnabled(part === name);
   }
   hairPart = name;
+  // 髪の殻と頭皮の隙間から地肌が見えないよう、髪の下の頭皮を髪色に塗る
+  tinted = model.applyScalpTint(name);
 }
 
 /** 選んだクリップの t 秒地点をモデル自身のリグへ当てる。 */
@@ -174,6 +178,8 @@ engine.runRenderLoop(() => {
   const clip = motionClip(motion);
   const dur = clip ? motionDuration(clip) : 0;
   infoEl.textContent = info
+    + `
+髪の下の頭皮を髪色に塗り替え ${tinted.toLocaleString()} ボクセル`
     + `\n${motion} ${dur ? (t % dur).toFixed(2) : "0.00"}/${dur.toFixed(2)}s`
     + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   scene.render();
