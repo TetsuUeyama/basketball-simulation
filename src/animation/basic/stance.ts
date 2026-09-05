@@ -21,6 +21,8 @@ const READY_SPLAY = 0.40;      // ≈23°
 const READY_LEAN = 0.30;       // ≈17°
 /** 直立度 0 のときの足の開き（rad、片脚あたり）。 */
 const READY_STANCE = 0.17;     // ≈10°
+/** 直立度 0 のときの膝の外向き（rad、片脚あたり）。腿を長軸まわりに外へひねる。 */
+const READY_KNEE_OUT = 0.32;   // ≈18°
 /** 直立度 0 のときの鎖骨の前傾（rad）。肩を前へ入れる。 */
 const READY_SHOULDER = 0.14;   // ≈8°
 /** 直立度 0 のときの上腕の前傾（rad）。 */
@@ -64,6 +66,7 @@ export function stepUpright(p: Player, dt: number): void {
 
 const _q = new Quaternion();
 const X = new Vector3(1, 0, 0);
+const Y = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
 
 /**
@@ -78,6 +81,17 @@ function tiltX(vb: VoxelBody, bone: string, ang: number): void {
   const q = n?.rotationQuaternion;
   if (!n || !q) return;
   Quaternion.RotationAxisToRef(X, ang, _q);
+  _q.multiplyToRef(q, q);
+  n.markAsDirty("rotationQuaternion");
+}
+
+/** ボーンを縦軸まわりにひねる（今の姿勢の上に重ねる）。膝を外へ向けるのに使う。 */
+function tiltY(vb: VoxelBody, bone: string, ang: number): void {
+  if (Math.abs(ang) < 1e-4) return;
+  const n = vb.rig.node(bone as StandardBoneName);
+  const q = n?.rotationQuaternion;
+  if (!n || !q) return;
+  Quaternion.RotationAxisToRef(Y, ang, _q);
   _q.multiplyToRef(q, q);
   n.markAsDirty("rotationQuaternion");
 }
@@ -142,6 +156,10 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   tiltX(vb, "LeftLowerLeg", a + b); tiltX(vb, "RightLowerLeg", a + b);
   const splay = READY_STANCE * s;
   splayLegs(vb, splay);
+  // 膝を外へ向ける（腿を長軸まわりに外へひねる）。つま先も一緒に外を向く。
+  // ⚠️ 足裏の水平は崩れない（縦軸まわりなので傾かない）。
+  const out = READY_KNEE_OUT * s;
+  tiltY(vb, "LeftUpperLeg", -out); tiltY(vb, "RightUpperLeg", out);
   // 足首: 脛の傾きと脚の開きを打ち消して、足裏を地面と平行に保つ。
   // ⚠️ 足首は親から回転をそのまま受け継ぐ。腿 -a と膝 +(a+b) で差し引き +b、
   //    開きは splayLegs が Z 軸に ±splay。同じ量を逆へ掛けて水平へ戻す。
