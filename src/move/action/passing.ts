@@ -226,7 +226,13 @@ export function updatePass(game: Game, dt: number): void {
     const d = game.passSteal.def;
     const ix = game.passFrom.x + (game.passCatch.x - game.passFrom.x) * game.passSteal.at;
     const iz = game.passFrom.z + (game.passCatch.z - game.passFrom.z) * game.passSteal.at;
-    moveToward2D(d.pos, ix, iz, d.accelSpeed(dt, 1.08) * dt);
+    // ⚠️ 一定の全力走だと到達点へ間に合わず、手がボールから 1.2m 離れたまま
+    //    「抽選で奪う」ことになっていた。受け手と同じで、残り時間から必要な速さを
+    //    出す（上限はランジスプリント）。
+    const remainS = Math.max(dt, game.passDur * game.passSteal.at - game.passT);
+    const gapS = dist2DTo(d.pos, ix, iz);
+    const spdS = Math.min(gapS / remainS, d.runSpeed * 1.35);
+    moveToward2D(d.pos, ix, iz, spdS * dt);
     game.clampCourt(d.pos);
   }
 
@@ -263,6 +269,20 @@ export function updatePass(game: Game, dt: number): void {
   // それ以外は指先だけで弾く。
   if (game.passSteal && k >= game.passSteal.at) {
     const d = game.passSteal.def;
+    // ⚠️ 手が届いていないのに奪ってはいけない。以前は到達点に着いていなくても
+    //    抽選で奪い、さらにボールを守備者の位置へ瞬間移動させていた（実測で手は
+    //    ボールから中央値 1.2m 離れていた＝ボールがワープして見えた）。
+    //    腕の長さ＋少しの余裕に入るまで待ち、間に合わなければ奪えない。
+    const arm = d.upperArmLen + d.foreArmLen + 0.25;
+    const inReach = dist2DTo(game.ball.pos, d.pos.x, d.pos.z) <= arm
+      && game.ball.pos.y > 0.3 && game.ball.pos.y < d.reachTopY() + 0.1;
+    if (!inReach) {
+      if (k < 1) return;                 // まだ間に合う可能性がある。次のフレームへ
+      game.passSteal = null;             // 届かないまま終わった＝奪えない
+    }
+  }
+  if (game.passSteal && k >= game.passSteal.at) {
+    const d = game.passSteal.def;
     const reach = game.passSteal.reach;   // 指先でやっと届いた球は綺麗に奪えない
     game.passSteal = null;
     flashBall(game, "intercept", d.team);   // カットした側の色（綺麗に奪う/弾くの両方）
@@ -277,15 +297,15 @@ export function updatePass(game: Game, dt: number): void {
       game.ballMode = "held";
       game.shotClock = SHOT_CLOCK;
       d.decisionT = 0.4;
-      game.ball.pos.set(d.pos.x, 1.0, d.pos.z);   // 即奪取者へ（held初フレームの取り残し防止）
+      // ⚠️ ボールを守備者の位置へ飛ばさない。触れた所（いまの位置）で止める。
+      //    以前はここで 1m 以上ワープしていた。
       game.ball.vel.set(0, 0, 0);
       game.resetMotion();
       game.maybeStartPush();   // ピックオフは最も綺麗な速攻開始
       game.leakOut();      // 飛び出しが走り出す
       game.setEvent("INTERCEPTED", d.team);
     } else {
-      // 弾かれた: 手に当たってライブ
-      game.ball.pos.set(d.pos.x, 1.2, d.pos.z);
+      // 弾かれた: 手に当たってライブ。⚠️ 位置は動かさない（触れた所から弾む）。
       game.ball.vel.set(rand(-3.8, 3.8), rand(1.2, 2.6), rand(-3.8, 3.8));
       game.goLoose(offense, 2.0, { stealBy: d, victim: game.passer, grabAfter: 0.3 });
       game.setEvent("DEFLECTED", d.team);
