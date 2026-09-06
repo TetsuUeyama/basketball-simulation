@@ -259,6 +259,10 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   tiltX(vb, "Spine", lean);
   // 頭: 胴が前傾したぶん起こして、顔は前を向いたままにする。
   tiltX(vb, "Head", -lean);
+  // ⚠️ 腕で何かをしている最中（ボールを掴む・キャッチ）は、構えの腕の角度を
+  //    乗せてはいけない。IK が置いた手が肩 8°・上腕 10°・前腕 17°・横の開き 20°
+  //    ぶん動かされ、手のひらがボールから 20cm 近く離れていた。
+  if (p.palmBall) return;
   // 肩〜前腕を前へ。すぐ手が出る形にする。
   // ⚠️ 腕は胴と符号が逆（脚と同じ側）。正のまま掛けると腕が後ろへ流れる
   //    （実測で手が体の前 -113mm → -268mm と、逆に後ろへ下がっていた）。
@@ -278,6 +282,8 @@ export function applyStance(vb: VoxelBody, p: Player): void {
  */
 const SPLAY_CAP = 1.3;
 export function armSplayFor(vb: VoxelBody, p: Player): number {
+  // ⚠️ ボールを掴んでいる間は脇の開きの下限を掛けない（手の位置がずれる）。
+  if (p.palmBall) return vb.baseArmSplay;
   const s = Math.min(SPLAY_CAP, stanceS(p, G.splay) + ARM_BIAS);
   return vb.baseArmSplay + (READY_SPLAY - vb.baseArmSplay) * s;
 }

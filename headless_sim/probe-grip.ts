@@ -1,0 +1,125 @@
+// 手のひらの当たる点がボールの表面に来ているかを測る。
+//   ・当たる点とボール中心の距離 → ボール半径 120mm ならぴったり
+//   ・手のひらの法線とボール方向のなす角 → 0° なら手のひらがボールを向いている
+import "./stubs";
+import { readFileSync } from "node:fs";
+import { NullEngine, Scene, Vector3 } from "@babylonjs/core";
+const DIR = "public/vox/player_one";
+(globalThis as unknown as { fetch: unknown }).fetch = async (url: string) => {
+  const name = String(url).split("/").pop()!;
+  try { const buf = readFileSync(`${DIR}/${name}`);
+    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    return { ok: true, status: 200, json: async () => JSON.parse(buf.toString("utf8")), arrayBuffer: async () => ab };
+  } catch { return { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) }; }
+};
+import { Player } from "../src/objects/player/player";
+Player.HEADLESS = false;
+import { ROSTER } from "../src/roster";
+import "../src/objects/player/player-state";
+import "../src/objects/player/player-query";
+import "../src/objects/player/player-roster";
+import "../src/objects/player/player-visual";
+import "../src/animation/basic/arms";
+import "../src/animation/basic/torso";
+import "../src/animation/action/dribble";
+import "../src/animation/action/guard";
+import "../src/animation/action/hold";
+import "../src/animation/action/locomotion";
+import "../src/animation/action/reach";
+import "../src/animation/action/reach-ik";
+import "../src/animation/action/screen";
+import "../src/animation/action/shoot";
+import "../src/animation/action/sit";
+import "../src/animation/reaction/bench-idle";
+import "../src/animation/reaction/defwin";
+import "../src/animation/reaction/dejected";
+import "../src/animation/reaction/foul-react";
+import "../src/move/basic/jump";
+import "../src/move/basic/run";
+import "../src/move/basic/turn";
+const { startRawPreload } = await import("../src/objects/player/player-raw");
+const { catchBall, catchLabel } = await import("../src/animation/action/catch");
+const { PALM_N, PALM_PT, BALL_R } = await import("../src/animation/action/palm");
+await startRawPreload();
+const scene = new Scene(new NullEngine());
+const p = new Player(scene, 0, 0, ROSTER[0][0]);
+p.pos.set(0, 0, 0); p.resetFacing(); p.stand(); p.clipOverride = "idle"; p.lastDt = 1 / 60;
+const K = p.height / 1.804;      // 身長ぶんの倍率
+
+/** 手のひらの当たる点（ワールド）と法線。 */
+function palm(bone: "LeftHand" | "RightHand"): { pt: Vector3; n: Vector3 } {
+  const n = p.vox!.rig.node(bone as never)!;
+  n.computeWorldMatrix(true);
+  const m = n.getWorldMatrix();
+  const o = Vector3.TransformCoordinates(Vector3.Zero(), m);
+  const pt = Vector3.TransformCoordinates(PALM_PT[bone].scale(K), m);
+  const nr = Vector3.TransformCoordinates(PALM_N[bone], m).subtract(o).normalize();
+  return { pt, n: nr };
+}
+console.log(`身長 ${(p.height * 100).toFixed(0)}cm ｜ ボール半径 ${(BALL_R * 1000).toFixed(0)}mm`);
+console.log("ボール(高さ,横)      形              当たる点→ボール中心   ズレ    手のひらの向き");
+for (const [by, bx, note] of [
+  [2.05, 0.00, "頭の上・正面"],
+  [1.80, 0.00, "やや上・正面"],
+  [1.35, 0.00, "胸の高さ・正面"],
+  [1.35, 0.55, "胸の高さ・横"],
+  [0.90, 0.00, "腰の高さ・正面"],
+  [0.60, 0.45, "低い・横"],
+] as [number, number, string][]) {
+  p.stand();
+  const b = new Vector3(bx, by, -0.35 * p.numberSide);
+  let sh = catchBall(p, b);
+  for (let i = 0; i < 200; i++) { sh = catchBall(p, b); p.lastDt = 1 / 60; p.sync(); }
+  const bones: ("LeftHand" | "RightHand")[] = sh.two ? ["LeftHand", "RightHand"]
+    : [sh.right === (p.numberSide > 0) ? "LeftHand" : "RightHand"];
+  const parts = bones.map((bn) => {
+    const q = palm(bn);
+    const d = Vector3.Distance(q.pt, b);
+    const toBall = b.subtract(q.pt).normalize();
+    const ang = Math.acos(Math.min(1, Math.max(-1, Vector3.Dot(q.n, toBall)))) * 180 / Math.PI;
+    return `${(d * 1000).toFixed(0)}mm(${((d - BALL_R) * 1000 >= 0 ? "+" : "")}${((d - BALL_R) * 1000).toFixed(0)}) ${ang.toFixed(0)}°`;
+  });
+  console.log(`  ${note.padEnd(16)} ${catchLabel(p, sh).padEnd(16)} ${parts.join("  /  ")}`);
+}
+
+// GRIP_PULL の掃引: 当たる点とボール中心の距離が 120mm に一番近い値を探す
+console.log("\nGRIP_PULL の掃引（当たる点→ボール中心、狙い 120mm）");
+for (const pull of [0.00, 0.05, 0.10, 0.15, 0.19, 0.25, 0.30]) {
+  (globalThis as unknown as { __gripPull: number }).__gripPull = pull;
+  const rows: string[] = [];
+  for (const [by, bx] of [[2.05, 0], [1.35, 0], [1.35, 0.55], [0.9, 0]] as [number, number][]) {
+    p.stand();
+    const b = new Vector3(bx, by, -0.35 * p.numberSide);
+    let sh = catchBall(p, b);
+    for (let i = 0; i < 150; i++) { sh = catchBall(p, b); p.lastDt = 1 / 60; p.sync(); }
+    const bn: "LeftHand" | "RightHand" = sh.two || sh.right === (p.numberSide > 0) ? "LeftHand" : "RightHand";
+    rows.push(((Vector3.Distance(palm(bn).pt, b)) * 1000).toFixed(0));
+  }
+  console.log(`  pull ${pull.toFixed(2)}m → ${rows.join(" / ")} mm`);
+}
+
+// IK が狙った所に手首を置けているか
+console.log("\n手首は狙いに届いているか（ボール 胸の高さ・正面）");
+(globalThis as unknown as { __gripPull: number }).__gripPull = 0.19;
+{
+  const { gripTarget } = await import("../src/animation/action/palm");
+  p.stand();
+  const b = new Vector3(0, 1.35, -0.35 * p.numberSide);
+  for (let i = 0; i < 200; i++) { catchBall(p, b); p.lastDt = 1 / 60; p.sync(); }
+  const t = gripTarget(p, b);
+  for (const bn of ["LeftHand", "RightHand"] as const) {
+    const n = p.vox!.rig.node(bn as never)!;
+    n.computeWorldMatrix(true);
+    const w = n.getAbsolutePosition();
+    console.log(`  ${bn} 手首 ${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)}`
+      + `  狙い ${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}`
+      + `  ズレ ${(Vector3.Distance(w, t) * 1000).toFixed(0)}mm`);
+  }
+  // 仮想側の手首ノードはどこか
+  for (const [nm, nd] of [["wristL", p.wristL], ["wristR", p.wristR]] as const) {
+    nd.computeWorldMatrix(true);
+    const w = nd.getAbsolutePosition();
+    console.log(`  仮想 ${nm} ${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)}`
+      + `  ボールまで ${(Vector3.Distance(w, b) * 1000).toFixed(0)}mm`);
+  }
+}

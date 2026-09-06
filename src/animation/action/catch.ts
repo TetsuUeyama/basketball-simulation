@@ -10,6 +10,7 @@
 //    合わせて腕を選ぶ必要がある。
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { MOVE_RATE } from "../basic/joints";
+import { gripTarget } from "./palm";
 import type { Player } from "../../objects/player/player";
 
 /** 横ズレがこれを超えたら片手（腕の長さに対する比）。 */
@@ -17,7 +18,11 @@ const TWO_SIDE = 0.42;
 /** 高さの呼び名の境目（腰=0、頭の上=1）。 */
 const HIGH_AT = 0.68, CHEST_AT = 0.22;
 /** 両手のひらの間隔。高いほど広げて構える（m）。 */
-const SEP_LO = 0.12, SEP_HI = 0.17;
+// ⚠️ 手のひらの当たる点（手首から 135mm）を狙いに織り込むようにしたので、ここで
+//    左右へ広げる必要はほぼ無い。以前の 12〜17cm は、その当たる点を無視して
+//    手首をボール中心へ運んでいたぶんの埋め合わせだった。
+const SEP_LO = 0.02, SEP_HI = 0.05;
+const _grip = new Vector3();
 
 export type CatchShape = {
   /** 両手で取るか。 */
@@ -59,9 +64,15 @@ export function catchBallHands(p: Player, b: Vector3, shape: CatchShape): void {
   p.catchHi = shape.hi;
   p.catchSide = shape.side;
   p.catchTwo = shape.two;
+  // ⚠️ 狙いはボールの中心ではなく**手前**。手のひらの当たる点がボールの表面に
+  //    来るように引く。向きは sync のあとで aimPalms が合わせる。
+  const t = gripTarget(p, b, _grip);
+  p.palmBall = b.clone();
+  p.palmBoth = shape.two;
+  p.palmRight = shape.right;
   if (shape.two) {
     // 高いほど手を広げて挟む
-    p.holdBallHands(b, SEP_LO + (SEP_HI - SEP_LO) * shape.hi);
+    p.holdBallHands(t, SEP_LO + (SEP_HI - SEP_LO) * shape.hi);
     return;
   }
   // 片手: ズレている側の腕で取る
@@ -70,7 +81,7 @@ export function catchBallHands(p: Player, b: Vector3, shape: CatchShape): void {
   const off = shape.right ? p.armPivotL : p.armPivotR;
   const offElbow = shape.right ? p.elbowL : p.elbowR;
   p.armRateCap = MOVE_RATE.reach;
-  if (!p.reachIK(pivot, elbow, b)) {
+  if (!p.reachIK(pivot, elbow, t)) {
     p.aimArm(pivot, b);
     p.bendElbow(elbow, 0.05);      // 届かないので伸ばし切る
   }

@@ -43,6 +43,12 @@ export class Player {
   height: number;                // メートル
   /** 確認ページ用: 名指しで再生するクリップ。空ならゲームの選択に任せる。 */
   clipOverride = "";
+  /** このフレームで手のひらを向けたいボール（sync が使い、使ったら消す）。 */
+  palmBall: import("@babylonjs/core").Vector3 | null = null;
+  palmBoth = false;
+  palmRight = true;
+  /** 手のひらがボールの表面へ乗るまでの、IK の狙いのずらし量（実測して詰める）。 */
+  palmFix: import("@babylonjs/core").Vector3 | null = null;
   /** 直近のキャッチの形（表示・確認用）。高さ 0..1 / 横ズレ -1..1 / 両手か。 */
   catchHi = 0;
   catchSide = 0;
