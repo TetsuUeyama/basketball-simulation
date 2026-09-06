@@ -357,6 +357,8 @@ const tinted = new WeakSet<Mesh>();
 // 立ち姿で腕を最低これだけは開く（rad）。0 だと腕が体に貼り付いて棒立ちに見える。
 const MIN_SPLAY = 0.06;              // ≈3.4°
 const ARM_RADIUS = 0.05;             // 上腕の太さの半分（m）
+/** 手首から手のひらの当たる点まで（モデル 180.4cm での実測。m）。 */
+const PALM_REACH = 0.135;
 const LOD_DIST = 12;                 // これより遠い選手は粗い版（m）
 const LOD_HYST = 1.5;                // 境目で行ったり来たりしないための余裕（m）
 /** 粗い版を持たせる部位。目・口・エンブレム・背番号は遠景では見えないので消すだけ。 */
@@ -623,9 +625,11 @@ export function buildRawVoxelBody(
       Math.atan2(Math.max(0, pe.torsoHalf * k + ARM_RADIUS * k - Math.abs(sh.x)),
         Vector3.Distance(sh, el))),
     armSplay: 0,   // 直立度から毎フレーム決まる（作った直後に下限を入れる）
-    // ⚠️ 焼き込みモデルは手のひらの中心までを実効長にしている。生モデルは手ボーンが
-    //    手首にあるので、手のひらぶんを足す。
-    foreArm: Vector3.Distance(el, hand) * 1.12,
+    // ⚠️ 実効長は**手のひらの当たる点まで**。IK はこの長さの先端を狙いへ運ぶので、
+    //    ここが短いとボールを掴んだときに手が手前で止まる。1.12 倍（+29mm）にして
+    //    いたが、手首から当たる点までは実測 135mm あり、前腕 246mm に対して
+    //    実効 275mm と 384mm で 109mm 足りなかった。手のひらぶんを足す。
+    foreArm: Vector3.Distance(el, hand) + PALM_REACH * k,
     setSkinColor: (c) => { skinMat.diffuseColor = rgb3(c); },
     setHairColor: (c) => { hairMat.diffuseColor = rgb3(c); },
     setHairStyle: (n) => { setHair(n); },

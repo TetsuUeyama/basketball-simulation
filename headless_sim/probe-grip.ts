@@ -123,3 +123,22 @@ console.log("\n手首は狙いに届いているか（ボール 胸の高さ・�
       + `  ボールまで ${(Vector3.Distance(w, b) * 1000).toFixed(0)}mm`);
   }
 }
+
+// 仮想の骨組みとボクセルのボーンで、腕の長さが合っているか
+console.log("\n腕の長さ（仮想 vs ボクセル）");
+{
+  const v = p.vox!;
+  const at = (b: string): Vector3 => {
+    const n = v.rig.node(b as never)!; n.computeWorldMatrix(true);
+    return n.getAbsolutePosition();
+  };
+  p.stand(); p.lastDt = 1 / 60; p.sync();
+  const sh = at("LeftUpperArm"), el = at("LeftLowerArm"), hd = at("LeftHand");
+  console.log(`  ボクセル 上腕 ${(Vector3.Distance(sh, el) * 1000).toFixed(0)}mm`
+    + `  前腕 ${(Vector3.Distance(el, hd) * 1000).toFixed(0)}mm`);
+  console.log(`  仮想     上腕 ${(p.upperArmLen * 1000).toFixed(0)}mm`
+    + `  前腕 ${(p.foreArmLen * 1000).toFixed(0)}mm`);
+  console.log(`  手首から手のひらの当たる点まで ${(PALM_PT.LeftHand.length() * K * 1000).toFixed(0)}mm`);
+  console.log(`  → 手のひらまでの実効長は 前腕 ${((Vector3.Distance(el, hd) + PALM_PT.LeftHand.length() * K) * 1000).toFixed(0)}mm`
+    + ` のはず（仮想は ${(p.foreArmLen * 1000).toFixed(0)}mm）`);
+}

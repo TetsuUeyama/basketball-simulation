@@ -38,8 +38,7 @@ const MODEL_H = 1.804;
  * ⚠️ 実測で決めた値。IK が運ぶのは手首の少し先で、そこから手のひらの当たる点までは
  *    さらに先にある。ボール半径ぶんと合わせてここで引く。
  */
-// ⚠️ 実測で決める値。probe-grip.ts が掃引する（globalThis 経由で差し替え）。
-const GRIP_PULL = Number((globalThis as unknown as { __gripPull?: number }).__gripPull ?? 0.19);
+const GRIP_PULL = BALL_R;
 
 /**
  * ボールを手のひらで受けるときの、IK の狙い（手首側）。
@@ -51,6 +50,8 @@ export function gripTarget(p: Player, ball: Vector3, out = new Vector3()): Vecto
   const sy = p.pos.y + (p.vox ? p.vox.shoulder.y : p.height * 0.82);
   const dx = ball.x - p.pos.x, dy = ball.y - sy, dz = ball.z - p.pos.z;
   const l = Math.hypot(dx, dy, dz);
+  // ⚠️ ボール半径ぶんだけ手前が狙い。実効長が手のひらの当たる点までになったので、
+  //    ここで余分に引く必要はない。
   const pull = GRIP_PULL * (p.height / MODEL_H);
   if (l < pull + 0.05) out.copyFrom(ball);          // 近すぎるときは引かない
   else out.set(ball.x - (dx / l) * pull, ball.y - (dy / l) * pull, ball.z - (dz / l) * pull);
@@ -59,7 +60,8 @@ export function gripTarget(p: Player, ball: Vector3, out = new Vector3()): Vecto
 }
 
 /** 狙いのずらし量を詰める速さと上限。 */
-const FIX_GAIN = 0.6, FIX_MAX = 0.5;
+const FIX_GAIN = 0.35;
+const FIX_MAX = 0.25;
 const _contact = new Vector3();
 const _want = new Vector3();
 
