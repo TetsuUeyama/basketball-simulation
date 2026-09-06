@@ -7,6 +7,7 @@ import { rate, dist2D, dist2DTo, rand, chance } from "../util";
 import type { Game } from "../game";
 import { GUARD_RANGE } from "../animation/action/dribble";
 import { defenseArms } from "../animation/action/defense-arms";
+import { catchBallHands, catchShape } from "../animation/action/catch";
 
   // ボールに触れている者の手をボールに当てる。それ以外は全員、腕を脇に下ろして休める。
 export function poseHands(game: Game, ): void {
@@ -269,21 +270,28 @@ export function armBar(p: Player, rival: Player, ball: Vector3): void {
   }
 
 function decideHands(game: Game, p: Player, b: Vector3): boolean {
-    // ⚠️ 以前は「手の届く高さより上なら片手」にしていたが、リバウンドのボールは
-    //    ほぼ常に手より上にあるので**必ず片手**になっていた。明らかに届かない
-    //    ときだけ片手にする。
-    if (b.y > p.reachTopY() + 0.15) return false;                       // 明らかに届かない → 片手
-    if (dist2DTo(p.pos, b.x, b.z) > p.upperArmLen + p.foreArmLen) return false;   // 横に遠い → 片手
-    // 競り合う相手が同じ高さまで手を出せる → 両手で構えず片手で先に触る。
-    // 明らかに勝っている（12cm以上高く手が出る）なら両手で確保しにいく。
-    const rival = rivalFor(game, p, b);
-    if (rival && rival.reachTopY() > p.reachTopY() - 0.12) return false;
+    // ⚠️ 片手／両手は**ボールの位置**で決める（catchShape）。高さそのものではなく、
+    //    体の正面から横にどれだけズレているかが効く。頭の上でも正面なら両手。
+    //    以前は「手の届く高さより上なら片手」で、リバウンドが必ず片手になっていた。
+    const sh = catchShape(p, b);
+    if (!sh.two) return false;
+    // 競り合う相手が同じ高さまで手を出せる → 先に触りにいくので片手。
+    // ⚠️ ただし**正面のボール**は競っていても両手で確保しにいく（リバウンドの
+    //    頭上キャッチを片手に落とさない）。
+    if (Math.abs(sh.side) > 0.2) {
+      const rival = rivalFor(game, p, b);
+      if (rival && rival.reachTopY() > p.reachTopY() - 0.12) return false;
+    }
     return true;
   }
 
 /** 決めた手の数でボールを掴む形。片手のときは空いた腕で相手をブロックする。 */
 export function grabPose(game: Game, p: Player, b: Vector3, two: boolean): void {
-    p.reachBall(b, two);
+    // ⚠️ reachBall は片手のとき必ず右腕を使う。横ズレに合わせて腕を選ぶため
+    //    catchBallHands を通す（両手のときは手を少し離してボールを挟む）。
+    const sh = catchShape(p, b);
+    sh.two = two;
+    catchBallHands(p, b, sh);
     if (two) return;
     const rival = rivalFor(game, p, b);
     if (rival) armBar(p, rival, b);   // 空いた腕で相手を抑える

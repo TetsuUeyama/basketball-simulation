@@ -43,6 +43,10 @@ export class Player {
   height: number;                // メートル
   /** 確認ページ用: 名指しで再生するクリップ。空ならゲームの選択に任せる。 */
   clipOverride = "";
+  /** 直近のキャッチの形（表示・確認用）。高さ 0..1 / 横ズレ -1..1 / 両手か。 */
+  catchHi = 0;
+  catchSide = 0;
+  catchTwo = true;
   /** 守備度 0..1。ハンドラーに近いほど 1 に近づき、腕を大きく広げる。 */
   defense = 0;
   defenseTarget = 0;
