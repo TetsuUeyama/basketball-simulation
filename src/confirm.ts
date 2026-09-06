@@ -11,6 +11,7 @@ import { MOTION_NAMES, motionClip, motionDuration } from "@objcts/player/motion/
 import { Player } from "./objects/player/player";
 import { ROSTER } from "./roster";
 import { rawPrototype, startRawPreload } from "./objects/player/player-raw";
+import { defenseArms } from "./animation/action/defense-arms";
 import type { JawShape, RawModel } from "./voxraw";
 // ⚠️ Player の各メソッドは副作用インポートで prototype に生える。1つでも欠けると
 //    sync() の途中で undefined を呼んで落ちる。ゲーム本体と同じ顔ぶれを読む。
@@ -153,6 +154,26 @@ uSlider.oninput = () => {
 };
 uRow.appendChild(uSlider); uRow.appendChild(uLabel);
 
+/** 0〜100% のスライダーを1本作る。 */
+function pct(label: string, init: number, on: (v: number) => void): void {
+  const r = row(label);
+  const sl = document.createElement("input");
+  sl.type = "range"; sl.min = "0"; sl.max = "100"; sl.step = "1"; sl.value = String(Math.round(init * 100));
+  Object.assign(sl.style, { flex: "1", minWidth: "0" } as Partial<CSSStyleDeclaration>);
+  const lb = document.createElement("span");
+  Object.assign(lb.style, { minWidth: "46px", fontSize: "12px", textAlign: "right" } as Partial<CSSStyleDeclaration>);
+  lb.textContent = sl.value + "%";
+  sl.oninput = () => { lb.textContent = sl.value + "%"; on(Number(sl.value) / 100); };
+  r.appendChild(sl); r.appendChild(lb);
+}
+// 守備度。試合中はハンドラーとの距離で決まる値を、ここでは手で動かして確かめる。
+// ⚠️ 守備の腕はゲームでは poseHands が作る。確認ページはそこを通らないので、
+//    同じ関数をこのページからも呼ぶ（見えるものを試合と同じにするため）。
+let defense = 0, shootRisk = 0.3, driveRisk = 0.3;
+pct("守備度", defense, (v) => { defense = v; if (player) { player.defenseTarget = v; player.defense = v; } });
+pct("シュート気配", shootRisk, (v) => { shootRisk = v; });
+pct("ドライブ気配", driveRisk, (v) => { driveRisk = v; });
+
 const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
 row("髪型").appendChild(hairSel);
@@ -274,6 +295,14 @@ function step(dt: number): void {
   const p = player;
   if (!p) return;
   p.lastDt = dt;
+  // 守備の腕（ゲームでは poseHands が呼ぶのと同じもの）。相手は正面 1.2m に居る想定。
+  if (defense > 0.02) {
+    p.defenseTarget = defense;
+    const th = p.root.rotation.y;
+    const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
+    defenseArms(p, new Vector3(p.pos.x + fx * 1.2, p.pos.y + 1.15, p.pos.z + fz * 1.2),
+      shootRisk, driveRisk, 0);
+  }
   // 走る／ドリブルのクリップは歩調に同期して進むので、ここでも同じように進める
   p.stridePhase += dt * 6;
   p.sync();
