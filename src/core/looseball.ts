@@ -2,7 +2,7 @@
 import { Player } from "../objects/player/player";
 import { COURT, SHOT_CLOCK, OOB_WALL } from "../config";
 import { rate, clamp, chance, dist2DTo, moveToward2D, rand, nearestOf } from "../util";
-import { twoHandedCatch } from "../move/reaction/rebound";
+import { looseSecureChance, twoHandedCatch } from "../move/reaction/rebound";
 import { stepBallFlight } from "../move/basic/ball";
 import { flashBall } from "./visuals";
 import { twoHandGrab } from "./poses";
@@ -175,6 +175,18 @@ export function contactLooseBall(game: Game, p: Player, contested: boolean): voi
     if (twoHandedCatch(p, game.ball.pos.y, horiz, contested)) {
       secureLoose(game, p);
       return;
+    }
+    // ⚠️ ここで必ず弾いていた。twoHandedCatch は「最大リーチの 8cm 手前まで」しか
+    //    両手確保にしないので、**リバウンドはほぼ全部が弾き**になり、実測で 61% が
+    //    床まで落ちていた。能力で片手確保できるようにする。
+    //    looseSecureChance（ジャンプ・反応・バランス・身長・ボックスアウトで確保率を
+    //    出す関数）は定義だけされて一度も呼ばれていなかった。
+    {
+      const defending = p.team !== game.looseOff;
+      let ch = looseSecureChance(p, defending, game.looseTips);
+      if (contested) ch *= 0.45;        // 競っていると落としやすい
+      if (horiz > 0.45) ch *= 0.7;      // 体から遠いほど収まりにくい
+      if (chance(ch)) { secureLoose(game, p); return; }
     }
     if (game.looseTips >= 3) { secureLoose(game, p); return; }   // ピンボール化させない
     game.looseTips++;
