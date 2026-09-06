@@ -178,7 +178,7 @@ pct("ドライブ気配", driveRisk, (v) => { driveRisk = v; });
 // --- ボールキャッチ ---------------------------------------------------------
 // ⚠️ キャッチの形はゲームでは grabPose が作る。確認ページからも同じ catchBall を
 //    呼び、ボールの位置をスライダーで動かして形の変わり方を見る。
-let catching = false, ballY = 2.05, ballX = 0;
+let catching = false, ballY = 2.05, ballX = 0, ballZ = 0.35;
 let catchShown = "";
 const ball = MeshBuilder.CreateSphere("ballPreview", { diameter: 0.24, segments: 12 }, scene);
 ball.material = makeMat(scene, "ballMat", { diffuse: new Color3(0.85, 0.42, 0.12) });
@@ -207,6 +207,9 @@ const catchBtn = button(catchRow, "▶ 見る", () => {
 range("ボールの高さ", 0.3, 2.6, 0.05, ballY, (v) => v.toFixed(2) + "m", (v) => { ballY = v; });
 range("ボールの横ズレ", -0.9, 0.9, 0.05, ballX, (v) => (v >= 0 ? "右 " : "左 ") + Math.abs(v).toFixed(2) + "m",
   (v) => { ballX = v; });
+// 奥行き。負にすると体の後ろ（頭の上から後ろへ回したリバウンドなどを見るため）。
+range("ボールの奥行き", -0.6, 0.9, 0.05, ballZ, (v) => (v >= 0 ? "前 " : "後 ") + Math.abs(v).toFixed(2) + "m",
+  (v) => { ballZ = v; });
 
 const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
@@ -334,8 +337,8 @@ function step(dt: number): void {
     const th = p.root.rotation.y;
     const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
     const rx = fz, rz = -fx;                         // 体の右
-    ball.position.set(p.pos.x + fx * 0.35 + rx * ballX, p.pos.y + ballY,
-      p.pos.z + fz * 0.35 + rz * ballX);
+    ball.position.set(p.pos.x + fx * ballZ + rx * ballX, p.pos.y + ballY,
+      p.pos.z + fz * ballZ + rz * ballX);
     catchShown = catchLabel(p, catchBall(p, ball.position));
   }
   // 守備の腕（ゲームでは poseHands が呼ぶのと同じもの）。相手は正面 1.2m に居る想定。

@@ -20,6 +20,12 @@ import type { VoxelBody } from "../../objects/player/player-voxel";
 
 /** ボールの半径（m）。メッシュは直径 0.24m。 */
 export const BALL_R = 0.12;
+/**
+ * 手をボールの表面からさらに離す余裕（m）。
+ * ⚠️ 当たり判定は手の外側 15 点で近似しているので、点と点の間の肉は少しはみ出る。
+ *    その保険。0 にすると面ちょうどで、点の間が食い込みうる。
+ */
+const SKIN_MARGIN = 0.012;
 
 /**
  * 静止姿勢での手のひらの法線。
@@ -48,22 +54,33 @@ export const PALM_PT: Record<string, Vector3> = {
  *    （付け根 128mm に対し指先は 194mm）。指先まで見て、**一番深く入る点**が
  *    面に乗るように手を押し出す。
  */
+/**
+ * 手が当たりうる点（手首から。モデル 180.4cm）。
+ * ⚠️ 指のボーンの位置ではなく、**手のメッシュの外側**から取る。骨は肉の内側に
+ *    あり、中指の先は骨で 194mm、肉は 233mm ある。骨だけで当たり判定をすると
+ *    その差ぶん指がボールへ食い込む。手の肉 1582 頂点から最遠点サンプリングで
+ *    14 点を選び、当てたい「中指の付け根」を足した 15 点。
+ */
 export const HAND_PTS: Record<string, Vector3[]> = {
   LeftHand: [
-    new Vector3(-0.104, -0.079, -0.008),   // 中指の付け根（手の厚みの半分ぶん手のひら側へ）
-    new Vector3(-0.143, -0.074, -0.010),   // 中指の第2関節
-    new Vector3(-0.172, -0.089, -0.012),   // 中指の先
-    new Vector3(-0.165, -0.090, 0.015),    // 人差し指の先
-    new Vector3(-0.143, -0.079, -0.054),   // 小指の先
-    new Vector3(-0.075, -0.099, 0.053),    // 親指の先
+  new Vector3(-0.104, -0.079, -0.008),   // 中指の付け根（当てたい点）
+  new Vector3(-0.205, -0.110, -0.023), new Vector3(-0.176, -0.082, 0.034),
+  new Vector3(-0.167, -0.082, -0.069), new Vector3(-0.130, -0.091, -0.023),
+  new Vector3(-0.120, -0.035, 0.034), new Vector3(-0.083, -0.129, 0.081),
+  new Vector3(-0.083, -0.044, -0.069), new Vector3(-0.083, -0.082, 0.043),
+  new Vector3(-0.083, -0.025, -0.013), new Vector3(-0.055, -0.025, 0.043),
+  new Vector3(-0.036, -0.082, 0.006), new Vector3(-0.036, 0.012, -0.032),
+  new Vector3(0.011, -0.035, -0.023), new Vector3(0.011, -0.007, 0.034),
   ],
   RightHand: [
-    new Vector3(0.102, -0.078, -0.008),
-    new Vector3(0.143, -0.074, -0.010),
-    new Vector3(0.172, -0.089, -0.012),
-    new Vector3(0.165, -0.089, 0.013),
-    new Vector3(0.142, -0.078, -0.054),
-    new Vector3(0.074, -0.099, 0.053),
+  new Vector3(0.102, -0.078, -0.008),    // 中指の付け根（当てたい点）
+  new Vector3(0.208, -0.110, -0.024), new Vector3(0.161, -0.100, 0.032),
+  new Vector3(0.152, -0.054, -0.043), new Vector3(0.124, -0.035, 0.032),
+  new Vector3(0.105, -0.025, -0.034), new Vector3(0.095, -0.082, -0.006),
+  new Vector3(0.077, -0.129, 0.069), new Vector3(0.077, -0.054, -0.071),
+  new Vector3(0.067, 0.003, 0.004), new Vector3(0.067, -0.063, 0.060),
+  new Vector3(0.030, -0.072, 0.004), new Vector3(0.011, 0.003, -0.043),
+  new Vector3(-0.008, 0.003, 0.041), new Vector3(-0.017, -0.035, -0.006),
   ],
 };
 /** モデル自身の身長（PALM_PT の基準）。 */
@@ -187,7 +204,8 @@ function aimOne(vb: VoxelBody, p: Player, right: boolean, ball: Vector3): void {
   _n2.set(near.x - ball.x, near.y - ball.y, near.z - ball.z);
   if (_n2.lengthSquared() < 1e-8) _n2.copyFrom(_n);
   _n2.normalize();
-  _want.set(ball.x + _n2.x * BALL_R, ball.y + _n2.y * BALL_R, ball.z + _n2.z * BALL_R);
+  const rr = BALL_R + SKIN_MARGIN;
+  _want.set(ball.x + _n2.x * rr, ball.y + _n2.y * rr, ball.z + _n2.z * rr);
   // 骨の繋がりの誤差ぶんは、次のフレームの狙いへ詰めて足す（左右別）
   let fix = right ? p.palmFixR : p.palmFixL;
   if (!fix) { fix = new Vector3(0, 0, 0); if (right) p.palmFixR = fix; else p.palmFixL = fix; }
