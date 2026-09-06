@@ -145,6 +145,36 @@ function blendPose(p: Player, vb: VoxelBody, mode: string, dt: number): void {
   }
 }
 
+// ───────────────────────── 関節の速さの上限 ─────────────────────────
+// ⚠️ 姿勢を作る経路がいくつもあり（クリップ・手続きポーズ・IK・構え・手のひらの向き）、
+//    どこかで補間を通し忘れると関節が1フレームで飛ぶ。個別に直すときりが無いので、
+//    **最後にまとめて**速さの上限を掛ける。
+// 実測（26人・90秒・93万標本の1フレーム回転量）:
+//   50% 0.3° / 90% 4.5° / 99% 16.9° / 99.9% 37.6° / 99.99% 80.1° / 最大 131.9°
+//   普通の動き（走り・シュート）は 99% が 17° 以内。上位 1% の 80〜132° が「飛び」。
+const MAX_BONE_RATE = (30 * 60) * Math.PI / 180;   // 1800度/秒（60fps で 30°/フレーム）
+const BONE_PREV = new WeakMap<Player, Map<string, Quaternion>>();
+const _lim = new Quaternion();
+function limitBoneRate(p: Player, vb: VoxelBody): void {
+  let st = BONE_PREV.get(p);
+  if (!st) { st = new Map(); BONE_PREV.set(p, st); }
+  const maxA = MAX_BONE_RATE * (p.lastDt > 0 ? p.lastDt : 1 / 60);
+  for (const b of vb.rig.bones) {
+    const n = vb.rig.node(b);
+    const q = n?.rotationQuaternion;
+    if (!n || !q) continue;
+    const o = st.get(b as string);
+    if (!o) { st.set(b as string, q.clone()); continue; }
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(Quaternion.Dot(o, q))));
+    if (ang > maxA) {
+      Quaternion.SlerpToRef(o, q, maxA / ang, _lim);
+      q.copyFrom(_lim);
+      n.markAsDirty("rotationQuaternion");
+    }
+    o.copyFrom(q);
+  }
+}
+
 /** 姿勢をボクセルの標準ボーンへ流す（sync から毎フレーム）。
  *  歩く・走る・ドリブルは objcts/player/motion の焼き込みクリップ、それ以外は手続きポーズ。 */
 Player.prototype.syncVoxel = function(): void {
@@ -162,6 +192,7 @@ Player.prototype.syncVoxel = function(): void {
       if (this.dribblePosed) levelDribbleHand(vb, this);
       if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
       blendPose(this, vb, this.clipName, this.lastDt);
+      limitBoneRate(this, vb);
       vb.skel.prepare();
       this.dribblePosed = false;
       this.palmBall = null;
@@ -186,6 +217,7 @@ Player.prototype.syncVoxel = function(): void {
     if (this.dribblePosed) levelDribbleHand(vb, this);
     if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
     blendPose(this, vb, "", this.lastDt);
+    limitBoneRate(this, vb);
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
     this.dribblePosed = false;
     this.palmBall = null;
