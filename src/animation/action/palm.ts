@@ -133,17 +133,36 @@ function boneFor(p: Player, right: boolean): "LeftHand" | "RightHand" {
   return right === (p.numberSide > 0) ? "LeftHand" : "RightHand";
 }
 
-/** 手のひらを向ける先＝肩からボールへの向き（狙いの式と向きの適用で同じものを使う）。 */
+/**
+ * 手のひらを向ける先（＝手からボールへの向き。当たる点はこの逆側に決まる）。
+ *
+ * ⚠️ 「肩→ボール」だけで決めてはいけない。真上のボールは両肩とも真下にあるので
+ *    両手が**下から回り込んで交差**し、ボールを下から抱える形になっていた。
+ *    胸より高いボールは、それぞれの手が**自分の側から**横に挟むよう混ぜる。
+ *    片手のときも同じ（体を横切って反対側から取りにいかない）。
+ */
+const SIDE_MAX = 0.85;
 function palmDir(p: Player, ball: Vector3, right: boolean, out: Vector3): Vector3 {
   const sy = p.pos.y + (p.vox ? p.vox.shoulder.y : p.height * 0.82);
   const half = p.vox ? Math.abs(p.vox.shoulder.x) : 0.2;
   const th = p.root.rotation.y;
-  // 肩は体の左右にあるので、体の枠で ±half ずらしてから世界へ
-  const sx = p.pos.x + (right ? 1 : -1) * half * Math.cos(th);
-  const sz = p.pos.z - (right ? 1 : -1) * half * Math.sin(th);
+  // 体の右方向（仮想の骨組みの +X）。肩の左右のずらしにも使う。
+  const rx = Math.cos(th), rz = -Math.sin(th);
+  const sgn = right ? 1 : -1;
+  const sx = p.pos.x + sgn * half * rx;
+  const sz = p.pos.z + sgn * half * rz;
   out.set(ball.x - sx, ball.y - sy, ball.z - sz);
   if (out.lengthSquared() < 1e-6) out.set(0, 1, 0);
-  return out.normalize();
+  out.normalize();
+  // 胸より高いほど横向きを混ぜる。手はボールの自分側に付き、手→球は内向きになる。
+  const chestY = sy - 0.15;
+  const headY = p.pos.y + p.height * 0.92;
+  const k = Math.min(1, Math.max(0, (ball.y - chestY) / Math.max(0.2, headY - chestY))) * SIDE_MAX;
+  if (k > 0.001) {
+    out.set(out.x * (1 - k) - sgn * rx * k, out.y * (1 - k), out.z * (1 - k) - sgn * rz * k);
+    out.normalize();
+  }
+  return out;
 }
 
 /** ボールを手のひらで受けるときの、IK の狙い（手首の位置）。 */
