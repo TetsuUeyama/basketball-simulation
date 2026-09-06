@@ -69,3 +69,20 @@ for (const dv of [0, 0.3, 0.6, 1.0]) {
   console.log(`  ${dv.toFixed(2)}  ${L.map((v) => v.toFixed(0).padStart(5)).join(",")}`
     + `  ${R.map((v) => v.toFixed(0).padStart(5)).join(",")}`);
 }
+
+
+// 確認ページのキャッチ操作と同じ経路（ボールを置いて catchBall を呼ぶ）
+const { catchBall, catchLabel } = await import("../src/animation/action/catch");
+console.log("");
+console.log("確認ページのキャッチ操作（ボールを正面 0.35m に置く）");
+console.log("高さ  横ズレ    形");
+p.stand(); p.setNumberSide(1);
+for (const [by, bx] of [[2.05, 0], [2.05, 0.6], [1.35, 0], [1.35, -0.6], [0.6, 0], [0.6, 0.7]] as [number, number][]) {
+  const th = p.root.rotation.y;
+  const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
+  const rx = fz, rz = -fx;
+  const b = new Vector3(p.pos.x + fx * 0.35 + rx * bx, p.pos.y + by, p.pos.z + fz * 0.35 + rz * bx);
+  let sh = catchBall(p, b);
+  for (let i = 0; i < 200; i++) { sh = catchBall(p, b); p.lastDt = 1 / 60; p.sync(); }
+  console.log(`  ${by.toFixed(2)}m  ${(bx >= 0 ? "右 " : "左 ") + Math.abs(bx).toFixed(2)}m   ${catchLabel(p, sh)}`);
+}

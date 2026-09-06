@@ -12,6 +12,7 @@ import { Player } from "./objects/player/player";
 import { ROSTER } from "./roster";
 import { rawPrototype, startRawPreload } from "./objects/player/player-raw";
 import { defenseArms } from "./animation/action/defense-arms";
+import { catchBall, catchLabel } from "./animation/action/catch";
 import type { JawShape, RawModel } from "./voxraw";
 // ⚠️ Player の各メソッドは副作用インポートで prototype に生える。1つでも欠けると
 //    sync() の途中で undefined を呼んで落ちる。ゲーム本体と同じ顔ぶれを読む。
@@ -174,6 +175,39 @@ pct("守備度", defense, (v) => { defense = v; if (player) { player.defenseTarg
 pct("シュート気配", shootRisk, (v) => { shootRisk = v; });
 pct("ドライブ気配", driveRisk, (v) => { driveRisk = v; });
 
+// --- ボールキャッチ ---------------------------------------------------------
+// ⚠️ キャッチの形はゲームでは grabPose が作る。確認ページからも同じ catchBall を
+//    呼び、ボールの位置をスライダーで動かして形の変わり方を見る。
+let catching = false, ballY = 2.05, ballX = 0;
+let catchShown = "";
+const ball = MeshBuilder.CreateSphere("ballPreview", { diameter: 0.24, segments: 12 }, scene);
+ball.material = makeMat(scene, "ballMat", { diffuse: new Color3(0.85, 0.42, 0.12) });
+ball.isVisible = false;
+/** 最小〜最大のスライダーを1本作る。 */
+function range(label: string, min: number, max: number, step: number, init: number,
+               fmt: (v: number) => string, on: (v: number) => void): void {
+  const r = row(label);
+  const sl = document.createElement("input");
+  sl.type = "range"; sl.min = String(min); sl.max = String(max); sl.step = String(step);
+  sl.value = String(init);
+  Object.assign(sl.style, { flex: "1", minWidth: "0" } as Partial<CSSStyleDeclaration>);
+  const lb = document.createElement("span");
+  Object.assign(lb.style, { minWidth: "56px", fontSize: "12px", textAlign: "right" } as Partial<CSSStyleDeclaration>);
+  lb.textContent = fmt(init);
+  sl.oninput = () => { lb.textContent = fmt(Number(sl.value)); on(Number(sl.value)); };
+  r.appendChild(sl); r.appendChild(lb);
+}
+const catchRow = row("キャッチ");
+const catchBtn = button(catchRow, "▶ 見る", () => {
+  catching = !catching;
+  catchBtn.textContent = catching ? "■ やめる" : "▶ 見る";
+  ball.isVisible = catching;
+  if (!catching) { catchShown = ""; if (player) player.stand(); }
+});
+range("ボールの高さ", 0.3, 2.6, 0.05, ballY, (v) => v.toFixed(2) + "m", (v) => { ballY = v; });
+range("ボールの横ズレ", -0.9, 0.9, 0.05, ballX, (v) => (v >= 0 ? "右 " : "左 ") + Math.abs(v).toFixed(2) + "m",
+  (v) => { ballX = v; });
+
 const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
 row("髪型").appendChild(hairSel);
@@ -295,8 +329,17 @@ function step(dt: number): void {
   const p = player;
   if (!p) return;
   p.lastDt = dt;
+  // ボールキャッチ（ゲームでは grabPose が呼ぶのと同じもの）
+  if (catching) {
+    const th = p.root.rotation.y;
+    const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
+    const rx = fz, rz = -fx;                         // 体の右
+    ball.position.set(p.pos.x + fx * 0.35 + rx * ballX, p.pos.y + ballY,
+      p.pos.z + fz * 0.35 + rz * ballX);
+    catchShown = catchLabel(p, catchBall(p, ball.position));
+  }
   // 守備の腕（ゲームでは poseHands が呼ぶのと同じもの）。相手は正面 1.2m に居る想定。
-  if (defense > 0.02) {
+  if (!catching && defense > 0.02) {
     p.defenseTarget = defense;
     const th = p.root.rotation.y;
     const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
@@ -321,6 +364,7 @@ engine.runRenderLoop(() => {
   const at = player && dur ? (player.clipT % dur).toFixed(2) : "0.00";
   infoEl.textContent = (loadingHair ? `読み込み中 ${loadingHair}…\n` : "") + info
     + `\n${motion} ${at}/${dur.toFixed(2)}s`
+    + (catching ? `\nキャッチ: ${catchShown}` : "")
     + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   scene.render();
 });

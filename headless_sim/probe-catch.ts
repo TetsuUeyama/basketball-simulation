@@ -70,7 +70,7 @@ for (const side of [1, -1]) {
     for (let i = 0; i < 200; i++) { sh = catchBall(p, b); p.lastDt = 1 / 60; p.sync(); }
     const L = hand("LeftHand"), R = hand("RightHand");
     const sep = Math.hypot(L[0] - R[0], L[1] - R[1], L[2] - R[2]);
-    console.log(`  ${note.padEnd(18)} ${catchLabel(sh).padEnd(14)}`
+    console.log(`  ${note.padEnd(18)} ${catchLabel(p, sh).padEnd(14)}`
       + ` ${L.map((v) => v.toFixed(0).padStart(5)).join(",")}`
       + ` ${R.map((v) => v.toFixed(0).padStart(5)).join(",")}`
       + `  ${sep.toFixed(0)}mm`);

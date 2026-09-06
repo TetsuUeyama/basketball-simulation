@@ -87,8 +87,13 @@ export function catchBall(p: Player, b: Vector3): CatchShape {
   return shape;
 }
 
-/** 高さの呼び名（表示用）。 */
-export function catchLabel(shape: CatchShape): string {
+/**
+ * 形の呼び名（表示用）。
+ * ⚠️ shape.right は**仮想の骨組み**での右腕。numberSide が +1 のときは骨組みごと
+ *    180° 回っているので、見た目の左右は逆になる。表示は見た目に合わせる。
+ */
+export function catchLabel(p: Player, shape: CatchShape): string {
   const h = shape.hi > HIGH_AT ? "頭の上" : shape.hi > CHEST_AT ? "胸の高さ" : "低い";
-  return `${h} / ${shape.two ? "両手" : (shape.right ? "右" : "左") + "の片手"}`;
+  const visualRight = shape.right !== (p.numberSide > 0);
+  return `${h} / ${shape.two ? "両手" : (visualRight ? "右" : "左") + "の片手"}`;
 }
