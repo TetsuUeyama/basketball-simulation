@@ -44,6 +44,13 @@ export const PALM_PT: Record<string, Vector3> = {
 };
 /** モデル自身の身長（PALM_PT の基準）。 */
 const MODEL_H = 1.804;
+/**
+ * 手首の曲がりの上限（rad）。
+ * ⚠️ 手のひらをボールへ向けるだけだと、前腕に対していくらでもねじれてあり得ない
+ *    方向へ折れる。人の手首は屈曲・伸展で 60〜70°、左右へは 20〜30° 程度。
+ */
+const WRIST_LIMIT = 0.95;      // ≈54°
+const _ident = new Quaternion(0, 0, 0, 1);
 /** 残ったズレを詰める速さと上限（骨の繋がりの誤差ぶん）。 */
 // ⚠️ 詰めすぎると片手が行き過ぎてボールへめり込む（実測で 61mm＝半径の半分）。控えめに。
 const FIX_GAIN = 0.20, FIX_MAX = 0.20;
@@ -131,6 +138,10 @@ function aimOne(vb: VoxelBody, p: Player, right: boolean, ball: Vector3): void {
   between(PALM_N[bone], _d2, _fix);
   if (!hn.rotationQuaternion) hn.rotationQuaternion = Quaternion.Identity();
   _inv.multiplyToRef(_fix, hn.rotationQuaternion);
+  // 曲がりすぎを止める（静止姿勢からの角度で頭打ち）
+  const q = hn.rotationQuaternion;
+  const ang = 2 * Math.acos(Math.min(1, Math.abs(q.w)));
+  if (ang > WRIST_LIMIT) Quaternion.SlerpToRef(_ident, q, WRIST_LIMIT / ang, q);
   hn.markAsDirty("rotationQuaternion");
   // 回したあとの当たる点を測って、狙いとの差を返す
   hn.computeWorldMatrix(true);

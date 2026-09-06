@@ -7,7 +7,9 @@ import { rate, dist2D, dist2DTo, rand, chance } from "../util";
 import type { Game } from "../game";
 import { GUARD_RANGE } from "../animation/action/dribble";
 import { defenseArms } from "../animation/action/defense-arms";
-import { catchBallHands, catchShape } from "../animation/action/catch";
+// ⚠️ ゲームのキャッチ／保持は holdBallHands を直に呼んでいて、確認ページの
+//    catchBall と別物だった（試合では肘のあたりでボールを抱えていた）。同じ関数に寄せる。
+import { catchBall, catchBallHands, catchShape } from "../animation/action/catch";
 
   // ボールに触れている者の手をボールに当てる。それ以外は全員、腕を脇に下ろして休める。
 export function poseHands(game: Game, ): void {
@@ -88,13 +90,13 @@ export function poseHands(game: Game, ): void {
         if (game.handler) {
           if (game.pendingPassTo) {
             // ジャンプパスのウィンドアップ: 両手でボールを頭上に掲げる
-            game.handler.holdBallHands(b);
+            catchBall(game.handler, b);
           } else if (game.handler.gatherT > 0) {
             // キャッチをまとめている間: 両手のキャッチポーズを続ける
-            game.handler.holdBallHands(b);
+            catchBall(game.handler, b);
           } else if (game.handler.pickupT > 0) {
             // 確保/すくい上げ中: 掴んだ手の数のまま、降ろされる/引き寄せられるボールを追う
-            if (game.handler.grabTwoHand) game.handler.holdBallHands(b);
+            if (game.handler.grabTwoHand) catchBall(game.handler, b);
             else grabPose(game, game.handler, new Vector3(b.x, b.y, b.z), false);
           } else {
             // ドリブル: ボールを運ぶのと同じ側の手でドリブルの高さにかまえる
@@ -119,7 +121,7 @@ export function poseHands(game: Game, ): void {
       case "inbound":
         // 飛んでくる間は両手を出して受け、手元に来たらチェストパスと同じ両手抱えで持つ
         if (game.handler) {
-          if (dist2D(game.handler.pos, b) < 0.6) game.handler.holdBallHands(b);
+          if (dist2D(game.handler.pos, b) < 0.6) catchBall(game.handler, b);
           else game.handler.reach(b, true);
         }
         break;
@@ -145,7 +147,7 @@ export function poseHands(game: Game, ): void {
             !game.passOneHand);
         } else if (game.passT > game.passDur * 0.45) {
           // キャッチ: レシーバーは両手を出して向かってくるボールを迎える
-          game.passTo?.holdBallHands(b);
+          if (game.passTo) catchBall(game.passTo, b);
         }
         if (game.passSteal) game.passSteal.def.reach(b);                   // パスコースに跳び込む
         break;
