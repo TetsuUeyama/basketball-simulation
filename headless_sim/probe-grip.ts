@@ -205,3 +205,34 @@ console.log("\n腕が届く位置での確認（当たる点→ボール中心�
     console.log(`  ${note.padEnd(18)} ${catchLabel(p, sh).padEnd(16)} ${parts.join(" / ")}`);
   }
 }
+
+// ボールは手のどこにあるか（肘・手首・当たる点・指先との距離）
+console.log("\nボールは腕のどこにあるか");
+{
+  const shY = p.pos.y + p.vox!.shoulder.y;
+  for (const [dy, dz, note] of [
+    [0.34, 0.10, "頭の上"], [-0.15, 0.30, "胸の高さ"],
+  ] as [number, number, string][]) {
+    p.stand();
+    const b5 = new Vector3(0, shY + dy, -dz * p.numberSide);
+    for (let i = 0; i < 250; i++) { catchBall(p, b5); p.lastDt = 1 / 60; p.sync(); }
+    for (const bn of ["LeftHand", "RightHand"] as const) {
+      const at = (x: string): Vector3 => {
+        const n = p.vox!.rig.node(x as never)!; n.computeWorldMatrix(true);
+        return n.getAbsolutePosition();
+      };
+      const side = bn === "LeftHand" ? "Left" : "Right";
+      const el = at(side + "LowerArm"), wr = at(bn);
+      const q = palm(bn);
+      // 指先＝手首から長軸方向へ 232mm（静止姿勢の実測）
+      const hm = p.vox!.rig.node(bn as never)!.getWorldMatrix();
+      const tip = Vector3.TransformCoordinates(
+        new Vector3(-0.837, -0.546, -0.018).scale(0.232 * K * (bn === "RightHand" ? -1 : 1)), hm);
+      console.log(`  ${note.padEnd(8)} ${bn.padEnd(10)}`
+        + ` 肘まで ${(Vector3.Distance(el, b5) * 1000).toFixed(0)}mm`
+        + ` 手首まで ${(Vector3.Distance(wr, b5) * 1000).toFixed(0)}mm`
+        + ` 当たる点まで ${(Vector3.Distance(q.pt, b5) * 1000).toFixed(0)}mm`
+        + ` 指先まで ${(Vector3.Distance(tip, b5) * 1000).toFixed(0)}mm`);
+    }
+  }
+}
