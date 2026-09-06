@@ -43,6 +43,9 @@ export class Player {
   height: number;                // メートル
   /** 確認ページ用: 名指しで再生するクリップ。空ならゲームの選択に任せる。 */
   clipOverride = "";
+  /** 守備度 0..1。ハンドラーに近いほど 1 に近づき、腕を大きく広げる。 */
+  defense = 0;
+  defenseTarget = 0;
   /** 直立度 0..1。1=直立不動、下がるほど膝を曲げ肩を開いて構える。 */
   upright = 1;
   uprightTarget = 1;

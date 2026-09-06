@@ -5,6 +5,7 @@ import { rate, dist2D, dist2DTo } from "../util";
 import { hoopIndex, NET_BOTTOM_Y } from "../objects/court";
 import { poseHands } from "./poses";
 import { uprightTargetFor } from "../animation/basic/stance";
+import { defenseTargetFor } from "../animation/action/defense-arms";
 import type { Player } from "../objects/player/player";
 import type { Game } from "../game";
 
@@ -318,8 +319,11 @@ export function syncAll(game: Game, ): void {
     const carrying = game.ballMode === "held" || game.ballMode === "charge";
     for (const p of game.players) p.holdingBall = carrying && p === game.handler;
     // 構えの深さ: ボールが遠いほど立ち、守る側は攻める側より低く構える
+    // 守備度: ハンドラーに近いほど腕を大きく広げる
+    const hd = game.ballMode === "held" || game.ballMode === "charge" ? game.handler : null;
     for (const p of game.players) {
       p.uprightTarget = uprightTargetFor(p, game.ball.pos.x, game.ball.pos.z, p.team === game.possession);
+      p.defenseTarget = defenseTargetFor(p, hd);
     }
     for (const p of game.players) p.sync();
     updateNameTags(game);

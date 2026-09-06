@@ -10,6 +10,7 @@ import { applyClipPose } from "../../animation/voxel-motion";
 import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/stance";
 import { levelDribbleHand } from "../../animation/action/dribble";
+import { stepDefense, stepDefenseMix } from "../../animation/action/defense-arms";
 
 declare module "./player" {
   interface Player {
@@ -147,6 +148,8 @@ Player.prototype.syncVoxel = function(): void {
     this.updateWristTrail();   // 手首は肩・肘が決まったあとに追従させる
     // 構え（直立度）。腕の開きは姿勢を作る前に、脚の曲げは作ったあとに重ねる。
     stepUpright(this, this.lastDt);
+    stepDefense(this, this.lastDt);
+    stepDefenseMix(this, this.lastDt);
     vb.armSplay = armSplayFor(vb, this);
     if (applyClipPose(vb, this, this.lastDt)) {
       applyStance(vb, this);

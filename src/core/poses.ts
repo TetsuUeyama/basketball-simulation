@@ -6,6 +6,7 @@ import { MAX_PASS } from "../config";
 import { rate, dist2D, dist2DTo, rand, chance } from "../util";
 import type { Game } from "../game";
 import { GUARD_RANGE } from "../animation/action/dribble";
+import { defenseArms } from "../animation/action/defense-arms";
 
   // ボールに触れている者の手をボールに当てる。それ以外は全員、腕を脇に下ろして休める。
 export function poseHands(game: Game, ): void {
@@ -60,6 +61,27 @@ export function poseHands(game: Game, ): void {
       posed.add(p);
     }
     for (const p of game.players) if (!posed.has(p)) p.runArms();   // 腕振り／休め
+    // 守備の腕: ハンドラーに近い守備者は、左右それぞれ「上・横・相手の方」を混ぜて広げる。
+    // ⚠️ runArms の**後**に置く。近い守備者は腕振りではなく守備の形が正しい。
+    if ((game.ballMode === "held" || game.ballMode === "charge")) {
+      const hd = game.handler ?? game.shooter;
+      if (hd) {
+        const chest = new Vector3(hd.pos.x, hd.pos.y + 1.15, hd.pos.z);
+        const rim = game.attackFloor(hd.team);
+        const toRim = dist2D(hd.pos, rim);
+        // シュートの気配: 溜めているか、リングに近いほど高い
+        const shootRisk = game.ballMode === "charge" ? 1
+          : Math.min(1, Math.max(0, (8 - toRim) / 6));
+        // ドライブの気配: 速く動いているほど高い
+        const driveRisk = Math.min(1, Math.hypot(hd.velX, hd.velZ) / 4);
+        for (const d of game.players) {
+          if (d.defense < 0.02 || d.airborne || d.seated) continue;
+          if (d.stealReachT > 0 || d.screening) continue;   // 別のポーズを持っている
+          defenseArms(d, chest, shootRisk, driveRisk, defArmRate(game, d));
+          posed.add(d);
+        }
+      }
+    }
     switch (game.ballMode) {
       case "held": {
         if (game.handler) {
