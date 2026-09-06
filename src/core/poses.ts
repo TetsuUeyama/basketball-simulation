@@ -63,6 +63,21 @@ export function poseHands(game: Game, ): void {
       p.digReach(new Vector3(b.x, Math.max(0.35, b.y), b.z));
       posed.add(p);
     }
+    // ⚠️ ルーズボール／リバウンドでボールへ手を出す選手を**先に**決めておく。
+    //    runArms は毎フレーム腕を休めへ引き戻すので、そのあとで手を出しても
+    //    綱引きになり、腕が途中で止まる（実測で両手がボールの 250mm 下に揃って
+    //    しまい、確認画面と別の形になっていた）。
+    const contest: Player[] = [];
+    if (game.ballMode === "loose") {
+      const skip = game.shooter && game.shooter.coolT > 0 ? game.shooter : null;
+      for (const o of game.players) {
+        if (o === skip || o.foulReactT > 0) continue;
+        if (o.airborne) { contest.push(o); posed.add(o); continue; }
+        if (game.looseIsRebound && b.y > 1.1 && dist2D(o.pos, b) < 2.0) {
+          contest.push(o); posed.add(o);
+        }
+      }
+    }
     for (const p of game.players) if (!posed.has(p)) p.runArms();   // 腕振り／休め
     // 守備の腕: ハンドラーに近い守備者は、左右それぞれ「上・横・相手の方」を混ぜて広げる。
     // ⚠️ runArms の**後**に置く。近い守備者は腕振りではなく守備の形が正しい。
@@ -151,18 +166,10 @@ export function poseHands(game: Game, ): void {
         }
         if (game.passSteal) game.passSteal.def.reach(b);                   // パスコースに跳び込む
         break;
-      case "loose":
-        // リバウンドに跳ぶ全員がボールに手を伸ばす（フォロースルー中のシューターは除く）
-        raiseAirborne(game, b, game.shooter && game.shooter.coolT > 0 ? game.shooter : null);
-        // リバウンド: ジャンプしていなくても、近くの選手は上へ手を上げてボールを確保しにいく
-        if (game.looseIsRebound && b.y > 1.1) {
-          const rb = new Vector3(b.x, b.y, b.z);
-          for (const p of game.players) {
-            if (p.airborne || p.foulReactT > 0) continue;
-            if (p === game.shooter && p.coolT > 0) continue;   // フォロースルー中のシューターは除く
-            if (dist2D(p.pos, b) < 2.0) contestBall(game, p, rb);
-          }
-        }
+      case "loose": {
+        // 上で決めた「ボールへ手を出す選手」に、キャッチと同じ形を作る
+        const rb = new Vector3(b.x, b.y, b.z);
+        for (const o of contest) contestBall(game, o, rb);
         // はたき落とされたボールの地面での争奪: 奪う側は手を突き出し、失った者は取り戻そうとする
         {
           const lb = new Vector3(b.x, Math.max(0.35, b.y), b.z);
@@ -174,6 +181,7 @@ export function poseHands(game: Game, ): void {
               && dist2D(loser.pos, b) < 2.2) loser.reach(lb);
         }
         break;
+      }
       case "tipoff":
         // ⚠️ 跳ぶ前に手を上げない。踏み切るまでは腕を下ろして構え（runArms が当てる）、
         //    跳んでから片手/両手を決める。手は「跳び方」ではなく滞空中の選択。
