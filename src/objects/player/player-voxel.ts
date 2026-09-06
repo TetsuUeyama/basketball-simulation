@@ -974,4 +974,15 @@ export function syncVoxelPose(vb: VoxelBody, p: VirtualPose): void {
     if (back) flipQ(_q);
     put(vb, name, _q);
   }
+  // ⚠️ 足首は**誰も書いていなかった**。構えの補正（applyStance が足裏を水平に保つ
+  //    ぶん）を毎フレーム重ねるので、ここで静止へ戻さないと回り続ける。実測で
+  //    ベンチに座っている間に 158°、シュートの溜め中に 178° まで回っていた。
+  //    クリップ再生中は applyMotion が毎フレーム書くので起きない。
+  for (const b of ["LeftFoot", "RightFoot"] as const) {
+    const n = vb.rig.node(b);
+    if (!n) continue;
+    if (n.rotationQuaternion) n.rotationQuaternion.copyFromFloats(0, 0, 0, 1);
+    else n.rotationQuaternion = Quaternion.Identity();
+    n.markAsDirty("rotationQuaternion");
+  }
 }
