@@ -15,6 +15,7 @@
 //    足し込む方式では実測で 80mm 残った。
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core";
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
+import { MOVE_RATE } from "../basic/joints";
 import type { Player } from "../../objects/player/player";
 import type { VoxelBody } from "../../objects/player/player-voxel";
 
@@ -106,6 +107,45 @@ const _fix = new Quaternion();
 const _contact = new Vector3();
 const _want = new Vector3();
 const _d2 = new Vector3();
+
+// ⚠️ 手の向きだけ**補間を通していなかった**ので、狙いが切り替わった瞬間に 1 フレームで
+//    107〜120° 回っていた（腕は easeArm で補間されている）。パスの直後などに小刻みに
+//    震えて見えるのはこれ。腕と同じ指数イーズに乗せる。
+const HAND_EASE = new WeakMap<Player, Record<string, Quaternion>>();
+const _tgt = new Quaternion();
+/** 手のボーンの向きを、時間をかけて目標へ寄せる。戻すときも同じ速さで戻る。 */
+function easeHand(p: Player, bone: string, node: { rotationQuaternion: Quaternion | null;
+  markAsDirty(k: string): void }, target: Quaternion, rate: number): void {
+  let st = HAND_EASE.get(p);
+  if (!st) { st = {}; HAND_EASE.set(p, st); }
+  const dt = p.lastDt > 0 ? p.lastDt : 1 / 60;
+  const k = 1 - Math.exp(-rate * dt);
+  const cur = st[bone];
+  if (!cur) st[bone] = target.clone();
+  else Quaternion.SlerpToRef(cur, target, k, cur);
+  if (!node.rotationQuaternion) node.rotationQuaternion = st[bone].clone();
+  else node.rotationQuaternion.copyFrom(st[bone]);
+  node.markAsDirty("rotationQuaternion");
+}
+/** 狙いが無くなったら、手首の追従（wristTrail）の値へ時間をかけて戻す。 */
+export function releaseHands(p: Player, vb: VoxelBody): void {
+  const st = HAND_EASE.get(p);
+  if (!st) return;
+  for (const bone of ["LeftHand", "RightHand"] as const) {
+    const cur = st[bone];
+    if (!cur) continue;
+    const n = vb.rig.node(bone as StandardBoneName);
+    if (!n?.rotationQuaternion) { delete st[bone]; continue; }
+    const dt = p.lastDt > 0 ? p.lastDt : 1 / 60;
+    const k = 1 - Math.exp(-MOVE_RATE.arm * dt);
+    _tgt.copyFrom(n.rotationQuaternion);                 // いまの追従の値へ戻る
+    Quaternion.SlerpToRef(cur, _tgt, k, cur);
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(Quaternion.Dot(cur, _tgt))));
+    if (ang < 0.02) { delete st[bone]; continue; }       // 戻り切ったら手放す
+    n.rotationQuaternion.copyFrom(cur);
+    n.markAsDirty("rotationQuaternion");
+  }
+}
 const _tmp = new Vector3();
 const _near = new Vector3();
 const _n2 = new Vector3();
@@ -200,12 +240,14 @@ function aimOne(vb: VoxelBody, p: Player, right: boolean, ball: Vector3): void {
   _rot.conjugateToRef(_inv);
   between(PALM_N[bone], _d2, _fix);
   if (!hn.rotationQuaternion) hn.rotationQuaternion = Quaternion.Identity();
-  _inv.multiplyToRef(_fix, hn.rotationQuaternion);
+  _inv.multiplyToRef(_fix, _tgt);
   // 曲がりすぎを止める（静止姿勢からの角度で頭打ち）
-  const q = hn.rotationQuaternion;
-  const ang = 2 * Math.acos(Math.min(1, Math.abs(q.w)));
-  if (ang > WRIST_LIMIT) Quaternion.SlerpToRef(_ident, q, WRIST_LIMIT / ang, q);
-  hn.markAsDirty("rotationQuaternion");
+  const ang = 2 * Math.acos(Math.min(1, Math.abs(_tgt.w)));
+  if (ang > WRIST_LIMIT) Quaternion.SlerpToRef(_ident, _tgt, WRIST_LIMIT / ang, _tgt);
+  // ⚠️ 直に代入しない。時間をかけて寄せる（上の easeHand の注意を参照）。
+  // ⚠️ 手のひらの向きは腕ほど速く動かす必要がない。リーチ(30)だと 1 フレームで 60°
+  //    近く回って震えて見える。腕と同じ 10 にする。
+  easeHand(p, bone, hn, _tgt, MOVE_RATE.arm);
   // 回したあとの当たる点を測って、狙いとの差を返す
   hn.computeWorldMatrix(true);
   Vector3.TransformCoordinatesToRef(

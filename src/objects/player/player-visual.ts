@@ -11,7 +11,7 @@ import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/stance";
 import { levelDribbleHand } from "../../animation/action/dribble";
 import { stepDefense, stepDefenseMix } from "../../animation/action/defense-arms";
-import { aimPalms } from "../../animation/action/palm";
+import { aimPalms, releaseHands } from "../../animation/action/palm";
 
 declare module "./player" {
   interface Player {
@@ -160,7 +160,7 @@ Player.prototype.syncVoxel = function(): void {
       applyStance(vb, this);
       // ⚠️ 手のひらは最後に決める。前腕を動かしたあとでないと打ち消せない。
       if (this.dribblePosed) levelDribbleHand(vb, this);
-      aimPalms(vb, this);
+      if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
       blendPose(this, vb, this.clipName, this.lastDt);
       vb.skel.prepare();
       this.dribblePosed = false;
@@ -184,7 +184,7 @@ Player.prototype.syncVoxel = function(): void {
     });
     applyStance(vb, this);
     if (this.dribblePosed) levelDribbleHand(vb, this);
-    aimPalms(vb, this);
+    if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
     blendPose(this, vb, "", this.lastDt);
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
     this.dribblePosed = false;
