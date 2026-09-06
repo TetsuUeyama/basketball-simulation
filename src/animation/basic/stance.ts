@@ -222,8 +222,12 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   const S = (i: number): number => stanceS(p, i);
   // 腕は底上げぶんだけ深い側から始める（上の ARM_BIAS を参照）
   const A = (i: number): number => S(i) + ARM_BIAS;
-  setTiltX(vb, "LeftShoulder", -READY_SHOULDER * A(G.shoulderL));
-  setTiltX(vb, "RightShoulder", -READY_SHOULDER * A(G.shoulderR));
+  // ⚠️ ボールを掴んでいる間は鎖骨を倒さない（0 を書いて戻す）。鎖骨を倒すと肩の
+  //    関節そのものが 26mm 動き、仮想の骨組みが想定する肩の位置とずれて、
+  //    IK が置いた手も同じだけずれる。
+  const shT = p.palmBall ? 0 : -READY_SHOULDER;
+  setTiltX(vb, "LeftShoulder", shT * A(G.shoulderL));
+  setTiltX(vb, "RightShoulder", shT * A(G.shoulderR));
   // ⚠️ **numberSide（コートのどちら側を向くか）で符号を変えてはいけない。**
   //    ここはボクセルのボーンに直接掛けるので、既に骨組みごとヨーされた「体の枠」の
   //    中にいる。向きで符号を変えると、片側のチームだけ膝が逆関節になる（実測で

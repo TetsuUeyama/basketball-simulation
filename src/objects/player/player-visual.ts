@@ -58,8 +58,12 @@ Player.prototype.ensureVoxel = function(): void {
     });
     // 肩の位置・腕の長さ・股関節の高さを素体の実測値へ合わせる（aimArm / reachIK が使う）
     const v = this.vox;
-    this.armPivotL.position.set(v.shoulder.x, v.shoulder.y, -this.numberSide * Math.abs(v.shoulder.z));
-    this.armPivotR.position.set(-v.shoulder.x, v.shoulder.y, -this.numberSide * Math.abs(v.shoulder.z));
+    // ⚠️ z に Math.abs を掛けてはいけない。素体の肩が体の**後ろ**寄りにあると、
+    //    符号を潰したぶん前後が逆になり、仮想の肩とボクセルの肩が 78mm ずれる。
+    //    そのぶん IK が置いた手も同じだけずれ、ボールを掴んだ形が手前で止まっていた。
+    //    （焼き込み素体は肩が前寄りなので、符号を残しても今までどおり前へ出る）
+    this.armPivotL.position.set(v.shoulder.x, v.shoulder.y, -this.numberSide * v.shoulder.z);
+    this.armPivotR.position.set(-v.shoulder.x, v.shoulder.y, -this.numberSide * v.shoulder.z);
     this.elbowL.position.y = this.elbowR.position.y = -v.upperArm;
     this.wristL.position.y = this.wristR.position.y = -v.foreArm;
     this.upperArmLen = v.upperArm;
@@ -204,7 +208,7 @@ Player.prototype.setNumberSide = function(sign: number): void {
     this.numberSide = sign >= 0 ? 1 : -1;
     this.vox?.setNumberVisible(true);
     // 肩はわずかに前寄り（前 = -numberSide·Z）
-    const shz = this.vox ? Math.abs(this.vox.shoulder.z) : 0.01;
+    const shz = this.vox ? this.vox.shoulder.z : 0.01;   // ⚠️ 符号を潰さない（上の注意）
     this.armPivotL.position.z = -this.numberSide * shz;
     this.armPivotR.position.z = -this.numberSide * shz;
 };

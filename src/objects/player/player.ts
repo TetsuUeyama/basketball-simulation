@@ -47,8 +47,13 @@ export class Player {
   palmBall: import("@babylonjs/core").Vector3 | null = null;
   palmBoth = false;
   palmRight = true;
-  /** 手のひらがボールの表面へ乗るまでの、IK の狙いのずらし量（実測して詰める）。 */
-  palmFix: import("@babylonjs/core").Vector3 | null = null;
+  /**
+   * 手のひらがボールの表面へ乗るまでの、IK の狙いのずらし量（実測して詰める）。
+   * ⚠️ 左右で別に持つ。1つを共有すると、両手キャッチのときに左右のズレが逆向きで
+   *    打ち消し合い、どちらも寄らなくなる（実測で片手 120mm に対し両手 270mm）。
+   */
+  palmFixR: import("@babylonjs/core").Vector3 | null = null;
+  palmFixL: import("@babylonjs/core").Vector3 | null = null;
   /** 直近のキャッチの形（表示・確認用）。高さ 0..1 / 横ズレ -1..1 / 両手か。 */
   catchHi = 0;
   catchSide = 0;

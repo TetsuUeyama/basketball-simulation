@@ -22,7 +22,7 @@ const HIGH_AT = 0.68, CHEST_AT = 0.22;
 //    左右へ広げる必要はほぼ無い。以前の 12〜17cm は、その当たる点を無視して
 //    手首をボール中心へ運んでいたぶんの埋め合わせだった。
 const SEP_LO = 0.02, SEP_HI = 0.05;
-const _grip = new Vector3();
+const _gR = new Vector3(), _gL = new Vector3();
 
 export type CatchShape = {
   /** 両手で取るか。 */
@@ -64,24 +64,31 @@ export function catchBallHands(p: Player, b: Vector3, shape: CatchShape): void {
   p.catchHi = shape.hi;
   p.catchSide = shape.side;
   p.catchTwo = shape.two;
-  // ⚠️ 狙いはボールの中心ではなく**手前**。手のひらの当たる点がボールの表面に
-  //    来るように引く。向きは sync のあとで aimPalms が合わせる。
-  const t = gripTarget(p, b, _grip);
+  // ⚠️ 狙いはボールの中心ではなく、手のひらの当たる点が表面に乗る手首の位置。
+  //    左右で肩の位置が違うので、腕ごとに別々に出す（両手を1点へ運ぶと形が崩れる）。
   p.palmBall = b.clone();
   p.palmBoth = shape.two;
   p.palmRight = shape.right;
+  p.armRateCap = MOVE_RATE.reach;
+  const keep = p.elbowOut;
+  // 両手で抱えるときは肘を胴へ寄せる（既定の張り出しは遠くへ伸ばす用）
+  p.elbowOut = Math.min(keep, 0.20);
   if (shape.two) {
-    // 高いほど手を広げて挟む
-    p.holdBallHands(t, SEP_LO + (SEP_HI - SEP_LO) * shape.hi);
+    const okR = p.reachIK(p.armPivotR, p.elbowR, gripTarget(p, b, true, _gR));
+    const okL = p.reachIK(p.armPivotL, p.elbowL, gripTarget(p, b, false, _gL));
+    p.elbowOut = keep;
+    if (!okR) { p.aimArm(p.armPivotR, b); p.bendElbow(p.elbowR, 0.05); }
+    if (!okL) { p.aimArm(p.armPivotL, b); p.bendElbow(p.elbowL, 0.05); }
+    p.armRateCap = 0;
     return;
   }
+  p.elbowOut = keep;
   // 片手: ズレている側の腕で取る
   const pivot = shape.right ? p.armPivotR : p.armPivotL;
   const elbow = shape.right ? p.elbowR : p.elbowL;
   const off = shape.right ? p.armPivotL : p.armPivotR;
   const offElbow = shape.right ? p.elbowL : p.elbowR;
-  p.armRateCap = MOVE_RATE.reach;
-  if (!p.reachIK(pivot, elbow, t)) {
+  if (!p.reachIK(pivot, elbow, gripTarget(p, b, shape.right, _gR))) {
     p.aimArm(pivot, b);
     p.bendElbow(elbow, 0.05);      // 届かないので伸ばし切る
   }
@@ -90,7 +97,6 @@ export function catchBallHands(p: Player, b: Vector3, shape: CatchShape): void {
   p.bendElbow(offElbow, 0.9);
   p.armRateCap = 0;
 }
-
 /** 位置から形を決めて手を出す（ひとまとめ）。 */
 export function catchBall(p: Player, b: Vector3): CatchShape {
   const shape = catchShape(p, b);

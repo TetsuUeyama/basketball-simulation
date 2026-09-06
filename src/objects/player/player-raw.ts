@@ -625,11 +625,11 @@ export function buildRawVoxelBody(
       Math.atan2(Math.max(0, pe.torsoHalf * k + ARM_RADIUS * k - Math.abs(sh.x)),
         Vector3.Distance(sh, el))),
     armSplay: 0,   // 直立度から毎フレーム決まる（作った直後に下限を入れる）
-    // ⚠️ 実効長は**手のひらの当たる点まで**。IK はこの長さの先端を狙いへ運ぶので、
-    //    ここが短いとボールを掴んだときに手が手前で止まる。1.12 倍（+29mm）にして
-    //    いたが、手首から当たる点までは実測 135mm あり、前腕 246mm に対して
-    //    実効 275mm と 384mm で 109mm 足りなかった。手のひらぶんを足す。
-    foreArm: Vector3.Distance(el, hand) + PALM_REACH * k,
+    // ⚠️ 実効長は**手首まで**。手のひらの当たる点は手首から 135mm 先にあるが、
+    //    その向きは手の回し方で変わるので、長さに足し込むと合わない
+    //    （手のひらの法線と当たる点は 59° ずれていて、法線をボールへ向けると
+    //    当たる点が 116mm 横へ振れる）。当たる点は palm.ts が狙いの式で織り込む。
+    foreArm: Vector3.Distance(el, hand),
     setSkinColor: (c) => { skinMat.diffuseColor = rgb3(c); },
     setHairColor: (c) => { hairMat.diffuseColor = rgb3(c); },
     setHairStyle: (n) => { setHair(n); },

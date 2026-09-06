@@ -142,3 +142,66 @@ console.log("\n腕の長さ（仮想 vs ボクセル）");
   console.log(`  → 手のひらまでの実効長は 前腕 ${((Vector3.Distance(el, hd) + PALM_PT.LeftHand.length() * K) * 1000).toFixed(0)}mm`
     + ` のはず（仮想は ${(p.foreArmLen * 1000).toFixed(0)}mm）`);
 }
+
+// 仮想の腕とボクセルの腕で、向きが一致しているか
+console.log("\n腕の向き（仮想 vs ボクセル、ボール 胸の高さ・正面）");
+{
+  const b2 = new Vector3(0, 1.35, -0.35 * p.numberSide);
+  p.stand();
+  for (let i = 0; i < 200; i++) { catchBall(p, b2); p.lastDt = 1 / 60; p.sync(); }
+  const at = (b: string): Vector3 => {
+    const n = p.vox!.rig.node(b as never)!; n.computeWorldMatrix(true);
+    return n.getAbsolutePosition();
+  };
+  const va = (n: { computeWorldMatrix(f: boolean): unknown; getAbsolutePosition(): Vector3 }): Vector3 => {
+    n.computeWorldMatrix(true); return n.getAbsolutePosition();
+  };
+  const back = p.numberSide > 0;
+  // 仮想 L は back のときボクセル Right
+  for (const [vName, vPiv, vElb, vWr, bone] of [
+    ["armL", p.armPivotL, p.elbowL, p.wristL, back ? "Right" : "Left"],
+    ["armR", p.armPivotR, p.elbowR, p.wristR, back ? "Left" : "Right"],
+  ] as [string, never, never, never, string][]) {
+    const vs = va(vPiv), ve = va(vElb), vw = va(vWr);
+    const bs = at(bone + "UpperArm"), be = at(bone + "LowerArm"), bh = at(bone + "Hand");
+    const dUpV = ve.subtract(vs).normalize(), dUpB = be.subtract(bs).normalize();
+    const dFoV = vw.subtract(ve).normalize(), dFoB = bh.subtract(be).normalize();
+    const ang = (a: Vector3, c: Vector3): string =>
+      (Math.acos(Math.min(1, Math.max(-1, Vector3.Dot(a, c)))) * 180 / Math.PI).toFixed(1) + "°";
+    console.log(`  ${vName} → ${bone}  上腕の向きの差 ${ang(dUpV, dUpB)}  前腕の向きの差 ${ang(dFoV, dFoB)}`);
+    console.log(`    仮想 肩 ${vs.x.toFixed(3)},${vs.y.toFixed(3)},${vs.z.toFixed(3)}`
+      + `  ボクセル 肩 ${bs.x.toFixed(3)},${bs.y.toFixed(3)},${bs.z.toFixed(3)}`
+      + `  ズレ ${(Vector3.Distance(vs, bs) * 1000).toFixed(0)}mm`);
+    console.log(`    仮想 肘 ${ve.x.toFixed(3)},${ve.y.toFixed(3)},${ve.z.toFixed(3)}`
+      + `  ボクセル 肘 ${be.x.toFixed(3)},${be.y.toFixed(3)},${be.z.toFixed(3)}`
+      + `  ズレ ${(Vector3.Distance(ve, be) * 1000).toFixed(0)}mm`);
+  }
+}
+
+// 腕が届く範囲での確認（肩から腕の長さ以内に置く）
+console.log("\n腕が届く位置での確認（当たる点→ボール中心。狙いは 120mm）");
+{
+  const armLen = p.upperArmLen + p.foreArmLen;
+  const shY = p.pos.y + p.vox!.shoulder.y;
+  console.log(`  肩の高さ ${(shY * 1000).toFixed(0)}mm / 腕の長さ ${(armLen * 1000).toFixed(0)}mm`);
+  for (const [dy, dz, note] of [
+    [0.34, 0.10, "頭の上（リバウンド）"],
+    [0.15, 0.25, "顔の前"],
+    [-0.15, 0.30, "胸の高さ"],
+    [-0.35, 0.20, "腰の高さ"],
+  ] as [number, number, string][]) {
+    p.stand();
+    const b4 = new Vector3(0, shY + dy, -dz * p.numberSide);
+    let sh = catchBall(p, b4);
+    for (let i = 0; i < 250; i++) { sh = catchBall(p, b4); p.lastDt = 1 / 60; p.sync(); }
+    const parts = (sh.two ? ["LeftHand", "RightHand"] : [sh.right === (p.numberSide > 0) ? "LeftHand" : "RightHand"])
+      .map((bn) => {
+        const q = palm(bn as "LeftHand");
+        const d = Vector3.Distance(q.pt, b4);
+        const ang = Math.acos(Math.min(1, Math.max(-1,
+          Vector3.Dot(q.n, b4.subtract(q.pt).normalize())))) * 180 / Math.PI;
+        return `${(d * 1000).toFixed(0)}mm ${ang.toFixed(0)}°`;
+      });
+    console.log(`  ${note.padEnd(18)} ${catchLabel(p, sh).padEnd(16)} ${parts.join(" / ")}`);
+  }
+}
