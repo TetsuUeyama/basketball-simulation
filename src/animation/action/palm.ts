@@ -42,6 +42,30 @@ export const PALM_PT: Record<string, Vector3> = {
   LeftHand: new Vector3(-0.104, -0.079, -0.008),
   RightHand: new Vector3(0.102, -0.078, -0.008),
 };
+/**
+ * 手が当たりうる点（手首から。モデル 180.4cm）。指のボーンの位置そのもの。
+ * ⚠️ 中指の付け根だけを面に合わせると、その先の指がボールへ食い込む
+ *    （付け根 128mm に対し指先は 194mm）。指先まで見て、**一番深く入る点**が
+ *    面に乗るように手を押し出す。
+ */
+export const HAND_PTS: Record<string, Vector3[]> = {
+  LeftHand: [
+    new Vector3(-0.104, -0.079, -0.008),   // 中指の付け根（手の厚みの半分ぶん手のひら側へ）
+    new Vector3(-0.143, -0.074, -0.010),   // 中指の第2関節
+    new Vector3(-0.172, -0.089, -0.012),   // 中指の先
+    new Vector3(-0.165, -0.090, 0.015),    // 人差し指の先
+    new Vector3(-0.143, -0.079, -0.054),   // 小指の先
+    new Vector3(-0.075, -0.099, 0.053),    // 親指の先
+  ],
+  RightHand: [
+    new Vector3(0.102, -0.078, -0.008),
+    new Vector3(0.143, -0.074, -0.010),
+    new Vector3(0.172, -0.089, -0.012),
+    new Vector3(0.165, -0.089, 0.013),
+    new Vector3(0.142, -0.078, -0.054),
+    new Vector3(0.074, -0.099, 0.053),
+  ],
+};
 /** モデル自身の身長（PALM_PT の基準）。 */
 const MODEL_H = 1.804;
 /**
@@ -65,6 +89,9 @@ const _fix = new Quaternion();
 const _contact = new Vector3();
 const _want = new Vector3();
 const _d2 = new Vector3();
+const _tmp = new Vector3();
+const _near = new Vector3();
+const _n2 = new Vector3();
 
 /** a を b へ向ける最小の回転。 */
 function between(a: Vector3, b: Vector3, out: Quaternion): Quaternion {
@@ -147,11 +174,24 @@ function aimOne(vb: VoxelBody, p: Player, right: boolean, ball: Vector3): void {
   hn.computeWorldMatrix(true);
   Vector3.TransformCoordinatesToRef(
     PALM_PT[bone].scale(p.height / MODEL_H), hn.getWorldMatrix(), _contact);
-  _want.set(ball.x - _n.x * BALL_R, ball.y - _n.y * BALL_R, ball.z - _n.z * BALL_R);
+  // ⚠️ 中指の付け根だけを面に合わせると指先が中へ入る。手の各点のうち**一番
+  //    ボール中心に近い点**を面へ乗せる。こうすれば貫通しない。
+  const k2 = p.height / MODEL_H;
+  let near = _contact, nearD = Infinity;
+  for (const q0 of HAND_PTS[bone]) {
+    Vector3.TransformCoordinatesToRef(q0.scale(k2), hn.getWorldMatrix(), _tmp);
+    const d = Vector3.Distance(_tmp, ball);
+    if (d < nearD) { nearD = d; near = _near.copyFrom(_tmp); }
+  }
+  // 一番近い点を、ボール中心からその点へ向かう向きに半径ぶん出した位置へ寄せる
+  _n2.set(near.x - ball.x, near.y - ball.y, near.z - ball.z);
+  if (_n2.lengthSquared() < 1e-8) _n2.copyFrom(_n);
+  _n2.normalize();
+  _want.set(ball.x + _n2.x * BALL_R, ball.y + _n2.y * BALL_R, ball.z + _n2.z * BALL_R);
   // 骨の繋がりの誤差ぶんは、次のフレームの狙いへ詰めて足す（左右別）
   let fix = right ? p.palmFixR : p.palmFixL;
   if (!fix) { fix = new Vector3(0, 0, 0); if (right) p.palmFixR = fix; else p.palmFixL = fix; }
-  fix.addInPlace(_want.subtract(_contact).scale(FIX_GAIN));
+  fix.addInPlace(_want.subtract(near).scale(FIX_GAIN));
   const len = fix.length();
   if (len > FIX_MAX) fix.scaleInPlace(FIX_MAX / len);
 }
