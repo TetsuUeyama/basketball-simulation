@@ -68,6 +68,11 @@ export function poseHands(game: Game, ): void {
     //    綱引きになり、腕が途中で止まる（実測で両手がボールの 250mm 下に揃って
     //    しまい、確認画面と別の形になっていた）。
     const contest: Player[] = [];
+    // ⚠️ パス中の3人（出し手・受け手・カットに跳ぶ守備者）も runArms に上書きさせない。
+    //    ルーズボールと同じで、腕振りが毎フレーム休めへ引き戻して綱引きになる。
+    if (game.ballMode === "pass") {
+      for (const o of [game.passer, game.passTo, game.passSteal?.def]) if (o) posed.add(o);
+    }
     if (game.ballMode === "loose") {
       const skip = game.shooter && game.shooter.coolT > 0 ? game.shooter : null;
       for (const o of game.players) {
@@ -164,7 +169,10 @@ export function poseHands(game: Game, ): void {
           // キャッチ: レシーバーは両手を出して向かってくるボールを迎える
           if (game.passTo) catchBall(game.passTo, b);
         }
-        if (game.passSteal) game.passSteal.def.reach(b);                   // パスコースに跳び込む
+        // カットに跳び込む守備者も**キャッチと同じ形**で手を出す。
+        // ⚠️ reach（腕を向けるだけ）だった。手のひらの向きもボール表面への当たりも
+        //    考えていないので、奪う瞬間だけ別のモーションに見えていた。
+        if (game.passSteal) catchBall(game.passSteal.def, b);
         break;
       case "loose": {
         // 上で決めた「ボールへ手を出す選手」に、キャッチと同じ形を作る
