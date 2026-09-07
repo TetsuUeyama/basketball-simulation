@@ -13,6 +13,8 @@ declare module "../../objects/player/player" {
     /** IK の肘を逃がす縦向き。-1 = 下（既定）/ +1 = 上（ドリブルなど前腕を立てたいとき）。
      *  使う側は毎フレーム設定し直すこと（既定へは戻らない）。 */
     elbowPoleY: number;
+    /** IK の肘を逃がす前後向き（root ローカルの z）。0 = 前後に寄せない（既定）。 */
+    elbowPoleZ: number;
     reachBall(world: Vector3, both?: boolean): void;
     /** IK の肘の張り出し（tan の値。既定 0.70 ≒ 35°）。溜めの構えでは小さくして
      *  肘を胴に寄せる。使う側は毎フレーム設定し直すこと（既定へは戻らない）。 */
@@ -21,6 +23,7 @@ declare module "../../objects/player/player" {
 }
 Player.prototype.elbowOut = 0.70;
 Player.prototype.elbowPoleY = -1;
+Player.prototype.elbowPoleZ = 0;
 
 // ベクトル v をクォータニオン q で回す（v' = q·v·q*）。Vector3/数値のみで実装。
 function rotQ(q: Quaternion, x: number, y: number, z: number): { x: number; y: number; z: number } {
@@ -39,7 +42,7 @@ function rotQ(q: Quaternion, x: number, y: number, z: number): { x: number; y: n
 // 手先を world に一致させる肩(root ローカル)・肘(pivot ローカル)のクォータニオンを解く。
 // 届かない/近すぎは null。単体検証しやすいよう Player から独立。
 export function armIKQuats(sx: number, sy: number, sz: number, th: number, world: Vector3,
-    UP: number, FORE: number, outward = 0, poleY = -1): { qUp: Quaternion; qElbow: Quaternion } | null {
+    UP: number, FORE: number, outward = 0, poleY = -1, poleZ = 0): { qUp: Quaternion; qElbow: Quaternion } | null {
     const c = Math.cos(th), s = Math.sin(th);
     // ワールド→root ローカルの reach ベクトル
     const wx = world.x - sx, wy = world.y - sy, wz = world.z - sz;
@@ -57,9 +60,10 @@ export function armIKQuats(sx: number, sy: number, sz: number, th: number, world
     // poleY: 肘を下へ逃がす(-1, 既定) か 上へ逃がす(+1) か。
     // ⚠️ ドリブルは上へ逃がす。肘が手首の上に来ないと前腕が鉛直にならず、手のひらを
     //    床と平行にする補正が全部手首に載る（実測で手首の曲げが中央 55°・最大 174°）。
-    const px = outward, py = poleY;
-    const dDotU = px * ux + py * uy;                       // (outward,-1,0)·û
-    let nx = px - dDotU * ux, ny = py - dDotU * uy, nz = 0 - dDotU * uz;
+    // poleZ: 肘を前後どちらへ逃がすか（root ローカルの z。呼び元が符号を決める）。
+    const px = outward, py = poleY, pz0 = poleZ;
+    const dDotU = px * ux + py * uy + pz0 * uz;            // 極ベクトル·û
+    let nx = px - dDotU * ux, ny = py - dDotU * uy, nz = pz0 - dDotU * uz;
     let nl = Math.hypot(nx, ny, nz);
     if (nl < 1e-4) { nx = 1; ny = 0; nz = 0; nl = 1; }     // û が垂直 → 横へ逃がす
     nx /= nl; ny /= nl; nz /= nl;
@@ -96,7 +100,7 @@ Player.prototype.reachIK = function(pivot: TransformNode, elbow: TransformNode, 
     // 胸の前でボールを持っても肘が胴に入らない。
     const outward = (pivot === this.armPivotR ? 1 : -1) * this.elbowOut;
     const r = armIKQuats(sx, sy, sz, th, tgt, this.upperArmLen, this.foreArmLen,
-      outward, this.elbowPoleY);
+      outward, this.elbowPoleY, this.elbowPoleZ);
     if (!r) return false;
     this.easeArm(pivot, r.qUp);
     this.easeArm(elbow, r.qElbow);

@@ -23,6 +23,8 @@ Player.prototype.dribbleAt = new Vector3();
 const GUARD_ELBOW = 0.5;
 /** ドリブルの手を組むときの肘の張り出し。既定(0.70)より小さく＝肘を体寄りに残す。 */
 const DRIB_ELBOW_OUT = 0.45;
+/** ドリブルの肘を体の後ろへ逃がす量。0 = 後ろへ寄せない。 */
+const DRIB_ELBOW_BACK = 1.60;
 /** 手首をここまでしか曲げない(rad ≈ 55°)。人の手のひら側への可動域はおおよそ 60〜70°。
  *  残りは曲げずに置く（手のひらが少し傾くが、手首が折れているよりは自然）。 */
 /** 手首をここまでしか曲げない(rad ≈ 55°)。人の手のひら側への可動域はおおよそ 60〜70°。 */
@@ -76,8 +78,10 @@ Player.prototype.reachDribble = function(
     else _wrist.copyFrom(world);
     this.elbowOut = DRIB_ELBOW_OUT;
     this.elbowPoleY = 1;             // 肘は上へ（下へ逃がすと前腕が寝る）
+    // 肘を体の後ろへ逃がす。前方は -numberSide·Z なので、後ろは +numberSide·Z。
+    this.elbowPoleZ = DRIB_ELBOW_BACK * this.numberSide;
     const ik = this.reachIK(near, nearElbow, _wrist);
-    this.elbowOut = 0.70; this.elbowPoleY = -1;   // 既定へ戻す（他のIK利用へ持ち越さない）
+    this.elbowOut = 0.70; this.elbowPoleY = -1; this.elbowPoleZ = 0;   // 既定へ戻す
     if (!ik) {                       // 届かない: 従来どおり方向だけ合わせる
       this.aimArm(near, world);
       this.bendElbow(nearElbow, 0.30);

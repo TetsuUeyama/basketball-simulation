@@ -33,6 +33,7 @@ const DEG = 180 / Math.PI;
 const wrist: number[] = [], elbow: number[] = [], fore: number[] = [], tilt: number[] = [];
 const reach: number[] = [], armLen: number[] = [], sideOff: number[] = [], ballOff: number[] = [];
 const elbOut: number[] = [], balOut: number[] = [];
+const elbBack: number[] = [];
 for (let gi = 0; gi < 3; gi++) {
   clubTeam(0, gi); clubTeam(1, gi + 3);
   g.applyRoster(); g.reset();
@@ -65,6 +66,12 @@ for (let gi = 0; gi < 3; gi++) {
         el.computeWorldMatrix(true);
         const ep = el.getAbsolutePosition();
         elbOut.push(Math.hypot(ep.x - h.pos.x, ep.z - h.pos.z));
+        // 体の前後方向で肘がどこにあるか（負 = 後ろ）。前方は -numberSide·Z を root ヨーで回した向き。
+        {
+          const th = h.root.rotation.y;
+          const fx = -h.numberSide * Math.sin(th), fz = -h.numberSide * Math.cos(th);
+          elbBack.push((ep.x - h.pos.x) * fx + (ep.z - h.pos.z) * fz);
+        }
         balOut.push(Math.hypot(game.ball.pos.x - h.pos.x, game.ball.pos.z - h.pos.z));
       }
     }
@@ -105,4 +112,5 @@ console.log(`  肩からボールまでの横距離 中央 ${q(sideOff, .5)}m / 
 const q2 = (arr: number[], f: number): string => arr.length
   ? [...arr].sort((x, y) => x - y)[Math.min(arr.length - 1, Math.floor(arr.length * f))].toFixed(3) : "-";
 console.log(`  体の中心からの横距離: 肘 ${q2(elbOut, .5)}m / ボール ${q2(balOut, .5)}m`);
+console.log(`  肘の前後位置 中央 ${q2(elbBack, .5)}m（負 = 体より後ろ）`);
 console.log(`\n人の手首が無理なく曲がるのは 60〜70° まで。`);
