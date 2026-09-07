@@ -4,6 +4,7 @@ import { Vector3, Quaternion } from "@babylonjs/core";
 import { Player } from "../../objects/player/player";
 import { JOINT } from "../basic/joints";
 import { setJoint } from "../basic/rotate";
+import { armStyleFor } from "../basic/arm-style";
 
 declare module "../../objects/player/player" {
   interface Player {
@@ -41,14 +42,20 @@ Player.prototype.runArms = function(): void {
       this.bendElbow(this.elbowR, 0.2);
       return;
     }
-    const amp = 0.3 + frac * 0.55;
-    const aL = Math.sin(this.stridePhase + Math.PI) * amp * ns;   // 左腕 ↔ 右脚
-    const aR = Math.sin(this.stridePhase) * amp * ns;
-    this.easeArm(this.armPivotL, Quaternion.RotationAxis(new Vector3(1, 0, 0), aL));
-    this.easeArm(this.armPivotR, Quaternion.RotationAxis(new Vector3(1, 0, 0), aR));
-    const carry = 0.6 + frac * 0.5;   // ランナーのように肘を曲げて保つ
-    this.bendElbow(this.elbowL, carry);
-    this.bendElbow(this.elbowR, carry);
+    // 選手ごとの癖（振り幅・肘の抱え・肘の引き）。名前から決まるので毎試合同じ。
+    const st = armStyleFor(this);
+    const amp = (0.3 + frac * 0.55) * st.swing;
+    // ⚠️ 位相の sin が正 = 腕が前。numberSide は下の *ns で吸収されるので、
+    //    「後ろへ引いているか」の判定はコートの向きに依存しない。
+    const sL = Math.sin(this.stridePhase + Math.PI);   // 左腕 ↔ 右脚
+    const sR = Math.sin(this.stridePhase);
+    this.easeArm(this.armPivotL, Quaternion.RotationAxis(new Vector3(1, 0, 0), sL * amp * ns));
+    this.easeArm(this.armPivotR, Quaternion.RotationAxis(new Vector3(1, 0, 0), sR * amp * ns));
+    // 肘の引き: 腕が後ろへ行くほど肘を伸ばして下げる。引き幅は選手ごと・左右別。
+    const carry = (0.6 + frac * 0.5) * st.carry;
+    const backL = Math.max(0, -sL), backR = Math.max(0, -sR);
+    this.bendElbow(this.elbowL, carry - st.pullL * backL * frac);
+    this.bendElbow(this.elbowR, carry - st.pullR * backR * frac);
 };
 
   // 歩行/走行サイクルの1フレーム: 速度とともに伸びるストライドで腰を

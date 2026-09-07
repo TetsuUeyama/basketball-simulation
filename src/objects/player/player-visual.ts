@@ -12,6 +12,8 @@ import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/sta
 import { levelDribbleHand } from "../../animation/action/dribble";
 import { stepDefense, stepDefenseMix } from "../../animation/action/defense-arms";
 import { aimPalms, releaseHands } from "../../animation/action/palm";
+import { armStyleFor } from "../../animation/basic/arm-style";
+import { applyFingers } from "../../animation/basic/fingers";
 
 declare module "./player" {
   interface Player {
@@ -186,6 +188,12 @@ Player.prototype.syncVoxel = function(): void {
     stepDefense(this, this.lastDt);
     stepDefenseMix(this, this.lastDt);
     vb.armSplay = armSplayFor(vb, this);
+    // 選手ごとの「体への寄り」ぶんだけ脇を詰める。下限は素体の値（腕が胴へ埋まる）。
+    {
+      const st = armStyleFor(this);
+      vb.armSplayL = Math.max(vb.baseArmSplay, vb.armSplay - st.inL);
+      vb.armSplayR = Math.max(vb.baseArmSplay, vb.armSplay - st.inR);
+    }
     if (applyClipPose(vb, this, this.lastDt)) {
       applyStance(vb, this);
       // ⚠️ 手のひらは最後に決める。前腕を動かしたあとでないと打ち消せない。
@@ -193,6 +201,7 @@ Player.prototype.syncVoxel = function(): void {
       if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
       blendPose(this, vb, this.clipName, this.lastDt);
       limitBoneRate(this, vb);
+      applyFingers(vb, this);   // 指は最後（他のポーズを全部書き終えてから）
       vb.skel.prepare();
       this.dribblePosed = false;
       this.palmBall = null;
@@ -218,6 +227,7 @@ Player.prototype.syncVoxel = function(): void {
     if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
     blendPose(this, vb, "", this.lastDt);
     limitBoneRate(this, vb);
+    applyFingers(vb, this);   // 指は最後（他のポーズを全部書き終えてから）
     vb.skel.prepare();   // ノードのリグ → スケルトン（服のスキニング）
     this.dribblePosed = false;
     this.palmBall = null;

@@ -10,6 +10,8 @@ import { makeMat } from "./objects/materials";
 import { MOTION_NAMES, motionClip, motionDuration } from "@objcts/player/motion/clip";
 import { Player } from "./objects/player/player";
 import { ROSTER } from "./roster";
+import { setArmStyleOverride } from "./animation/basic/arm-style";
+import { setGripOverride, gripOf } from "./animation/basic/fingers";
 import { rawPrototype, startRawPreload } from "./objects/player/player-raw";
 import { defenseArms } from "./animation/action/defense-arms";
 import { catchBall, catchLabel } from "./animation/action/catch";
@@ -79,7 +81,8 @@ const infoText = (): string => {
   const meshes = player.vox?.meshes.length ?? 0;
   return `ボクセル ${proto.voxelCount.toLocaleString()} / 三角形 ${proto.triangles.toLocaleString()}`
     + ` / 髪型 ${proto.hairNames.length}種 / メッシュ ${meshes}\n${bonesLine}`
-    + `\n身長 ${player.height.toFixed(3)}m ｜ 直立度 ${player.upright.toFixed(2)}`;
+    + `\n身長 ${player.height.toFixed(3)}m ｜ 直立度 ${player.upright.toFixed(2)}`
+    + `\n手の開き 左 ${gripOf(player).l.toFixed(2)} / 右 ${gripOf(player).r.toFixed(2)}`;
 };
 
 // ───────────────────────── UI ─────────────────────────
@@ -211,6 +214,22 @@ range("ボールの横ズレ", -0.9, 0.9, 0.05, ballX, (v) => (v >= 0 ? "右 " :
 range("ボールの奥行き", -0.6, 0.9, 0.05, ballZ, (v) => (v >= 0 ? "前 " : "後 ") + Math.abs(v).toFixed(2) + "m",
   (v) => { ballZ = v; });
 
+// ───────── 走る腕振りの癖（arm-style.ts）と手の握り（fingers.ts）─────────
+// ⚠️ ゲームでは選手ごとに名前から決まる。ここは全員へ同じ値を被せて幅を確かめるためのもの。
+let swing = 1, pull = 0.23, inward = 0.18;
+const pushStyle = (): void =>
+  setArmStyleOverride({ swing, pullL: pull, pullR: pull, inL: inward, inR: inward });
+range("振り幅（腕）", 0.6, 1.5, 0.02, swing, (v) => v.toFixed(2) + "倍",
+  (v) => { swing = v; pushStyle(); });
+range("肘の引き", 0, 0.7, 0.01, pull, (v) => (v * 180 / Math.PI).toFixed(0) + "°",
+  (v) => { pull = v; pushStyle(); });
+range("体への寄り", 0, 0.4, 0.01, inward, (v) => (v * 180 / Math.PI).toFixed(0) + "°",
+  (v) => { inward = v; pushStyle(); });
+pushStyle();
+// 手の握り。マイナス側で「自動（胴からの距離で決まる）」に戻す。
+range("手の握り", -1, 1, 0.05, -1,
+  (v) => (v < 0 ? "自動" : v === 0 ? "グー" : v.toFixed(2)),
+  (v) => { setGripOverride(v < 0 ? null : v); });
 const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
 row("髪型").appendChild(hairSel);

@@ -625,6 +625,7 @@ export function buildRawVoxelBody(
       Math.atan2(Math.max(0, pe.torsoHalf * k + ARM_RADIUS * k - Math.abs(sh.x)),
         Vector3.Distance(sh, el))),
     armSplay: 0,   // 直立度から毎フレーム決まる（作った直後に下限を入れる）
+    armSplayL: 0, armSplayR: 0,   // 同上（左右で選手ごとの寄りぶんだけ違う）
     // ⚠️ 実効長は**手首まで**。手のひらの当たる点は手首から 135mm 先にあるが、
     //    その向きは手の回し方で変わるので、長さに足し込むと合わない
     //    （手のひらの法線と当たる点は 59° ずれていて、法線をボールへ向けると
@@ -652,6 +653,6 @@ export function buildRawVoxelBody(
       for (const m of allMats) m.dispose();
     },
   };
-  body.armSplay = body.baseArmSplay;
+  body.armSplay = body.armSplayL = body.armSplayR = body.baseArmSplay;
   return body;
 }

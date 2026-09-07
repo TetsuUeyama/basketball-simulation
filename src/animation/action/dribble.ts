@@ -3,6 +3,7 @@ import { Vector3, Quaternion, Matrix } from "@babylonjs/core";
 import { Player } from "../../objects/player/player";
 import type { VoxelBody } from "../../objects/player/player-voxel";
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
+import { armStyleFor } from "../basic/arm-style";
 
 declare module "../../objects/player/player" {
   interface Player {
@@ -49,11 +50,15 @@ Player.prototype.reachDribble = function(
       this.bendElbow(farElbow, 0.28);
       return;
     }
-    const amp = 0.3 + frac * 0.55;
+    // ⚠️ 癖(振り幅・肘の引き)は runArms と同じものを使う。ここだけ既定値だと、
+    //    ドリブルを始めた瞬間に空いている手の振りが別人のものに変わる。
+    const st = armStyleFor(this);
+    const amp = (0.3 + frac * 0.55) * st.swing;
     const phase = far === this.armPivotL ? this.stridePhase + Math.PI : this.stridePhase;
-    const a = Math.sin(phase) * amp * this.numberSide;
-    this.easeArm(far, Quaternion.RotationAxis(new Vector3(1, 0, 0), a));
-    this.bendElbow(farElbow, 0.6 + frac * 0.5);
+    const s = Math.sin(phase);
+    this.easeArm(far, Quaternion.RotationAxis(new Vector3(1, 0, 0), s * amp * this.numberSide));
+    const pull = far === this.armPivotL ? st.pullL : st.pullR;
+    this.bendElbow(farElbow, (0.6 + frac * 0.5) * st.carry - pull * Math.max(0, -s) * frac);
 };
 
 // ───────────────────────── 手のひらを水平に ─────────────────────────
