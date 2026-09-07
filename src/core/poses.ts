@@ -5,7 +5,7 @@ import { Player } from "../objects/player/player";
 import { MAX_PASS } from "../config";
 import { rate, dist2D, dist2DTo, rand, chance } from "../util";
 import type { Game } from "../game";
-import { GUARD_RANGE } from "../animation/action/dribble";
+import { GUARD_RANGE , GUARD_CHEST, reachingHand } from "../animation/action/dribble";
 import { defenseArms } from "../animation/action/defense-arms";
 // ⚠️ ゲームのキャッチ／保持は holdBallHands を直に呼んでいて、確認ページの
 //    catchBall と別物だった（試合では肘のあたりでボールを抱えていた）。同じ関数に寄せる。
@@ -127,8 +127,17 @@ export function poseHands(game: Game, ): void {
             //    選手を拾うことがあり、相手が居ないのに腕が上がった。
             const h = game.handler;
             const dfd = game.onBallDefender(h);
-            const guard = dfd && !dfd.seated && dist2D(dfd.pos, h.pos) < GUARD_RANGE ? dfd.pos : null;
-            h.reachDribble(bw, h.dribbleWithRight(bw), dribArmRate(game, h), guard);
+            // 押す先: 相手が手を伸ばしてきていればその手を払い、そうでなければ胴体を押す。
+            // ⚠️ 高さは相手の身長から出す。以前はハンドラーの足元 +1.15m 固定だったので、
+            //    相手が低い姿勢だと顔のあたりを押していた（実測 2%）。
+            let guard: Vector3 | null = null;
+            let swipe = false;
+            if (dfd && !dfd.seated && dist2D(dfd.pos, h.pos) < GUARD_RANGE) {
+              const rh = reachingHand(dfd, h);
+              if (rh) { guard = rh; swipe = true; }
+              else guard = new Vector3(dfd.pos.x, dfd.pos.y + dfd.height * GUARD_CHEST, dfd.pos.z);
+            }
+            h.reachDribble(bw, h.dribbleWithRight(bw), dribArmRate(game, h), guard, swipe);
           }
         }
         break;

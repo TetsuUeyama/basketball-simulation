@@ -267,15 +267,28 @@ export function applyStance(vb: VoxelBody, p: Player): void {
   //    乗せてはいけない。IK が置いた手が肩 8°・上腕 10°・前腕 17°・横の開き 20°
   //    ぶん動かされ、手のひらがボールから 20cm 近く離れていた。
   if (p.palmBall) return;
+  // ⚠️ 同じ理由で、**IK で置いた腕は片側だけでも触らない**。ドリブルの手と、相手を
+  //    押す/払うオフアームは IK で位置を決めているのに、ここで肩 10°・前腕 17°・
+  //    横 13° を上乗せしていた。実測で、腕の届く範囲にある狙いに対しても手のひらが
+  //    0.41m 離れていた。ikL/ikR は**仮想側**なので、骨組みが 180° 回っている
+  //    （numberSide が +1）ときは左右を読み替える。
+  const back = p.numberSide > 0;
+  const ikLeft = back ? p.ikR : p.ikL;
+  const ikRight = back ? p.ikL : p.ikR;
   // 肩〜前腕を前へ。すぐ手が出る形にする。
   // ⚠️ 腕は胴と符号が逆（脚と同じ側）。正のまま掛けると腕が後ろへ流れる
   //    （実測で手が体の前 -113mm → -268mm と、逆に後ろへ下がっていた）。
-  tiltX(vb, "LeftUpperArm", -READY_ARM * A(G.armL)); tiltX(vb, "RightUpperArm", -READY_ARM * A(G.armR));
-  tiltX(vb, "LeftLowerArm", -READY_FOREARM * A(G.foreL));
-  tiltX(vb, "RightLowerArm", -READY_FOREARM * A(G.foreR));
-  // 前腕も少し外へ。符号は splayLegs と同じ規約（左が -、右が +）。
-  tiltZ(vb, "LeftLowerArm", -READY_FORE_OUT * A(G.foreL));
-  tiltZ(vb, "RightLowerArm", READY_FORE_OUT * A(G.foreR));
+  if (!ikLeft) {
+    tiltX(vb, "LeftUpperArm", -READY_ARM * A(G.armL));
+    tiltX(vb, "LeftLowerArm", -READY_FOREARM * A(G.foreL));
+    // 前腕も少し外へ。符号は splayLegs と同じ規約（左が -、右が +）。
+    tiltZ(vb, "LeftLowerArm", -READY_FORE_OUT * A(G.foreL));
+  }
+  if (!ikRight) {
+    tiltX(vb, "RightUpperArm", -READY_ARM * A(G.armR));
+    tiltX(vb, "RightLowerArm", -READY_FOREARM * A(G.foreR));
+    tiltZ(vb, "RightLowerArm", READY_FORE_OUT * A(G.foreR));
+  }
 }
 
 /**

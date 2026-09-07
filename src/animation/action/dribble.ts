@@ -4,12 +4,14 @@ import { Player } from "../../objects/player/player";
 import type { VoxelBody } from "../../objects/player/player-voxel";
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
 import { PALM_N } from "./palm";
+import { MOVE_RATE } from "../basic/joints";
 import type { TransformNode } from "@babylonjs/core";
 import { armStyleFor } from "../basic/arm-style";
 
 declare module "../../objects/player/player" {
   interface Player {
-    reachDribble(world: Vector3, useRight: boolean, rate?: number, guardAt?: Vector3 | null): void;
+    reachDribble(world: Vector3, useRight: boolean, rate?: number, guardAt?: Vector3 | null,
+      swipe?: boolean): void;
     /** このフレームでドリブルの手を作った（sync が手のひらを水平に均すのに使う）。 */
     dribblePosed: boolean;
     /** そのフレームのドリブルの狙い（ワールド）。 */
@@ -29,12 +31,6 @@ const DRIB_ELBOW_BACK = 1.60;
  *  残りは曲げずに置く（手のひらが少し傾くが、手首が折れているよりは自然）。 */
 /** 手首をここまでしか曲げない(rad ≈ 55°)。人の手のひら側への可動域はおおよそ 60〜70°。 */
 const WRIST_CAP = 1.22;
-/** 肩をこの範囲(rad ≈ 100°)で回して、手首が一番楽になる角度を探す。 */
-const SHOULDER_RANGE = 1.75;
-/** 探索の刻み（±この数だけ両側に振る）。 */
-const SHOULDER_STEPS = 12;
-/** 肩を大きく回すことへの罰則（rad あたり）。小さすぎると肩が回りすぎる。 */
-const SHOULDER_PENALTY = 0.10;
 /** 手のひらの狙いを真下からボール側へどれだけ倒すか（tan 相当）。0 = 真下。 */
 const PALM_LEAN = 0.55;
 /** ドリブルの手首を置く距離。腕の長さのこの割合（1.0 = 伸ばし切り）。 */
@@ -42,11 +38,51 @@ const DRIB_EXTEND = 0.90;
 const _wrist = new Vector3();
 /** 空いている手が相手へ向く距離（m）。これより遠ければ普通に腕を振る。 */
 export const GUARD_RANGE = 1.9;
+/** 押す先の高さ。相手の身長のこの割合（0.72 ≒ 胸）。 */
+export const GUARD_CHEST = 0.70;
+/** 相手の手が「伸ばしてきている」とみなす、ハンドラーまでの水平距離(m)。 */
+export const REACH_NEAR = 0.85;
+/** 払いのける振りの速さ(Hz)。 */
+const SWIPE_HZ = 1.6;
+/** 払いのける振りの横幅(m)。 */
+const SWIPE_WIDTH = 0.30;
+/** 払いのける振りで下へ落とす量(m)。 */
+const SWIPE_DROP = 0.18;
+/** 払っている間の肘の曲げ（押すときより少し曲げて振る）。 */
+const SWIPE_ELBOW = 0.75;
+const _guard = new Vector3();
+const _gw = new Vector3();
+/** 手首から手のひらが当たる点までの距離(m)。ここを目標に接させる。 */
+const PALM_TOUCH = 0.135;
+/** 相手を押す/払うときの肘の張り出し。外へ張って体の前を横切らせない。 */
+const GUARD_ELBOW_OUT = 0.85;
+
+/**
+ * 相手が手をこちらへ伸ばしてきていれば、その手のワールド位置を返す。
+ * 伸ばしていなければ null（そのときは胴体を押す）。
+ * ⚠️ 見た目の骨から取る。手続き側には「いま手がどこにあるか」を持っていないため。
+ */
+export function reachingHand(d: Player, at: Player): Vector3 | null {
+  const v = d.vox;
+  if (!v) return null;
+  let best: Vector3 | null = null, bestD = REACH_NEAR;
+  for (const b of ["LeftHand", "RightHand"] as const) {
+    const n = v.rig.node(b as StandardBoneName);
+    if (!n) continue;
+    n.computeWorldMatrix(true);
+    const p = n.getAbsolutePosition();
+    if (p.y < at.pos.y + at.height * 0.45) continue;   // 垂らした手は払わない
+    const dd = Math.hypot(p.x - at.pos.x, p.z - at.pos.z);
+    if (dd < bestD) { bestD = dd; best = p; }
+  }
+  return best;
+}
 
 /** ボールがある側と同じ側の手でドリブル/保持する — 左腰へ運んだボールは右腕を
  *  体を横切って（越えて）伸ばすのではなく左手で持つ、そしてその逆も。 */
 Player.prototype.reachDribble = function(
   world: Vector3, useRight: boolean, rate = 0, guardAt: Vector3 | null = null,
+  swipe = false,
 ): void {
     this.dribbleArm = useRight ? "R" : "L";
     this.dribbleAt.copyFrom(world);   // 手のひらを向ける先（levelDribbleHand が使う）
@@ -90,9 +126,48 @@ Player.prototype.reachDribble = function(
     // --- 空いている手 -------------------------------------------------------
     if (guardAt) {
       // 相手が近い: その選手へ腕を伸ばして間合いを作る（オフアーム）。
-      // 胸の高さへ向ける。ボールと反対側なので体を挟んで守れる。
-      this.aimArm(far, new Vector3(guardAt.x, this.pos.y + 1.15, guardAt.z));
-      this.bendElbow(farElbow, GUARD_ELBOW);
+      // ⚠️ 高さは**呼び元が渡す点**に従う。以前は this.pos.y + 1.15 の決め打ちで、
+      //    相手の身長も姿勢も見ていなかった。実測で肩より上を押すのが 5%、顔の
+      //    あたりが 2% あった。呼び元は相手の胸（身長から出す）か、伸ばしてきた
+      //    手の位置を渡してくる。
+      _guard.copyFrom(guardAt);
+      if (swipe) {
+        // 払いのける: 相手の手を横切るように振り、振り下ろす。
+        this.swipeT += this.lastDt * SWIPE_HZ * Math.PI * 2;
+        const dx = guardAt.x - this.pos.x, dz = guardAt.z - this.pos.z;
+        const dl = Math.hypot(dx, dz) || 1;
+        const px = -dz / dl, pz = dx / dl;            // 水平で直交する向き
+        const sw = Math.sin(this.swipeT);
+        _guard.x += px * sw * SWIPE_WIDTH;
+        _guard.z += pz * sw * SWIPE_WIDTH;
+        _guard.y -= Math.max(0, sw) * SWIPE_DROP;     // 上から下へ払う
+      }
+      // ⚠️ 方向だけ合わせて伸ばし切ってはいけない（以前の aimArm + bendElbow）。
+      //    相手が近いと腕が突き抜け、遠いと届いていないのに伸ばし切りになる。
+      //    **手のひらが相手に接する位置**へ手首を置き、余った分は肘を曲げて吸収する。
+      const gth = this.root.rotation.y + this.torsoTwist;
+      const gc = Math.cos(gth), gs = Math.sin(gth);
+      const gx = far.position.x, gy = far.position.y * this.root.scaling.y, gz = far.position.z;
+      const fsx = this.root.position.x + (gc * gx + gs * gz);
+      const fsy = this.root.position.y + gy;
+      const fsz = this.root.position.z + (-gs * gx + gc * gz);
+      const gdx = _guard.x - fsx, gdy = _guard.y - fsy, gdz = _guard.z - fsz;
+      const gdl = Math.hypot(gdx, gdy, gdz) || 1;
+      const armL = this.upperArmLen + this.foreArmLen;
+      // 手首は目標より手のひらのぶん手前。届かない距離ならぎりぎりまで伸ばす。
+      const back = Math.min(Math.max(gdl - PALM_TOUCH, 0.10), armL * 0.94);
+      _gw.set(fsx + (gdx / gdl) * back, fsy + (gdy / gdl) * back, fsz + (gdz / gdl) * back);
+      // ⚠️ 押す腕は既定の追従速度(10/s)だと動く相手に追いつけない。実測で、腕の
+      //    届く範囲にある狙いに対しても手のひらが 0.42m 遅れていた。リーチ速度で動かす。
+      this.armRateCap = MOVE_RATE.reach;
+      this.elbowOut = GUARD_ELBOW_OUT;
+      const gok = this.reachIK(far, farElbow, _gw);
+      this.elbowOut = 0.70;
+      this.armRateCap = 0;
+      if (!gok) {   // 解けない（真後ろなど）だけ、従来どおり方向で合わせる
+        this.aimArm(far, _guard);
+        this.bendElbow(farElbow, swipe ? SWIPE_ELBOW : GUARD_ELBOW);
+      }
       return;
     }
     // 相手が遠い: 歩き／走りと同じように振る。
@@ -129,12 +204,8 @@ const _inv = new Quaternion();
 
 const _need = new Quaternion();
 const _IDENT = Quaternion.Identity();
-const _rq = new Quaternion(), _fq = new Quaternion(), _iq = new Quaternion();
-const _nq = new Quaternion(), _pq = new Quaternion(), _uq = new Quaternion();
-const _mi = new Matrix();
 const _mi2 = new Matrix();
 const _hp2 = new Vector3(), _tp2 = new Vector3(), _to = new Vector3();
-const _sp = new Vector3(), _hp = new Vector3(), _axis = new Vector3();
 
 /** a を b へ向ける最小の回転。 */
 function between(a: Vector3, b: Vector3): Quaternion {
