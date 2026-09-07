@@ -18,6 +18,9 @@ import { clubTeam } from "../src/roster";
 import { armStyleFor } from "../src/animation/basic/arm-style";
 import { Quaternion } from "@babylonjs/core";
 import { PALM_N } from "../src/animation/action/palm";
+import { setGripOverride, applyFingers } from "../src/animation/basic/fingers";
+import { Matrix } from "@babylonjs/core";
+import type { Mesh } from "@babylonjs/core";
 const { startRawPreload, rawReady } = await import("../src/objects/player/player-raw");
 await startRawPreload();
 console.log("生モデルの素材:", rawReady() ? "読めた" : "★読めていない");
@@ -170,6 +173,93 @@ console.log("");
 console.log("── 中指の第2関節の曲がり角（0°=開き / 60°=握り切り）──");
 console.log(`  全員      中央 ${q4(curlAll, .5)}°  5% ${q4(curlAll, .05)}°  95% ${q4(curlAll, .95)}°  (${curlAll.length} 標本)`);
 console.log(`  ボール保持者 中央 ${q4(curlBall, .5)}°  95% ${q4(curlBall, .95)}°  (${curlBall.length} 標本)`);
+// ── メッシュが実際に動くか（スキニングを手で解いて確かめる）──────────
+// ⚠️ 骨（TransformNode）が動いても、頂点ウェイトがその骨に付いていなければ
+//    見た目は1ミリも変わらない。ここは骨ではなく**頂点**を見る。
+{
+  const skel = vb.skel;
+  const fingerIdx = new Set<number>();
+  skel.bones.forEach((b, i) => {
+    if (/(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/.test(b.name)) fingerIdx.add(i);
+  });
+  // ⚠️ 一番大きいメッシュではなく、**指の骨が効く頂点が一番多い**メッシュを見る
+  //    （ジャージの方が頂点数が多く、そちらを見ると 0 になる）。
+  const countFinger = (m: Mesh): number => {
+    const ii = m.getVerticesData("matricesIndices"), ww = m.getVerticesData("matricesWeights");
+    if (!ii || !ww) return 0;
+    let c = 0;
+    for (let v = 0; v < ii.length / 4; v++) {
+      for (let k = 0; k < 4; k++) if (ww[v * 4 + k] > 0.001 && fingerIdx.has(ii[v * 4 + k])) { c++; break; }
+    }
+    return c;
+  };
+  const bodyMesh = (vb.meshes as Mesh[]).slice().sort((x, y) => countFinger(y) - countFinger(x))[0];
+  console.log("");
+  console.log("── メッシュごとの、指の骨が効く頂点 ──");
+  for (const m of vb.meshes as Mesh[]) {
+    const ii = m.getVerticesData("matricesIndices"), ww = m.getVerticesData("matricesWeights");
+    if (!ii || !ww) { console.log(`  ${m.name}: スキンなし`); continue; }
+    let c = 0;
+    for (let v = 0; v < ii.length / 4; v++) {
+      for (let k = 0; k < 4; k++) if (ww[v * 4 + k] > 0.001 && fingerIdx.has(ii[v * 4 + k])) { c++; break; }
+    }
+    console.log(`  ${m.name}: ${ii.length / 4} 頂点中 ${c}`);
+  }
+  const pos = bodyMesh.getVerticesData("position")!;
+  const mi = bodyMesh.getVerticesData("matricesIndices")!;
+  const mw = bodyMesh.getVerticesData("matricesWeights")!;
+  const n = pos.length / 3;
+  const onFinger: number[] = [];
+  for (let v = 0; v < n; v++) {
+    for (let k = 0; k < 4; k++) if (mw[v * 4 + k] > 0.001 && fingerIdx.has(mi[v * 4 + k])) { onFinger.push(v); break; }
+  }
+  console.log("");
+  console.log("── 頂点ウェイトが指の骨に付いているか ──");
+  console.log(`  スケルトンの骨 ${skel.bones.length} 本 / うち指 ${fingerIdx.size} 本`);
+  console.log(`  体のメッシュ ${n} 頂点 / 指の骨が効く頂点 ${onFinger.length}`);
+  const skinned = (): Float32Array => {
+    // ⚠️ prepare() は同じレンダーIDだと2回目以降を捨てる。ヘッドレスはIDが進まないので
+    //    強制実行しないと、開き→握りの2回目が前の行列のままになる。
+    vb.skel.prepare(true);
+    const M = skel.getTransformMatrices(bodyMesh);
+    const out = new Float32Array(onFinger.length * 3);
+    const m = new Matrix();
+    for (let j = 0; j < onFinger.length; j++) {
+      const v = onFinger[j];
+      let x = 0, y = 0, z = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = mw[v * 4 + k]; if (!(w > 0)) continue;
+        Matrix.FromArrayToRef(M, mi[v * 4 + k] * 16, m);
+        const a = m.m;
+        const px = pos[v * 3], py = pos[v * 3 + 1], pz = pos[v * 3 + 2];
+        x += w * (a[0] * px + a[4] * py + a[8] * pz + a[12]);
+        y += w * (a[1] * px + a[5] * py + a[9] * pz + a[13]);
+        z += w * (a[2] * px + a[6] * py + a[10] * pz + a[14]);
+      }
+      out[j * 3] = x; out[j * 3 + 1] = y; out[j * 3 + 2] = z;
+    }
+    return out;
+  };
+  // ⚠️ 間に game.update を挟むと選手自身が歩いてしまい、指の動きと区別できない
+  //    （実測で中央 0.71m 動いたことになった）。指だけを書き換えて比べる。
+  //    lastDt を大きくすると1回でイーズが終わる。
+  const keepDt = p0.lastDt;
+  p0.lastDt = 1;
+  setGripOverride(1); applyFingers(vb, p0);
+  const A = skinned();
+  setGripOverride(0); applyFingers(vb, p0);
+  const B = skinned();
+  p0.lastDt = keepDt;
+  const moves: number[] = [];
+  for (let j = 0; j < onFinger.length; j++) {
+    moves.push(Math.hypot(A[j * 3] - B[j * 3], A[j * 3 + 1] - B[j * 3 + 1], A[j * 3 + 2] - B[j * 3 + 2]));
+  }
+  moves.sort((a, b) => a - b);
+  const md = (f: number): string => moves.length ? moves[Math.floor(moves.length * f)].toFixed(4) : "-";
+  console.log(`  開き切り→握り切りで動いた距離: 中央 ${md(.5)}m  最大 ${md(.999)}m`);
+  console.log(`  → ${moves.length && moves[moves.length - 1] > 0.01 ? "メッシュが動いている" : "★メッシュが動いていない"}`);
+  setGripOverride(null);
+}
 const rows = game.players.map((p) => ({ n: p.name, s: armStyleFor(p) }));
 const col = (f: (s: ReturnType<typeof armStyleFor>) => number): string => {
   const a = rows.map((r) => f(r.s)).sort((x, y) => x - y);

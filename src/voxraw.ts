@@ -76,9 +76,21 @@ export function parseVox(buf: ArrayBuffer): { voxels: Uint8Array[]; palette: num
 /** Blender(Z-up, 右手) → Babylon(Y-up, 左手)。objcts の焼き込みと同じ規約。 */
 export const toBabylon = (x: number, y: number, z: number): [number, number, number] => [-x, z, -y];
 
+/** モデルの指の呼び方 → 標準名。Pinky だけ標準側の綴りが Little。 */
+const FINGER_STD: Record<string, string> = {
+  thumb: "Thumb", index: "Index", middle: "Middle", ring: "Ring", pinky: "Little",
+};
+/** 指の節番号 1..3 → 標準名の接尾辞。 */
+const FINGER_SEG = ["Proximal", "Intermediate", "Distal"];
+
 /**
- * モデルのボーン名 → 標準ボーン名。指・つま先は親の骨へ寄せる
- * （リグに指の節が無いので、そこへ貼ると宙に浮く）。
+ * モデルのボーン名 → 標準ボーン名。つま先は足へ寄せる。
+ *
+ * ⚠️ 以前は**指もすべて手へ寄せていた**（リグに指の節が無かった頃の名残）。いまの
+ *    生素体には指の骨が 30 本あり、寄せたままだと指の骨をいくら回してもメッシュが
+ *    まったく動かない（実測: 手のひらがどの位置でも開いたまま握らない）。
+ *    節ごとの標準名へ結び直す。リグに無い節はここで null になり、ウェイトは
+ *    残りの骨で正規化されるので、宙に浮くことはない。
  */
 function standardOf(bone: string): StandardBoneName | null {
   const b = bone.replace(/^mixamorig:?/i, "");
@@ -91,7 +103,13 @@ function standardOf(bone: string): StandardBoneName | null {
   if (!s) return null;
   // ⚠️ "Left" は4文字・"Right" は5文字。固定長で切ると左側だけ全部ずれる。
   const rest = b.slice(s.length);
-  if (/^Hand/i.test(rest)) return `${s}Hand` as StandardBoneName;          // 指も手へ
+  const fg = /^Hand(Thumb|Index|Middle|Ring|Pinky)([123])$/i.exec(rest);
+  if (fg) {
+    const std = FINGER_STD[fg[1].toLowerCase()];
+    const seg = FINGER_SEG[Number(fg[2]) - 1];
+    return std && seg ? (`${s}${std}${seg}` as StandardBoneName) : (`${s}Hand` as StandardBoneName);
+  }
+  if (/^Hand/i.test(rest)) return `${s}Hand` as StandardBoneName;
   if (/^Shoulder$/i.test(rest)) return `${s}Shoulder` as StandardBoneName;
   if (/^ForeArm/i.test(rest)) return `${s}LowerArm` as StandardBoneName;
   if (/^Arm$/i.test(rest)) return `${s}UpperArm` as StandardBoneName;
@@ -594,6 +612,17 @@ const BONE_PARENT: Record<string, string> = {
   Head: "Neck", LeftHand: "LeftLowerArm", RightHand: "RightLowerArm",
   LeftFoot: "LeftLowerLeg", RightFoot: "RightLowerLeg",
 };
+// 指の節を3つの表へ足す。
+// ⚠️ 足さないと、指だけ厚みの効き方が手と変わる（手は 0.3、既定は 1）。ウェイトを
+//    手から指へ移した瞬間に、太い選手の指だけ太くなって手首で段が付く。
+for (const side of ["Left", "Right"]) {
+  for (const f of ["Thumb", "Index", "Middle", "Ring", "Little"]) {
+    const pr = `${side}${f}Proximal`, it = `${side}${f}Intermediate`, di = `${side}${f}Distal`;
+    THICK_BY_BONE[pr] = THICK_BY_BONE[it] = THICK_BY_BONE[di] = 0.3;   // 手と同じ
+    BONE_CHILD[pr] = it; BONE_CHILD[it] = di;
+    BONE_PARENT[di] = it;
+  }
+}
 
 /** 服として扱う部位（この内側の肌は描かない）。 */
 const CLOTH_PARTS = new Set(["jersey", "shorts", "socks", "shoes", "tshirt", "jeans"]);
