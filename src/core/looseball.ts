@@ -131,8 +131,14 @@ const FLOOR_Y = 0.32;
 const BOX_OUT_NEAR = 0.9;
 /** 踏み切りで横へ詰められる距離(m)の上限。leap は飛行全体に配られるので頂点では半分。 */
 const LEAP_MAX = 2.0;
+/** 空中で体を傾けて寄せられる速さ(m/s)。床を踏んでいないので走るようには動けない。 */
+const AIR_LEAN = 1.5;
+/** 頂点でこの距離まで詰められないなら跳ばない(m)。resolveLooseContact の 0.6m より厳しく。 */
+const GRAB_R = 0.45;
+/** 相手の最高到達点をこれだけ上回れば「上を取った」＝競り負けない(m)。 */
+const HIGH_POINT = 0.30;
 /** ボールの高さより手をどれだけ上に出すか(m)。上から被せて取るぶん。 */
-const REACH_OVER = 0.18;
+const REACH_OVER = 0.30;
 /** 計測用のフック（headless_sim のプローブが差す）。通常は何もしない。 */
 export const REB_DEBUG: {
   onJump?: (p: Player, gap: number, t: number, h: number, blocked: number) => void;
@@ -178,6 +184,14 @@ export function chaseLoose(game: Game, dt: number): void {
         //    自分側へ寄ってくる＝目標が動き続け、落下点で構える形にならない。
         const plan = planCatch(game, p);
         const land = landSpot(game);
+        // ⚠️ 空中の選手はここから先を触らない。以前は踏み切った後も毎フレーム地上と同じ
+        //    ステアリングで**床の落下点**へ引っ張っていて、踏み込み(leap)で合わせた
+        //    接触点から横へずらしていた。空中は弾道（leap）＋体を傾ける程度だけ。
+        if (p.airborne) {
+          const t = plan ?? land;
+          moveToward2D(p.pos, t.x, t.z, AIR_LEAN * dt);
+          continue;
+        }
         const cv = game.steerAround(p, land.x, land.z);
         const gapNow = dist2DTo(p.pos, land.x, land.z);
         const spot = plan ?? land;   // 踏み切りで詰める先は接触点
@@ -198,7 +212,6 @@ export function chaseLoose(game: Game, dt: number): void {
           const mine = gapNow, theirs = dist2DTo(o.pos, land.x, land.z);
           if (theirs < mine) blocked = Math.max(blocked, clamp(rate(o.attr.balance) - rate(p.attr.balance) + 0.25, 0, 1));
         }
-        if (p.airborne) continue;
         if (REB_DEBUG.onEval) {
           const d = plan ? clamp(0.34 + plan.h * 0.34, 0.34, 0.70) : 0;
           REB_DEBUG.onEval(p, plan ? plan.t : -1, plan ? plan.h : -1, gapNow,
@@ -232,7 +245,15 @@ export function chaseLoose(game: Game, dt: number): void {
             const dx = tx - p.pos.x, dz = tz - p.pos.z;
             const gd = Math.hypot(dx, dz);
             const s = Math.min(2, LEAP_MAX / Math.max(0.01, gd)) * (1 - blocked * 0.25);
-            p.jump(jh, dur, dx * s, dz * s);
+            // ⚠️ 取れない跳躍はしない。踏み切る瞬間に頂点の位置も高さも解けるので、
+            //    頂点でボールに手が掛からないなら跳ばずに走り続けて地上で拾う。
+            //    これが「跳んだ選手が取らずに近くの選手が確保する」の直接の原因だった。
+            const restGap = gd * (1 - s / 2);            // 頂点で残る水平距離
+            const canGrab = restGap <= GRAB_R
+              && jh >= byPeak - p.height * 1.35 + 0.08;  // 伸び切りでは両手が添わない
+            if (canGrab) {
+              p.jump(jh, dur, dx * s, dz * s);
+            }
             // 実際に踏み切れた時だけ記録する（着地硬直中は jump が空振りする）
             if (p.airborne) REB_DEBUG.onJump?.(p, gapNow, plan.t, jh, blocked);
           }
@@ -298,15 +319,23 @@ export function resolveLooseContact(game: Game, ): void {
     if (!best) return;
     // 競り: best 以外に同じボールへ手が届く相手がいれば競り合い(崩れて弾く)
     const contested = reachers.some((q) => q !== best && q.team !== best!.team);
-    contactLooseBall(game, best, contested);
+    // 相手の最高到達点との差。最高打点で取りにいった側がどれだけ上を取れているか。
+    let oppTop = -Infinity;
+    for (const q of reachers) if (q.team !== best.team) oppTop = Math.max(oppTop, q.reachTopY());
+    const edge = oppTop === -Infinity ? 1 : best.reachTopY() - oppTop;
+    contactLooseBall(game, best, contested, edge);
   }
 
   // 手がボールに届く: 好位置で両手が添えば確保（キャッチ）、崩れ（伸び切り/横/競り）は
   // タップ（軌道をはじく）。何度もはじき続けたら確保させ、ピンボール化を防ぐ。
-export function contactLooseBall(game: Game, p: Player, contested: boolean): void {
+export function contactLooseBall(game: Game, p: Player, contested: boolean, edge = 1): void {
     game.lastTouch = p;   // 手が触れた — 以後のアウトオブバウンズを決める
     const horiz = dist2DTo(game.ball.pos, p.pos.x, p.pos.z);
-    if (twoHandedCatch(p, game.ball.pos.y, horiz, contested)) {
+    // ⚠️ 相手より高い位置で掴めているなら「競っている」扱いにしない。実測で、正しく
+    //    跳んでボールに届いた 48 回のうち確保できたのは 24 回しかなく、残りは競り扱いで
+    //    弾いていた（＝跳んだ選手が取らず、近くの選手が拾う）。最高打点を取った側が勝つ。
+    const over = clamp(edge / HIGH_POINT, 0, 1);   // 1 = 相手より十分上で掴んでいる
+    if (twoHandedCatch(p, game.ball.pos.y, horiz, contested && over < 0.5)) {
       secureLoose(game, p);
       return;
     }
@@ -318,7 +347,7 @@ export function contactLooseBall(game: Game, p: Player, contested: boolean): voi
     {
       const defending = p.team !== game.looseOff;
       let ch = looseSecureChance(p, defending, game.looseTips);
-      if (contested) ch *= 0.45;        // 競っていると落としやすい
+      if (contested) ch *= 0.45 + 0.55 * over;   // 競っていると落としやすい(上を取れていれば別)
       if (horiz > 0.45) ch *= 0.7;      // 体から遠いほど収まりにくい
       if (chance(ch)) { secureLoose(game, p); return; }
     }

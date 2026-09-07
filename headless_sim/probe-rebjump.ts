@@ -18,14 +18,16 @@ const DT = 1 / 60;
 const g = game as unknown as { applyRoster(): void; reset(): void };
 
 type Fly = { p: Player; gap0: number; t0: number; minGap: number; minDy: number; dyAtNear: number; touched: boolean;
-  topY: number; peakDy: number; peakGap: number; rising: boolean };
+  topY: number; peakDy: number; peakGap: number; rising: boolean;
+  age: number; tPeak: number; tNear: number; ballY0: number; won: boolean; other: boolean };
 const flying: Fly[] = [];
 const done: Fly[] = [];
 const landed: { f: Fly; t: number }[] = [];
 let whiffGrab = 0;   // 空振り→着地してから拾った回数
 REB_DEBUG.onJump = (p, gap, t) => {
   flying.push({ p, gap0: gap, t0: t, minGap: Infinity, minDy: Infinity, dyAtNear: 0, touched: false,
-    topY: -1, peakDy: 0, peakGap: 0, rising: game.ball.vel.y > 0 });
+    topY: -1, peakDy: 0, peakGap: 0, rising: game.ball.vel.y > 0,
+    age: 0, tPeak: 0, tNear: 0, ballY0: game.ball.pos.y, won: false, other: false });
 };
 let airSecure = 0, groundSecure = 0;
 const NG = Number(process.env.NG ?? 4);
@@ -51,7 +53,12 @@ for (let gi = 0; gi < NG; gi++) {
       const gap = dist2DTo(game.ball.pos, f.p.pos.x, f.p.pos.z);
       const dy = game.ball.pos.y - f.p.reachTopY();
       // 跳躍の頂点フレーム（jumpY が最大になった瞬間）を捕まえる
-      if (f.p.jumpY() > f.topY) { f.topY = f.p.jumpY(); f.peakDy = dy; f.peakGap = gap; }
+      f.age += DT;
+      if (f.p.jumpY() > f.topY) { f.topY = f.p.jumpY(); f.peakDy = dy; f.peakGap = gap; f.tPeak = f.age; }
+      if (gap < f.minGap) f.tNear = f.age;
+      if (game.ballMode !== "loose" && game.handler) {
+        if (game.handler === f.p) f.won = true; else f.other = true;
+      }
       if (gap < f.minGap) f.dyAtNear = dy;
       f.minGap = Math.min(f.minGap, gap);
       f.minDy = Math.min(f.minDy, Math.abs(dy));
@@ -77,5 +84,10 @@ console.log(`
 console.log(`           届いていた踏み切り ${done.filter((f) => f.peakDy <= 0).length} / ${done.length}`);
 console.log(`           水平距離 中央 ${q(pgap, .5)}m`);
 console.log(`踏み切った時ボールが上昇中だった ${done.filter((f) => f.rising).length} / ${done.length}`);
+const lag = done.map((f) => f.tNear - f.tPeak);
+console.log(`
+頂点から最接近までの時間 中央 ${q(lag, .5)}秒（正なら跳ぶのが早い／${done.filter((x) => x.tNear > x.tPeak + 0.03).length} 回が早い）`);
+console.log(`踏み切った選手が確保した ${done.filter((f) => f.won).length} 回 / 別の選手が確保した ${done.filter((f) => !f.won && f.other).length} 回`);
+console.log(`踏み切った時のボールの高さ 中央 ${q(done.map((f) => f.ballY0), .5)}m`);
 console.log(`確保: 空中 ${airSecure} 回 / 着地後 ${groundSecure} 回`);
 console.log(`跳んだが空振りし、着地してから拾った ${whiffGrab} 回`);
