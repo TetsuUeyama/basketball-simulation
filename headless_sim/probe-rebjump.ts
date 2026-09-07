@@ -17,13 +17,15 @@ const hoops = buildCourt(scene); const game = new Game(scene);
 const DT = 1 / 60;
 const g = game as unknown as { applyRoster(): void; reset(): void };
 
-type Fly = { p: Player; gap0: number; t0: number; minGap: number; minDy: number; dyAtNear: number; touched: boolean };
+type Fly = { p: Player; gap0: number; t0: number; minGap: number; minDy: number; dyAtNear: number; touched: boolean;
+  topY: number; peakDy: number; peakGap: number; rising: boolean };
 const flying: Fly[] = [];
 const done: Fly[] = [];
 const landed: { f: Fly; t: number }[] = [];
 let whiffGrab = 0;   // 空振り→着地してから拾った回数
 REB_DEBUG.onJump = (p, gap, t) => {
-  flying.push({ p, gap0: gap, t0: t, minGap: Infinity, minDy: Infinity, dyAtNear: 0, touched: false });
+  flying.push({ p, gap0: gap, t0: t, minGap: Infinity, minDy: Infinity, dyAtNear: 0, touched: false,
+    topY: -1, peakDy: 0, peakGap: 0, rising: game.ball.vel.y > 0 });
 };
 let airSecure = 0, groundSecure = 0;
 const NG = Number(process.env.NG ?? 4);
@@ -48,6 +50,8 @@ for (let gi = 0; gi < NG; gi++) {
       const f = flying[k];
       const gap = dist2DTo(game.ball.pos, f.p.pos.x, f.p.pos.z);
       const dy = game.ball.pos.y - f.p.reachTopY();
+      // 跳躍の頂点フレーム（jumpY が最大になった瞬間）を捕まえる
+      if (f.p.jumpY() > f.topY) { f.topY = f.p.jumpY(); f.peakDy = dy; f.peakGap = gap; }
       if (gap < f.minGap) f.dyAtNear = dy;
       f.minGap = Math.min(f.minGap, gap);
       f.minDy = Math.min(f.minDy, Math.abs(dy));
@@ -67,5 +71,11 @@ console.log(`飛行中の高さのズレの最小      中央 ${q(minDy, .5)}m`)
 const dyN = done.map((f) => f.dyAtNear);
 console.log(`最接近時のボール高さ − 手の高さ 中央 ${q(dyN, .5)}m（正ならボールが手の上、負なら下）`);
 console.log(`手が届く条件を満たした踏み切り ${done.filter((f) => f.touched).length} / ${done.length}`);
+const pdy = done.map((f) => f.peakDy), pgap = done.map((f) => f.peakGap);
+console.log(`
+最高打点で: ボールの高さ − 手の高さ 中央 ${q(pdy, .5)}m  25% ${q(pdy, .25)}m  75% ${q(pdy, .75)}m`);
+console.log(`           届いていた踏み切り ${done.filter((f) => f.peakDy <= 0).length} / ${done.length}`);
+console.log(`           水平距離 中央 ${q(pgap, .5)}m`);
+console.log(`踏み切った時ボールが上昇中だった ${done.filter((f) => f.rising).length} / ${done.length}`);
 console.log(`確保: 空中 ${airSecure} 回 / 着地後 ${groundSecure} 回`);
 console.log(`跳んだが空振りし、着地してから拾った ${whiffGrab} 回`);

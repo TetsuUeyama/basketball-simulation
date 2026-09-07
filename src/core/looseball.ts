@@ -88,7 +88,13 @@ function planCatch(game: Game, p: Player): { x: number; z: number; t: number; h:
   for (let t = STEP; t <= 2.5; t += STEP) {
     const by = y0 + vy * t - BALL_G * t * t / 2;
     if (by < FLOOR_Y) break;                          // 床に着く — 以後は弾道が変わる
-    if (by > stand + maxH) continue;                  // まだ高すぎて手が届かない
+    // ⚠️ 上昇中のボールに合わせてはいけない。リムから跳ね上がっている途中の高さで解くと
+    //    そこへ向けて踏み切ってしまい、実測で 37回中18回が「ボール上昇中の踏み切り」に
+    //    なっていた（＝早すぎる）。落ちてくる側だけを取る。
+    if (vy - BALL_G * t > 0) continue;
+    // 最大リーチぎりぎりは狙わない。手をボールの上に REACH_OVER だけ出せる高さまで。
+    // （割合で削ると跳躍力の低い選手ほど余裕が足りなくなるので、絶対量で引く）
+    if (by > stand + maxH - REACH_OVER) continue;
     const x = game.ball.pos.x + game.ball.vel.x * t;
     const z = game.ball.pos.z + game.ball.vel.z * t;
     if (dist2DTo(p.pos, x, z) > runDist(p, t) + 0.35) continue;   // そこまで走って間に合わない
@@ -125,6 +131,8 @@ const FLOOR_Y = 0.32;
 const BOX_OUT_NEAR = 0.9;
 /** 踏み切りで横へ詰められる距離(m)の上限。leap は飛行全体に配られるので頂点では半分。 */
 const LEAP_MAX = 2.0;
+/** ボールの高さより手をどれだけ上に出すか(m)。上から被せて取るぶん。 */
+const REACH_OVER = 0.18;
 /** 計測用のフック（headless_sim のプローブが差す）。通常は何もしない。 */
 export const REB_DEBUG: {
   onJump?: (p: Player, gap: number, t: number, h: number, blocked: number) => void;
@@ -208,18 +216,23 @@ export function chaseLoose(game: Game, dt: number): void {
           if (plan.t <= lead + 0.03 && ready) {
             // ⚠️ 跳ぶ高さは plan.h ではなく**頂点の時刻のボールの高さ**から出す。plan.h だと
             //    少し早く踏み切った分ボールがまだ高く、実測で頂点のボールが手の上に残った。
-            const th = dur / 2;
+            const th = dur / 2;                       // 頂点までの時間
             const byPeak = game.ball.pos.y + game.ball.vel.y * th - BALL_G * th * th / 2;
             const maxH = 0.55 + rate(p.attr.jump) * 0.45;
-            // 少し余裕を見て跳ぶ（フレーの丸めと踏み切りのされで、実測でボールが手の 0.18m 上に残った）
-            const jh = clamp(byPeak - p.height * 1.35 + 0.10, 0.08, maxH) * (1 - blocked * 0.35);
-            // 残った横のズレは踏み込み(leap)で詰める。leap は飛行**全体**に配られるので、
-            // 頂点(半分の時刻)で届かせるには 2 倍を渡す。
-            // ⚠️ 倍率は「落下点までの距離(gapNow)」ではなく**接触点までの距離**で出す。
-            //    立つ場所(落下点)と接触点は最大 1.2m ほどずれるので、取り違えると詰め足りない。
-            const gapSpot = dist2DTo(p.pos, spot.x, spot.z);
-            const s = Math.min(2, LEAP_MAX / Math.max(0.01, gapSpot)) * (1 - blocked * 0.5);
-            p.jump(jh, dur, (spot.x - p.pos.x) * s, (spot.z - p.pos.z) * s);
+            // ⚠️ 「手がボールの高さちょうど」を狙うと実測で頂点の誤差が中央 0.00m になり、
+            //    半分が数cm足りずに届かなかった。リバウンドはボールの上から被せて取るので、
+            //    手が上に出る分を足す。
+            const jh = clamp(byPeak - p.height * 1.35 + REACH_OVER, 0.08, maxH) * (1 - blocked * 0.18);
+            // 頂点の時刻のボールの真下へ踏み込む。
+            // ⚠️ 踏み込み先は plan（接触点）ではなく**頂点時刻のボール位置**。実測で頂点の
+            //    水平距離が 0.60m（届く限界ちょうど）に残っていた。leap は飛行**全体**に
+            //    配られるので、頂点(半分の時刻)で届かせるには 2 倍を渡す。
+            const tx = game.ball.pos.x + game.ball.vel.x * th;
+            const tz = game.ball.pos.z + game.ball.vel.z * th;
+            const dx = tx - p.pos.x, dz = tz - p.pos.z;
+            const gd = Math.hypot(dx, dz);
+            const s = Math.min(2, LEAP_MAX / Math.max(0.01, gd)) * (1 - blocked * 0.25);
+            p.jump(jh, dur, dx * s, dz * s);
             // 実際に踏み切れた時だけ記録する（着地硬直中は jump が空振りする）
             if (p.airborne) REB_DEBUG.onJump?.(p, gapNow, plan.t, jh, blocked);
           }
@@ -245,6 +258,10 @@ export function contestShove(game: Game, dt: number): void {
     const b = game.ball.pos;
     const near = game.players.filter((p) => dist2DTo(b, p.pos.x, p.pos.z) < 1.6);
     for (const p of near) {
+      // ⚠️ 空中の選手は押されない。床を踏んでいないので押される支点が無く、実測では
+      //    踏み込み(leap)で詰めた分をこの押し出しが打ち消して、頂点の水平距離が
+      //    0.58m（届く限界ちょうど）に残っていた。
+      if (p.airborne) continue;
       // 最も近い相手（体が重なる距離のみ）
       let q: Player | null = null, qd = 0.85;
       for (const o of near) {
