@@ -24,11 +24,10 @@ clubTeam(0, 0); clubTeam(1, 1);
 const g = game as unknown as { applyRoster(): void; reset(): void };
 g.applyRoster(); g.reset();
 
-// 実測した静止姿勢での手のひらの法線（dribble.ts と同じ値）
-const PALM_N: Record<string, Vector3> = {
-  LeftHand: new Vector3(0.263, -0.904, -0.338),
-  RightHand: new Vector3(-0.279, -0.885, -0.373),
-};
+// 手のひらの法線は palm.ts の実測値（指の骨から出したもの）を使う。
+// ⚠️ ここに書いてあった (0.263,-0.904,-0.338) は古い推定値で、正しい値とは 23° ずれている。
+import { PALM_N as PALM_N_SRC } from "../src/animation/action/palm";
+const PALM_N: Record<string, Vector3> = PALM_N_SRC as unknown as Record<string, Vector3>;
 const UP = new Vector3(0, 1, 0);
 /** 手のひらが水平からどれだけ傾いているか（0° = 床と平行）。 */
 function palmTilt(p: Player, bone: string): number {
