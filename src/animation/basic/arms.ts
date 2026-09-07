@@ -74,7 +74,21 @@ Player.prototype.easeArm = function(pivot: TransformNode, target: Quaternion): v
 //    リーチの損は小さい: 全長は 2L·cos(θ/2) なので 18° でも 1% 未満（約4mm）。
 const MIN_ELBOW = 0.32;
 
+/** クォータニオンの X 軸まわりのねじれ角(rad)。IK→FK の橋渡しに使う。 */
+function twistX(q: Quaternion): number {
+  // スイング・ツイスト分解のツイスト成分だけを取る（X以外を落として正規化）。
+  const n = Math.hypot(q.x, q.w);
+  if (n < 1e-6) return 0;
+  const x = q.x / n, w = q.w / n;
+  return 2 * Math.atan2(x, w);
+}
+
 Player.prototype.bendElbow = function(node: TransformNode, amount: number): void {
+    // ⚠️ IK で回していた肘を FK へ戻すとき、rotation.x は**IK に入る前の古い値**の
+    //    ままなので、そのまま使うと1フレームでそこへ飛ぶ。実測でリリース直後の
+    //    前腕が 1800°/s（全体のレート上限）に張り付いていた原因。いまの向きを
+    //    引き継いでから FK を始める。
+    if (node.rotationQuaternion) node.rotation.x = twistX(node.rotationQuaternion);
     node.rotationQuaternion = null;   // IKで設定されたクォータニオンを解除しFK(rotation)へ戻す
     node.rotation.y = 0; node.rotation.z = 0;   // 前のポーズから残った抱え込み方向のヨーをクリア
     // ⚠️ 完全に伸ばし切らない。前腕と上腕が一直線だと棒に見えるので、どんな指定でも

@@ -3,7 +3,24 @@
 // basic/arms のムーバ経由、速度は MOVE_RATE.reach。
 import { Vector3 } from "@babylonjs/core";
 import { MOVE_RATE } from "../basic/joints";
+import { clamp } from "../../util";
 import { Player } from "../../objects/player/player";
+
+/**
+ * シュートで関節を動かす速さ(1/s)。体幹に近いほど速く＝先に着き、先端ほど遅れる。
+ *
+ * ⚠️ 以前は肩も肘も一律 MOVE_RATE.reach(30) で、実測すると上腕の角速度が
+ *    1800°/s ちょうど＝**全体のレート上限に張り付いて**いた（瞬間移動と同じ）。
+ *    しかも一番速く動く瞬間が 上腕 +0.050秒 / 前腕 +0.033秒 と、先端の方が先に
+ *    動いていて順番が逆だった。
+ */
+const SHOT_RATE = { shoulder: 21, elbow: 12 };
+/** 休めの肘の曲げ。フォロースルーの終わりをここへ合わせて、切り替えで飛ばさない。 */
+const REST_ELBOW = 0.28;
+/** なめらかな 0→1（両端で速度 0）。フォロースルーの緩め方に使う。 */
+const smooth = (t: number): number => t * t * (3 - 2 * t);
+/** a..b の区間だけ 0→1 になるランプ。関節ごとに始まりをずらして順番を作る。 */
+const ramp = (u: number, a: number, b: number): number => smooth(clamp((u - a) / (b - a), 0, 1));
 
 // 3P の溜めでボールを構える高さの上げ幅(m)。上腕が少し上がり肘が深く畳まれる。
 const DEEP_LIFT = 0.16;
@@ -27,6 +44,7 @@ declare module "../../objects/player/player" {
  *  シュートフォームへ引き継ぐ。charge 中に毎フレーム呼ぶ。 */
 Player.prototype.gatherHold = function(world: Vector3, deep = false): void {
     this.armRateCap = MOVE_RATE.reach;
+    this.followDur = 0;   // 溜め直し = 次のフォロースルーは全長を取り直す
     // ⚠️ 肘を胴に寄せる。既定の張り出し 0.70(≒35°) はボールへ手を伸ばす用で、
     //    胸の前で構えると肘が横へ大きく開いてしまう。
     this.elbowOut = deep ? 0.14 : 0.20;
@@ -77,36 +95,78 @@ Player.prototype.shootArms = function(world: Vector3, guide: boolean): void {
     const offP = R ? this.armPivotL : this.armPivotR;   // 逆手（添え手）
     const offE = R ? this.elbowL : this.elbowR;
     const offside = R ? -1 : 1;                          // 添え手の外側
-    this.armRateCap = MOVE_RATE.reach;
-    // guide 中の `world` はボールそのもの。⚠️ 手のひらをIKでボールの面に乗せる
-    // （FKで方向付けするだけだと手が腕の長さぶん通り越し、ボールが前腕に来る）。
-    // 掴む位置は片手シュートの形: 利き手はボールの後ろ（体側）・やや下、添え手は横。
-    let okDom = false, okOff = false;
-    if (guide) {
-      const th = this.root.rotation.y + this.torsoTwist;
+    // 肩のワールド位置（aimArm / reachIK と同じ式。胴のツイストを織り込む）
+    const th = this.root.rotation.y + this.torsoTwist;
+    const c = Math.cos(th), sn = Math.sin(th);
+    const px = domP.position.x, py = domP.position.y * this.root.scaling.y, pz = domP.position.z;
+    const sx = this.root.position.x + (c * px + sn * pz);
+    const sy = this.root.position.y + py;
+    const sz = this.root.position.z + (-sn * px + c * pz);
+
+    // ボールが腕の届く範囲を出たか。⚠️ 出た後も追い続けると腕が飛んでいくボールを
+    // 追いかけ、実測で上腕が 1800°/s（全体のレート上限）に張り付いていた。
+    const arm = (this.vox ? this.vox.upperArm + this.vox.foreArm : 0.55) * this.root.scaling.y;
+    const far = guide
+      && Math.hypot(world.x - sx, world.y - sy, world.z - sz) > arm + 0.20;
+    if (guide && !far) {
+      this.followDur = 0;   // 次のフォロースルーで全長を取り直す
+      // guide 中の `world` はボールそのもの。⚠️ 手のひらをIKでボールの面に乗せる
+      // （FKで方向付けするだけだと手が腕の長さぶん通り越し、ボールが前腕に来る）。
+      // 掴む位置は片手シュートの形: 利き手はボールの後ろ（体側）・やや下、添え手は横。
+      this.armRateCap = MOVE_RATE.reach;
       const bx = this.pos.x - world.x, bz = this.pos.z - world.z;   // ボール→体（後ろ側）
       const bl = Math.hypot(bx, bz) || 1;
       const back = new Vector3(world.x + (bx / bl) * 0.10, world.y - 0.04, world.z + (bz / bl) * 0.10);
       // ローカル +X（体の右）のワールド方向。添え手はその外側へ
-      const sx = Math.cos(th) * offside, sz = -Math.sin(th) * offside;
-      const sideP = new Vector3(world.x + sx * 0.13, world.y, world.z + sz * 0.13);
-      okDom = this.reachIK(domP, domE, back);
-      okOff = this.reachIK(offP, offE, sideP);
-    }
-    if (!okDom) {
-      this.aimArm(domP, world);
-      this.bendElbow(domE, guide ? 0.15 : 0);
-    }
-    if (guide) {
-      // 添え手: ボールの脇に添えるガイド（深く曲げ、押し手にしない＝両手投げに見せない）
+      const ox = Math.cos(th) * offside, oz = -Math.sin(th) * offside;
+      const sideP = new Vector3(world.x + ox * 0.13, world.y, world.z + oz * 0.13);
+      const okDom = this.reachIK(domP, domE, back);
+      const okOff = this.reachIK(offP, offE, sideP);
+      if (!okDom) {
+        // FK の逃げ道。肩→肘の順に着くよう、肘だけ遅い速さで回す。
+        this.aimArm(domP, world);
+        this.armRateCap = SHOT_RATE.elbow;
+        this.bendElbow(domE, 0.15);
+        this.armRateCap = MOVE_RATE.reach;
+      }
       if (!okOff) {
+        // 添え手: ボールの脇に添えるガイド（深く曲げ、押し手にしない＝両手投げに見せない）
         this.aimArm(offP, world);
+        this.armRateCap = SHOT_RATE.elbow;
         this.bendElbow(offE, 0.9);
       }
-    } else {
-      // フォロースルー: 添え手は横に広げず、下方向に曲げて下ろす
-      this.setArmDir(offP, offside * 0.15, -0.95, 0.1);   // ほぼ真下
-      this.bendElbow(offE, 0.6);                           // 下方向に曲げる
+      this.armRateCap = 0;
+      return;
     }
+
+    // ── フォロースルー ──────────────────────────────────────────
+    // ⚠️ 以前はリリースの形を coolT の間ずっと**固定**し、切れた瞬間に休めへ飛んで
+    //    いた。実測で終わり際の角速度が上腕 75% で 88°/s（最大 1744°/s）残っていた。
+    //    伸ばし切りから休めの形へ、体幹に近い順に緩めて 0 で着地させる。
+    if (this.followDur <= 0) {
+      this.followDur = Math.max(0.35, this.coolT);
+      // ⚠️ 放った向きをここで1回だけ覚える。以後 world は見ない。呼び元は
+      //    リリース中は「飛んでいくボール」、その後は「リム」を渡してくるので、
+      //    毎フレーム狙い直すと切り替わりの瞬間に腕が跳ねる（実測 943〜1278°/s）。
+      const dx0 = world.x - sx, dy0 = world.y - sy, dz0 = world.z - sz;
+      const dl0 = Math.hypot(dx0, dy0, dz0) || 1;
+      this.followAimX = (c * dx0 - sn * dz0) / dl0;   // ワールド → root ローカル
+      this.followAimY = dy0 / dl0;
+      this.followAimZ = (sn * dx0 + c * dz0) / dl0;
+    }
+    const u = clamp(1 - this.coolT / this.followDur, 0, 1);   // 0=リリース直後 .. 1=終わり
+    const rS = ramp(u, 0.20, 0.95);   // 肩から緩みはじめ
+    const rE = ramp(u, 0.35, 1.00);   // 肘はそのあと
+    // 利き手: 放った向きへ伸ばし切り → 真下（＝休めの向き）へ寄せていく
+    this.armRateCap = SHOT_RATE.shoulder;
+    this.setArmDir(domP, this.followAimX * (1 - rS),
+      this.followAimY * (1 - rS) - rS, this.followAimZ * (1 - rS));
+    this.armRateCap = SHOT_RATE.elbow;
+    this.bendElbow(domE, REST_ELBOW * rE);
+    // 添え手: 横に広げず、下ろしていく
+    this.armRateCap = SHOT_RATE.shoulder;
+    this.setArmDir(offP, offside * 0.15 * (1 - rS), -0.95 - 0.05 * rS, 0.1 * (1 - rS));
+    this.armRateCap = SHOT_RATE.elbow;
+    this.bendElbow(offE, 0.6 + (REST_ELBOW - 0.6) * rE);
     this.armRateCap = 0;
 };

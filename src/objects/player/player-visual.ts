@@ -2,7 +2,7 @@
 // ネームタグ描画・ユニフォーム再着色）。プロトタイプ拡張で Player に紐づけ。
 
 import { HUD_OPTS, uniformOf } from "../../config";
-import { clamp } from "../../util";
+import { clamp, expEase } from "../../util";
 import { Player } from "./player";
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
@@ -296,7 +296,11 @@ Player.prototype.sync = function(): void {
     this.root.rotation.z = this.tiltZ + this.flinchRoll;
     // シュートの溜め姿勢（前傾＋沈み込み）を反映。target は updateCharge が毎フレーム
     // 設定し、リリース後は0へ戻るので自動で伸び上がる。
-    this.shootLoad += (this.shootLoadTarget - this.shootLoad) * 0.25;
+    // ⚠️ 体幹は腕より**速く**動かす。同じか遅いと、伸び上がりより先に腕が伸びて
+    //    「先端から動く」順番になる（実測で一番速く動く瞬間が 上腕 +0.050秒 に対し
+    //    体幹 +0.033秒 と混ざっていた）。SHOT_RATE.shoulder(21) より速い 34/s。
+    //    フレーム固定の 0.25 は 60fps 前提でしか合わないので dt から出す。
+    this.shootLoad = expEase(this.shootLoad, this.shootLoadTarget, 34, this.lastDt);
     this.shootLoadTarget = 0;
     if (this.shootLoad > 0.003) this.applyShootLoad();
     // 床のボールをすくい上げる進捗（target は liveball の pickup が毎フレーム設定）。
