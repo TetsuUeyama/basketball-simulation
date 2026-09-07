@@ -69,25 +69,67 @@ export function updateLoose(game: Game, dt: number): void {
   // ルーズボールを争うのは数人だけ、残りは次に備えて広がる。争う者は各チームの最も
   // 近い者＋本当に近い者、合計3人まで。
 /**
- * ボールが高さ h まで**降りてくる**までの時間（秒）。まだ上がっている間も、
- * 降下してその高さを通る時刻を返す。届かないなら null。
+ * 「いつ・どこで・どれだけ跳べばボールに手が届くか」を弾道から解く。
+ *
+ * ⚠️ 以前は「跳んだ頂点の高さまでボールが降りてくる時刻」だけを見ていた。リバウンドの
+ *    ボールはリングから 3.05m 付近で出るので、その高さまで**上がってこない**ことが多く、
+ *    解なし → ボールの今いる場所へ走る（＝昔のまま）に落ちていた。実測で、予測した
+ *    落下点までの距離 3.40m に対しボールの今の位置まで 2.64m と、ボールを追っていた。
+ *
+ * ここでは「その時刻に走って行けて、かつその時のボールの高さが立ちリーチ＋ジャンプの
+ * 範囲に入る」最も早い時刻を探す。返す h はその時刻に必要なジャンプの高さ。
  */
-function timeToHeight(game: Game, h: number): number | null {
+function planCatch(game: Game, p: Player): { x: number; z: number; t: number; h: number } | null {
   const y0 = game.ball.pos.y, vy = game.ball.vel.y;
-  // y0 + vy t - G t^2 / 2 = h
-  const disc = vy * vy - 2 * BALL_G * (y0 - h);
-  if (disc < 0) return null;                       // その高さまで上がってこない
-  const t = (vy + Math.sqrt(disc)) / BALL_G;       // 降りてくる側の解
-  return t > 0.01 ? t : null;
+  const stand = p.height * 1.35;                     // 立ったまま手が届く高さ
+  const maxH = 0.55 + rate(p.attr.jump) * 0.45;      // 跳べる高さ
+  // 到達判定は runDist（加速を織り込んだ距離）で行う。
+  const STEP = 1 / 30;
+  for (let t = STEP; t <= 2.5; t += STEP) {
+    const by = y0 + vy * t - BALL_G * t * t / 2;
+    if (by < FLOOR_Y) break;                          // 床に着く — 以後は弾道が変わる
+    if (by > stand + maxH) continue;                  // まだ高すぎて手が届かない
+    const x = game.ball.pos.x + game.ball.vel.x * t;
+    const z = game.ball.pos.z + game.ball.vel.z * t;
+    if (dist2DTo(p.pos, x, z) > runDist(p, t) + 0.35) continue;   // そこまで走って間に合わない
+    return { x, z, t, h: Math.max(0, by - stand) };
+  }
+  return null;
 }
-/** t 秒後のボールの水平位置。 */
-function ballAt(game: Game, t: number): { x: number; z: number } {
-  return { x: game.ball.pos.x + game.ball.vel.x * t, z: game.ball.pos.z + game.ball.vel.z * t };
+/**
+ * 今の速さから t 秒で進める距離(m)。
+ * ⚠️ 以前は「いきなり最高速」で見積もっていた。実際には accelSpeed が加速度で立ち上がる
+ *    ので、その見積もりだと到達時刻が早すぎ、その時刻の高さに合わせて踏み切っても体が
+ *    そこまで届かない。結果、届く頃には plan.h が 0 になり「跳ばずに待つ」ばかりになる。
+ */
+function runDist(p: Player, t: number): number {
+  const v = p.runSpeed * 1.35;
+  const acc = 2.5 + Math.pow(rate(p.attr.accel), 2.2) * 15;
+  const v0 = Math.min(p.curSpd, v);
+  const tAcc = Math.max(0, (v - v0) / acc);
+  if (t <= tAcc) return v0 * t + acc * t * t / 2;
+  return v0 * tAcc + acc * tAcc * tAcc / 2 + v * (t - tAcc);
 }
-/** リバウンドのジャンプの長さ（秒）。頂点は半分の時刻。 */
-const REB_JUMP_DUR = 0.6;
+/** ボールが床に着く場所と時刻。手が届く時刻が無い選手はここへ向かう。 */
+function landSpot(game: Game): { x: number; z: number; t: number } {
+  const y0 = game.ball.pos.y, vy = game.ball.vel.y;
+  // ⚠️ 判別式は vy² + 2G(y0 - h)。符号を逆にすると落下時刻がほぼ 0 になり、フォールバックが
+  //    「ボールの今の位置へ全力」＝直したかったはずの昔の挙動に戻る。
+  const disc = vy * vy + 2 * BALL_G * (y0 - FLOOR_Y);
+  const t = disc >= 0 ? Math.max(0, (vy + Math.sqrt(disc)) / BALL_G) : 0;
+  return { x: game.ball.pos.x + game.ball.vel.x * t, z: game.ball.pos.z + game.ball.vel.z * t, t };
+}
+/** これより低くなったらボールは床に着いたとみなす（resolveLooseContact の下限に合わせる）。 */
+const FLOOR_Y = 0.32;
 /** 落下点の取り合いで、相手に前を取られていると判定する距離（m）。 */
 const BOX_OUT_NEAR = 0.9;
+/** 踏み切りで横へ詰められる距離(m)の上限。leap は飛行全体に配られるので頂点では半分。 */
+const LEAP_MAX = 2.0;
+/** 計測用のフック（headless_sim のプローブが差す）。通常は何もしない。 */
+export const REB_DEBUG: {
+  onJump?: (p: Player, gap: number, t: number, h: number, blocked: number) => void;
+  onEval?: (p: Player, planT: number, planH: number, gap: number, ready: boolean, lead: number) => void;
+} = {};
 
 export function chaseLoose(game: Game, dt: number): void {
     const bx = game.ball.pos.x, bz = game.ball.pos.z;
@@ -123,40 +165,67 @@ export function chaseLoose(game: Game, dt: number): void {
       if (contest.has(p)) {
         // まだ反応中 → 動き出していない（反応が速い相手が追走で先行する）
         if (p.looseReactT > 0) continue;
-        // ⚠️ 以前は「ボールの今いる場所」へ走り、頭の上へ来た瞬間に跳んでいた。
-        //    跳ね上がった直後に跳ぶので落下点の取り合いが起きず、空中で待つ形に
-        //    なっていた。**落下点を予測してそこへ入り**、頂点が到達時刻に合うよう跳ぶ。
-        const jumpH = 0.55 + rate(p.attr.jump) * 0.45;
-        const peakReach = p.height * 1.35 + jumpH;        // 跳んだ頂点で手が届く高さ
-        const tc = timeToHeight(game, peakReach);
-        const spot = tc !== null ? ballAt(game, tc) : { x: bx, z: bz };
-        // ⚠️ 一定の全力走だと落下点に間に合わず、頂点でボールと 0.93m 離れていた。
-        //    残り時間から必要な速さを出す（上限はランジスプリント）。パスの受け手と同じ考え方。
-        const cv = game.steerAround(p, spot.x, spot.z);
-        const gapNow = dist2DTo(p.pos, spot.x, spot.z);
-        const base = p.accelSpeed(dt, game.isBig(p) ? 1.0 : 0.9);
-        const need = tc !== null && tc > 0.05 ? gapNow / tc : base;
-        moveToward2D(p.pos, cv.x, cv.z, Math.min(Math.max(need, base), p.runSpeed * 1.35) * dt);
+        // 立つ場所は**落下点**（動かない一点）。踏み切りだけ弾道の解 plan で決める。
+        // ⚠️ plan（「ぎりぎり間に合う最も早い接触点」）へ走らせると、走るほど接触点が
+        //    自分側へ寄ってくる＝目標が動き続け、落下点で構える形にならない。
+        const plan = planCatch(game, p);
+        const land = landSpot(game);
+        const cv = game.steerAround(p, land.x, land.z);
+        const gapNow = dist2DTo(p.pos, land.x, land.z);
+        const spot = plan ?? land;   // 踏み切りで詰める先は接触点
+        // 残り時間から必要な速さを出す。
+        // ⚠️ 必要な速さをそのまま moveToward2D に渡してはいけない。accelSpeed を素通りする
+        //    ので着地硬直（rootT の完全硬直・landT のスロットル）が効かず、**着地した
+        //    瞬間に全速で動き出して床のボールを拾う**ようになっていた。倍率にして通す。
+        const want = land.t > 0.05 ? gapNow / land.t : p.runSpeed;
+        const lo = game.isBig(p) ? 1.0 : 0.9;
+        const mult = clamp(want / Math.max(0.1, p.runSpeed), lo, 1.35);
+        moveToward2D(p.pos, cv.x, cv.z, p.accelSpeed(dt, mult) * dt);
         game.clampCourt(p.pos);
         // 落下点の取り合い: 相手に前（落下点側）を取られていると踏み切りが遅れる
         let blocked = 0;
         for (const o of game.players) {
           if (o.team === p.team || o === p) continue;
           if (dist2DTo(o.pos, p.pos.x, p.pos.z) > BOX_OUT_NEAR) continue;
-          const mine = dist2DTo(p.pos, spot.x, spot.z), theirs = dist2DTo(o.pos, spot.x, spot.z);
+          const mine = gapNow, theirs = dist2DTo(o.pos, land.x, land.z);
           if (theirs < mine) blocked = Math.max(blocked, clamp(rate(o.attr.balance) - rate(p.attr.balance) + 0.25, 0, 1));
         }
-        // 頂点が到達時刻に合うタイミングで踏み切る（前を取られていると遅れて跳ぶ）。
-        // ⚠️ 窓を「その瞬間だけ」にすると跳び損ねる。実測でリバウンドが床まで落ちる
-        //    割合が 39% → 64% に悪化した。少し早めから跳べる幅を持たせる。
-        const gapToSpot = dist2DTo(p.pos, spot.x, spot.z);
-        const lead = REB_JUMP_DUR / 2 * (1 - blocked * 0.5);
-        const canReach = gapToSpot < 1.4 || gapToSpot / Math.max(0.05, tc ?? 1) < p.runSpeed;
-        if (!p.airborne && tc !== null && tc <= lead + 0.12 && canReach) {
-          p.jump(jumpH * (1 - blocked * 0.35), REB_JUMP_DUR);
-        } else if (!p.airborne && game.ball.pos.y > 1.7 && distToBall(p) < 1.3
-          && (tc === null || tc <= lead + 0.12)) {
-          p.jump(jumpH, REB_JUMP_DUR);   // 予測できない（弾かれた直後など）は従来どおり
+        if (p.airborne) continue;
+        if (REB_DEBUG.onEval) {
+          const d = plan ? clamp(0.34 + plan.h * 0.34, 0.34, 0.70) : 0;
+          REB_DEBUG.onEval(p, plan ? plan.t : -1, plan ? plan.h : -1, gapNow,
+            plan ? gapNow <= runDist(p, plan.t) + LEAP_MAX / 2 + 0.35 : false,
+            d / 2 * (1 - blocked * 0.5));
+        }
+        if (plan && plan.h > 0.05) {
+          // 頂点が到達時刻に合うよう、跳ぶ時間の半分だけ早く踏み切る。
+          // 前を取られているとさらに遅れ、跳ぶ高さも下がる。
+          const dur = clamp(0.34 + plan.h * 0.34, 0.34, 0.70);
+          const lead = dur / 2 * (1 - blocked * 0.5);
+          // 落下点に立てていないうちは跳ばない（跳んでも空振りして、着地後に拾う形になる）
+          // planCatch が加速込みで到達可能な時刻しか返さないので、踏み込み(leap)の分だけ余裕を見る。
+          const ready = gapNow <= runDist(p, plan.t) + LEAP_MAX / 2 + 0.35;
+          if (plan.t <= lead + 0.03 && ready) {
+            // ⚠️ 跳ぶ高さは plan.h ではなく**頂点の時刻のボールの高さ**から出す。plan.h だと
+            //    少し早く踏み切った分ボールがまだ高く、実測で頂点のボールが手の上に残った。
+            const th = dur / 2;
+            const byPeak = game.ball.pos.y + game.ball.vel.y * th - BALL_G * th * th / 2;
+            const maxH = 0.55 + rate(p.attr.jump) * 0.45;
+            // 少し余裕を見て跳ぶ（フレーの丸めと踏み切りのされで、実測でボールが手の 0.18m 上に残った）
+            const jh = clamp(byPeak - p.height * 1.35 + 0.10, 0.08, maxH) * (1 - blocked * 0.35);
+            // 残った横のズレは踏み込み(leap)で詰める。leap は飛行**全体**に配られるので、
+            // 頂点(半分の時刻)で届かせるには 2 倍を渡す。
+            // ⚠️ 倍率は「落下点までの距離(gapNow)」ではなく**接触点までの距離**で出す。
+            //    立つ場所(落下点)と接触点は最大 1.2m ほどずれるので、取り違えると詰め足りない。
+            const gapSpot = dist2DTo(p.pos, spot.x, spot.z);
+            const s = Math.min(2, LEAP_MAX / Math.max(0.01, gapSpot)) * (1 - blocked * 0.5);
+            p.jump(jh, dur, (spot.x - p.pos.x) * s, (spot.z - p.pos.z) * s);
+            // 実際に踏み切れた時だけ記録する（着地硬直中は jump が空振りする）
+            if (p.airborne) REB_DEBUG.onJump?.(p, gapNow, plan.t, jh, blocked);
+          }
+        } else if (!plan && game.ball.pos.y > 1.7 && distToBall(p) < 1.3) {
+          // 弾道が読めない（はたかれた直後など）は従来どおり、頭の上へ来たら跳ぶ
+          p.jump(0.55 + rate(p.attr.jump) * 0.45, 0.6);
         }
       } else {
         // 争っていない → 攻めの定位置へ流れて備える。ただし攻撃性が高いほど先行(先走り)、低い選手は

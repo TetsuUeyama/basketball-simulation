@@ -880,7 +880,12 @@ export class Game {
       vic.foulStumble = false; vic.foulStaggerX = vic.foulStaggerZ = 0;
     }
     // ボールがこぼれた反応: 反応の速い選手が先に飛びつく(reactionLag で遅延)。
-    for (const p of this.players) p.looseReactT = reactionLag(p);
+    // ⚠️ リバウンドだけは別。こぼれ球は「不意」だがリバウンドは**予期している**（シュートが
+    //    上がった時点で全員が落下を見ている）。驚きの遅れ(中央0.45秒)をそのまま使うと、
+    //    動き出す頃にはボールがリムの高さから立ちリーチの下まで落ちきっていて、
+    //    「跳んで確保する」場面が構造的に起きない（実測: 4試合 22 回のリバウンドで踏み切り 3 回）。
+    const antic = this.looseIsRebound ? 0.3 : 1;
+    for (const p of this.players) p.looseReactT = reactionLag(p) * antic;
   }
 
   // ミス後、ボールはリムに跳ねてライブになる(updateLoose 参照)。
