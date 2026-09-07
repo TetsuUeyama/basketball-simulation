@@ -68,6 +68,27 @@ export function updateLoose(game: Game, dt: number): void {
 
   // ルーズボールを争うのは数人だけ、残りは次に備えて広がる。争う者は各チームの最も
   // 近い者＋本当に近い者、合計3人まで。
+/**
+ * ボールが高さ h まで**降りてくる**までの時間（秒）。まだ上がっている間も、
+ * 降下してその高さを通る時刻を返す。届かないなら null。
+ */
+function timeToHeight(game: Game, h: number): number | null {
+  const y0 = game.ball.pos.y, vy = game.ball.vel.y;
+  // y0 + vy t - G t^2 / 2 = h
+  const disc = vy * vy - 2 * BALL_G * (y0 - h);
+  if (disc < 0) return null;                       // その高さまで上がってこない
+  const t = (vy + Math.sqrt(disc)) / BALL_G;       // 降りてくる側の解
+  return t > 0.01 ? t : null;
+}
+/** t 秒後のボールの水平位置。 */
+function ballAt(game: Game, t: number): { x: number; z: number } {
+  return { x: game.ball.pos.x + game.ball.vel.x * t, z: game.ball.pos.z + game.ball.vel.z * t };
+}
+/** リバウンドのジャンプの長さ（秒）。頂点は半分の時刻。 */
+const REB_JUMP_DUR = 0.6;
+/** 落下点の取り合いで、相手に前を取られていると判定する距離（m）。 */
+const BOX_OUT_NEAR = 0.9;
+
 export function chaseLoose(game: Game, dt: number): void {
     const bx = game.ball.pos.x, bz = game.ball.pos.z;
     const distToBall = (p: Player) => dist2DTo(p.pos, bx, bz);
@@ -102,13 +123,40 @@ export function chaseLoose(game: Game, dt: number): void {
       if (contest.has(p)) {
         // まだ反応中 → 動き出していない（反応が速い相手が追走で先行する）
         if (p.looseReactT > 0) continue;
-        // 邪魔な体を避けてボールを追う
-        const cv = game.steerAround(p, bx, bz);
-        moveToward2D(p.pos, cv.x, cv.z, p.accelSpeed(dt, game.isBig(p) ? 1.0 : 0.9) * dt);
+        // ⚠️ 以前は「ボールの今いる場所」へ走り、頭の上へ来た瞬間に跳んでいた。
+        //    跳ね上がった直後に跳ぶので落下点の取り合いが起きず、空中で待つ形に
+        //    なっていた。**落下点を予測してそこへ入り**、頂点が到達時刻に合うよう跳ぶ。
+        const jumpH = 0.55 + rate(p.attr.jump) * 0.45;
+        const peakReach = p.height * 1.35 + jumpH;        // 跳んだ頂点で手が届く高さ
+        const tc = timeToHeight(game, peakReach);
+        const spot = tc !== null ? ballAt(game, tc) : { x: bx, z: bz };
+        // ⚠️ 一定の全力走だと落下点に間に合わず、頂点でボールと 0.93m 離れていた。
+        //    残り時間から必要な速さを出す（上限はランジスプリント）。パスの受け手と同じ考え方。
+        const cv = game.steerAround(p, spot.x, spot.z);
+        const gapNow = dist2DTo(p.pos, spot.x, spot.z);
+        const base = p.accelSpeed(dt, game.isBig(p) ? 1.0 : 0.9);
+        const need = tc !== null && tc > 0.05 ? gapNow / tc : base;
+        moveToward2D(p.pos, cv.x, cv.z, Math.min(Math.max(need, base), p.runSpeed * 1.35) * dt);
         game.clampCourt(p.pos);
-        // 上空1ストライド以内のボールに跳躍を合わせる
-        if (!p.airborne && game.ball.pos.y > 1.7 && distToBall(p) < 1.3) {
-          p.jump(0.55 + rate(p.attr.jump) * 0.45, 0.6);
+        // 落下点の取り合い: 相手に前（落下点側）を取られていると踏み切りが遅れる
+        let blocked = 0;
+        for (const o of game.players) {
+          if (o.team === p.team || o === p) continue;
+          if (dist2DTo(o.pos, p.pos.x, p.pos.z) > BOX_OUT_NEAR) continue;
+          const mine = dist2DTo(p.pos, spot.x, spot.z), theirs = dist2DTo(o.pos, spot.x, spot.z);
+          if (theirs < mine) blocked = Math.max(blocked, clamp(rate(o.attr.balance) - rate(p.attr.balance) + 0.25, 0, 1));
+        }
+        // 頂点が到達時刻に合うタイミングで踏み切る（前を取られていると遅れて跳ぶ）。
+        // ⚠️ 窓を「その瞬間だけ」にすると跳び損ねる。実測でリバウンドが床まで落ちる
+        //    割合が 39% → 64% に悪化した。少し早めから跳べる幅を持たせる。
+        const gapToSpot = dist2DTo(p.pos, spot.x, spot.z);
+        const lead = REB_JUMP_DUR / 2 * (1 - blocked * 0.5);
+        const canReach = gapToSpot < 1.4 || gapToSpot / Math.max(0.05, tc ?? 1) < p.runSpeed;
+        if (!p.airborne && tc !== null && tc <= lead + 0.12 && canReach) {
+          p.jump(jumpH * (1 - blocked * 0.35), REB_JUMP_DUR);
+        } else if (!p.airborne && game.ball.pos.y > 1.7 && distToBall(p) < 1.3
+          && (tc === null || tc <= lead + 0.12)) {
+          p.jump(jumpH, REB_JUMP_DUR);   // 予測できない（弾かれた直後など）は従来どおり
         }
       } else {
         // 争っていない → 攻めの定位置へ流れて備える。ただし攻撃性が高いほど先行(先走り)、低い選手は
