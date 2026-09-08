@@ -7,6 +7,9 @@ import { perimContest, palmRadius, rimProtect } from "../../eval";
 
 // ジャンプシュート（ミドル/3P）の成功確率。距離・射程・コンテストから算出し、
 // 0.02〜0.93 にクランプして返す（レイアップ/ダンクは finishAtRim 側で別途）。
+/** 3P の基準成功率。ここを 0.16 にすると実測 43%、0.11 で約36%。 */
+const THREE_BASE = 0.14;
+
 export function jumpShotMakeProbability(
   h: Player, dHoop: number, dDef: number,
   ctx: {
@@ -21,7 +24,8 @@ export function jumpShotMakeProbability(
   const isThree = dHoop > THREE_DIST;
   // make % = この距離での選手の技量から、距離とコンテストを差し引く
   const skill = rate(isThree ? h.attr.threeAcc : h.attr.midAcc);
-  const baseLine = isThree ? 0.16 : 0.30;
+  // ⚠️ 3P の基準値。実測で 3P が 43% 入っていた（実際のバスケットは約36%）。
+  const baseLine = isThree ? THREE_BASE : 0.30;
   const distRef = isThree ? THREE_DIST : 1.5;
   // L速度は深い3Pの減衰を緩め、特能ミドルは全距離で緩める
   let falloff = isThree ? 0.05 - rate(h.attr.threeRange) * 0.035 : 0.03;

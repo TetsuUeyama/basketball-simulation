@@ -58,6 +58,10 @@ type GameState = "live" | "final";
 // 画面上の短いイベント表示（例: "3 POINTS!", "STEAL"）。
 export interface GameEvent { text: string; team: number; scorer?: string; assist?: string; }
 
+/** ミスした球がリムから横へ飛ぶ初速(m/s)。大きいほど外へ散る。 */
+const REB_SIDE = 1.9;
+/** 同じく、ゴールから外へ向かう初速の上限(m/s)。 */
+const REB_OUT = 2.4;
 export class Game {
   readonly players: Player[] = [];   // コート上: [0..4]=チーム0の枠 / [5..9]=チーム1の枠
   readonly roster: Player[][] = [[], []]; // 13人フルロスター（先発+ベンチ）
@@ -895,7 +899,8 @@ export class Game {
   rimBounceOff(): void {
     const rim = this.attackRim(this.possession);
     this.ball.pos.set(rim.x + rand(-0.3, 0.3), RIM.height + 0.1, rim.z + rand(-0.2, 0.2));
-    this.ball.vel.set(rand(-3.4, 3.4), rand(1.2, 3.0), -Math.sign(rim.z || 1) * rand(0.8, 3.6));
+    this.ball.vel.set(rand(-REB_SIDE, REB_SIDE), rand(1.2, 3.0),
+      -Math.sign(rim.z || 1) * rand(0.6, REB_OUT));
     this.ballFalling = true;
   }
 
@@ -903,7 +908,10 @@ export class Game {
     const rim = this.attackRim(this.possession);
     this.ball.pos.set(rim.x + rand(-0.3, 0.3), RIM.height + 0.1, rim.z + rand(-0.2, 0.2));
     // リング(鉄)から: 少し上へ、その後外側へ床に向かって
-    this.ball.vel.set(rand(-3.4, 3.4), rand(1.2, 3.0), -Math.sign(rim.z || 1) * rand(0.8, 3.6));
+    // ⚠️ 横(x)の初速が ±3.4m/s と大きく、実測で外れた球の落下点がリムから中央 7.10m、
+    //    横 3.75m まで飛んでいた。横を抑えてゴール下寄りに落とす。
+    this.ball.vel.set(rand(-REB_SIDE, REB_SIDE), rand(1.2, 3.0),
+      -Math.sign(rim.z || 1) * rand(0.6, REB_OUT));
     this.goLoose(this.possession, 2.6, { rebound: true, fromRim: true });
 
     // ビッグ(とリム直下の誰でも)がボードを争って跳ぶ
