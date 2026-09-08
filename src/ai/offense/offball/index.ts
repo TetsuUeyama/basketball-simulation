@@ -176,6 +176,11 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
 
 // スポットを一定時間保った後の次の動き: スクリーン設定 / バスケットカット / より
 // オープンなスポットへドリフト。同時にスクリーナー/カッターは最大1人で間合いを保つ。
+/** 中にポストが居るときのカットの起こりやすさ。1 = 変わらず。
+ *  ⚠️ 0.55 では中に人が居るだけでカットがほぼ止まっていた。空いている側から入る
+ *     ようにしたので、抑える必要は小さい。 */
+const POST_HOME_CUT = 0.85;
+
 function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player): void {
   const rim = game.attackFloor(team);
   const busy = countScreening(game, team);   // 他のスクリーナーのみ排他（カットとは併存可）
@@ -191,7 +196,7 @@ function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player
       && !(game.handler && (game.handler.beatenT > 0 || game.handler.powerT > 0
         || game.handler.jukeT > 0))
       && chance((0.2 + p.offPriority * 0.25 + rate(p.attr.aggression) * 0.15
-        + (p.has("lineMove") ? 0.15 : 0)) * (postHome ? 0.55 : 1))) {
+        + (p.has("lineMove") ? 0.15 : 0)) * (postHome ? POST_HOME_CUT : 1))) {
     p.cutting = true;
     // ポストが占有していればエルボーへ、空いていればリムまで
     let occL = false, occR = false;
@@ -203,9 +208,12 @@ function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player
     const sgn = Math.sign(rim.z);
     let tx: number, tz: number;
     if (occL || occR) {
+      // ⚠️ 以前はポストが居るだけでエルボー止まりにしていた。中に1人しか置かない
+      //    配置にしたのに誰もリムへ入らず、実測でゴール下の試投が 5.6 本/試合まで
+      //    落ちた。**空いている側からリムへ入る**。
       const ex = occR ? -1 : occL ? 1 : (chance(0.5) ? 1 : -1);
-      tx = rim.x + ex * rand(1.6, 2.4);
-      tz = rim.z - sgn * rand(3.6, 5.0);            // エルボー/FTライン付近
+      tx = rim.x + ex * rand(0.8, 1.7);
+      tz = rim.z - sgn * rand(0.5, 1.6);            // 空いている側のリム下
     } else {
       tx = rim.x + rand(-0.6, 0.6);
       tz = rim.z - sgn * 0.4;                       // リムまで

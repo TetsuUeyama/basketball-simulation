@@ -11,6 +11,9 @@ import { activeScreener, usingScreen, driveImpeder } from "../reads";
 import { decide } from "./decide";
 import type { Game } from "../../../game";
 
+/** トップのスポットよりこれ以上後ろに居たら、上がってセットアップする(m)。 */
+const SET_UP_SLACK = 0.8;
+
 export function runOffense(game: Game, dt: number, h: Player): void {
     // 空中でリバウンドを掴んだ直後: 着地を待たず、そのままプットバック/アウトレットへ。
     if (h.reboundGo) {
@@ -122,6 +125,14 @@ export function runOffense(game: Game, dt: number, h: Player): void {
         const base = game.isBig(h) ? 0.34 : 0.38;
         mult *= clamp(base + edge * 0.6, 0.2, 0.95);
       } else {
+        // ⚠️ セットアップの位置まで上がる。これが無いと、運んできた場所に居座って
+        //    そこでパスを裁くだけになる。実測でハンドラーがリムから 10.59m
+        //    （センターサークル付近）に留まり、ペイント内の攻撃側は 0.54 人しか
+        //    居なかった。move が無い間はトップのスポットまで運ぶ。
+        const setUp = game.formationSpots(h.team)[0];
+        if (dist2D(h.pos, rimFloor) > dist2D(setUp, rimFloor) + SET_UP_SLACK) {
+          tx = setUp.x; tz = setUp.z;
+        }
         const av = game.steerAround(h, tx, tz, true);
         tx = av.x; tz = av.z;
         if (imp) mult *= 0.8;   // 体のすぐ横をかすめて抜けてもタダではない

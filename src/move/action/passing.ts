@@ -16,6 +16,13 @@ import { wantSave, beginSave, updateSaveChase, saveCatch } from "./save";
 import type { Game } from "../../game";
 
 // 投げるべき味方を選び、投げてよいか判定する。カバーされた受け手には投げない。
+/** この距離(m)以内の味方は「ゴール下」。 */
+const RIM_FEED_RANGE = 3.4;
+/** ゴール下の味方にヘルプが来ているかを見る距離(m)。 */
+const RIM_HELP_RANGE = 2.2;
+/** カバーの来ていないゴール下への配球にどれだけ上乗せするか。 */
+const RIM_FEED = 5.0;
+
 export function chooseReceiver(game: Game, h: Player): Player | null {
   const rimFloor = game.attackFloor(h.team);
   const tac = game.tactics[h.team].offense;
@@ -41,7 +48,12 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
     // フロントコート確立後、ハーフより後ろへの返しは違反 — 候補にしない
     if (game.frontT && game.attackSign(h.team) * p.pos.z < 0.4) continue;
     // レーンに体を置かれたら計算前にパス不可
-    if (laneVetoed(game.oppTeam(h), h, p)) continue;
+    // ⚠️ ただしゴール下への配球は別扱い。ここで一律に弾いていたため、実測で
+    //    「ゴール下にフリーな味方が居るフレーム」が 30% あるのに、そこへの配球は
+    //    パス全体の 5.0% しか出ていなかった。中へ入れる球は必ず誰かの近くを通る。
+    //    バウンズで手の下をくぐらせる前提で通し、成否はリスク計算に任せる。
+    const toRim = dist2D(p.pos, rimFloor) < RIM_FEED_RANGE;
+    if (!toRim && laneVetoed(game.oppTeam(h), h, p)) continue;
     const risk = passRisk(game.oppTeam(h), h, p);
 
     // リム際でワイドオープンのカッターは賭ける価値あり。それ以外は許容超のリスクは拒否
@@ -57,6 +69,11 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
     // vision: 低い攻判断は各選択肢の良さを見誤る
     let value = open + progress * 3 + rand(-1, 1) * (1 - rate(h.attr.offense)) * 0.8;
     if (p.cutting) value += 1.5;            // カッターへのフィードを評価
+    // ⚠️ ゴール下でカバーが来ていない味方は最優先。守備が戻る前に入れる。
+    //    実測でゴール下の試投が 6.4 本/試合しか出ておらず、パスで穴を突けていなかった。
+    if (dist2D(p.pos, rimFloor) < RIM_FEED_RANGE && game.defendersWithin(p, RIM_HELP_RANGE) <= 1) {
+      value += RIM_FEED;
+    }
     if (atRimCutter) value += 1.5;          // …特にリムで空いている者
     if (p.openRollT > 0) value += 2.0;      // 守備が空けたローラーへのポケットパス
     // お膳立て: 良いパサーはオープンシューターを狩る(P精度が高いほど優先)
@@ -159,8 +176,10 @@ export function passToReceiver(
 
   // 全パス共通の最終安全ゲート: レーン守備/高リスク/ダブルチームへは投げない(唯一の
   // チョークポイント)。本当のリムカッター(ギブ&ゴー)のみ例外。
+  // ゴール下への配球は、レーン拒否だけ免除する（リスク計算・ダブルチームの判定は残す）。
+  const feedRim = dist2D(target.pos, game.attackFloor(target.team)) < RIM_FEED_RANGE;
   if (!force && game.shotClock > 2
-      && (laneVetoed(game.oppTeam(h), h, target, style)
+      && ((!feedRim && laneVetoed(game.oppTeam(h), h, target, style))
         || passRisk(game.oppTeam(h), h, target) > 0.3
         || (!target.cutting && game.nearestDefenderDist(target) < 1.0)
         || (!target.cutting && (doubleTeamed(game, target) || target.trappedT > 0)))) {
