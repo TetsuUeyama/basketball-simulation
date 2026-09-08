@@ -4,7 +4,7 @@ import { Player } from "../../objects/player/player";
 import { LANE_W } from "../../config";
 import type { PassStyle } from "../../config";
 import { rate, clamp, dist2D, chance, segPerp } from "../../util";
-import { passZip, passHeightAt, passReleaseY, reachFactor } from "../../eval";
+import { passZip, passHeightAt, passReleaseY, reachFactor, leapHeight } from "../../eval";
 
 // パスレーンに最も入り込んでいる守備者（レーン中央付近、両端に寄っていない者）を返す。
 export function laneBlock(
@@ -110,9 +110,9 @@ export function longBallBest(
     //    その地点のボールの高さで手の届き具合を掛ける。走り込みながら低い球へ手を
     //    下ろすのは難しいので、低いほど厳しくする。
     const y = passHeightAt(style, t, passReleaseY(style), 1.0);
-    let reach = reachFactor(df, y);
+    const spare = flightT * t - perp / Math.max(0.5, df.runSpeed * 0.85);
+    const reach = closeReach(df, y, spare);
     if (reach <= 0) continue;
-    if (y < LOW_PASS) reach *= LOW_CLOSE + (1 - LOW_CLOSE) * clamp(y / LOW_PASS, 0, 1);
     let p = 0.35 + hang * 0.3 + rate(df.attr.reaction) * 0.2
       - rate(from.attr.passAcc) * 0.2;
     if (df.has("interceptor")) p += 0.2;
@@ -167,19 +167,16 @@ export function closingBest(
     if (perp <= LANE_W * VETO_FRAC) continue;             // 既にレーンの中 → そこへは投げない
     if (perp > CLOSE_MAX) continue;                       // 遠すぎて話にならない
     const y = passHeightAt(style, t, passReleaseY(style), 1.0);
-    let reach = reachFactor(d, y);
-    if (reach <= 0) continue;                             // 手の届かない高さを通る
-    // ⚠️ 走り込みながら低い球へ手を下ろすのは難しい。バウンズパスが「相手が近くに
-    //    居ても通る」のはこれが理由。止まって構えている相手より厳しくする。
-    //    これが無いと、バウンズは球が遅いぶん詰める時間が増えるだけになり、実測で
-    //    カット率がチェスト 0.0% に対しバウンズ 8.9% と逆転していた。
-    if (y < LOW_PASS) reach *= LOW_CLOSE + (1 - LOW_CLOSE) * clamp(y / LOW_PASS, 0, 1);
     const tt = flightT * t;                               // その点をボールが通るまでの時間
     const cover = d.runSpeed * CLOSE_SPEED * tt
       + 0.35 + rate(d.attr.agility) * 0.25                // 最後の一歩＋手を伸ばす分
       + (d.has("interceptor") ? 0.35 : 0);
     const margin = cover - perp;
     if (margin < 0) continue;                             // 間に合わない
+    // 走って詰めきったあとに残る時間。高い球はここが踏み切りの余裕になる。
+    const spare = tt - perp / Math.max(0.5, d.runSpeed * CLOSE_SPEED);
+    const reach = closeReach(d, y, spare);
+    if (reach <= 0) continue;                             // 届かない高さを通る
     const hawk = rate(d.attr.reaction) * 0.5 + rate(d.attr.defense) * 0.3
       + rate(d.attr.agility) * 0.2;
     let p = clamp(margin / CLOSE_SPAN, 0, 1) * (0.30 + hawk * 0.55) * reach;
@@ -190,6 +187,36 @@ export function closingBest(
   }
   return best;
 }
+/**
+ * 走り込んだ守備者が、その高さの球へ手を出せるか(0..1)。
+ * 高さの帯で必要なものが変わる。チェストのような胸〜頭の高さは走りながらでも手が
+ * 出るが、高い球は伸び上がるか踏み切るかが要る。
+ *   胸〜頭(身長×1.05)まで … reachFactor そのまま
+ *   立ちリーチ(身長×1.33)まで … 伸び上がるので当たりが薄い（HIGH_RUN）
+ *   それより上 … **踏み切る余裕(spare)が PLANT_T 以上ある時だけ**跳んで届く
+ *   低い球(0.75m未満) … 走りながら手を下ろすのが難しい（LOW_CLOSE）
+ * spare = ボールがその点を通るまでの時間 − 走って詰めるのに要る時間。
+ */
+function closeReach(d: Player, y: number, spare: number): number {
+  const easy = d.height * 1.05;
+  if (y <= easy) {
+    let r = reachFactor(d, y);
+    if (y < LOW_PASS) r *= LOW_CLOSE + (1 - LOW_CLOSE) * clamp(y / LOW_PASS, 0, 1);
+    return r;
+  }
+  const stand = d.height * 1.33;
+  if (y <= stand) return reachFactor(d, y) * HIGH_RUN;
+  if (spare < PLANT_T) return 0;                       // 走り切るだけで精一杯 → 踏み切れない
+  const top = stand + leapHeight(d);
+  if (y > top) return 0;
+  return clamp(1 - (y - stand) / Math.max(0.05, top - stand), 0, 1) * HIGH_JUMP;
+}
+/** 伸び上がって触る帯の当たりにくさ。 */
+const HIGH_RUN = 0.45;
+/** 踏み切って触る帯の当たりにくさ。 */
+const HIGH_JUMP = 0.55;
+/** 踏み切るのに要る余裕(秒)。走り込みでこれだけ残っていないと跳べない。 */
+const PLANT_T = 0.22;
 /** 走り込みでカットを狙える、レーンからの最大距離(m)。 */
 const CLOSE_MAX = 4.5;
 /** 詰めに使える走速度の割合（横方向へのダッシュなので全速では走れない）。 */

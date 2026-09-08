@@ -4,7 +4,7 @@ import { Player } from "../../objects/player/player";
 import { COURT, MAX_PASS, SHOT_CLOCK, PASS_STYLE, PASS_ONE_HAND, PASS_AIRBORNE, PASS_ZIP_MIN, PASS_GATHER, MAX_PASS_GATHER } from "../../config";
 import type { PassStyle } from "../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D } from "../../util";
-import { twWeight, effShootRange, reactionLag, shotThreat, passZip, passReleaseY, passHeightAt } from "../../eval";
+import { twWeight, effShootRange, reactionLag, shotThreat, passZip, passReleaseY, passHeightAt, leapHeight } from "../../eval";
 import { laneVetoed, bestPassStyle, passRisk, evalInterception, longBallRead } from "../reaction/pass-risk";
 import { runDefenseDuringDeadish } from "../../ai/defense";
 import { updateOffBallMotion } from "../../ai/offense/offball";
@@ -244,6 +244,18 @@ export function updatePass(game: Game, dt: number): void {
     const spdS = Math.min(gapS / remainS, d.runSpeed * 1.35);
     moveToward2D(d.pos, ix, iz, spdS * dt);
     game.clampCourt(d.pos);
+    // 高い球は踏み切って合わせる。⚠️ 以前は走って立ったまま手を上げるだけで、
+    //    実測でカット 24 本すべてが立ちリーチの内側（中央で 0.99m 下）だった。
+    //    頂点が到達時刻に合うよう、跳ぶ時間の半分だけ早く踏み切る。
+    const yAt = passHeightAt(game.passStyle, game.passSteal.at,
+      passReleaseY(game.passStyle), 1.0);
+    if (!d.airborne && d.landT <= 0 && yAt > d.height * 1.05 && gapS < 1.4) {
+      const need = Math.max(0.05, yAt - d.height * 1.35);
+      const dur = clamp(0.30 + need * 0.32, 0.30, 0.64);
+      if (remainS <= dur / 2 + 0.03) {
+        d.jump(clamp(need + 0.12, 0.10, leapHeight(d)), dur);
+      }
+    }
   }
 
   // パスを受ける: 受け手はキャッチ点へ迎えに来る(残り時間で残りギャップを詰める、ランジ
