@@ -60,7 +60,8 @@ export const HUD_OPTS: {
 //   dealMs:   補充した札が手札に入るアニメの長さ(ms)
 export const POKER_OPTS: {
   userTeam: number | null; home: number; thinkMs: number; stepMs: number; dealMs: number;
-} = { userTeam: 0, home: 0, thinkMs: 900, stepMs: 420, dealMs: 260 };
+//   ⚠️ 既定は null（CPU 対 CPU）。タイトルで「あなた 対 CPU」を選ぶと 0 になる。
+} = { userTeam: null, home: 0, thinkMs: 900, stepMs: 420, dealMs: 260 };
 
 export const PLAYER_SPEED = 6.2;  // オフェンス時の走行速度
 export const DEF_SPEED = 6.5;     // 守備がリカバーできるよう少しだけ速い

@@ -32,7 +32,7 @@ UI.prototype.buildTitle = function(): void {
       fontSize: "clamp(17px,3.9vw,28px)", fontWeight: "800", letterSpacing: "1px",
     } as Partial<CSSStyleDeclaration>);
     const sub = document.createElement("div");
-    sub.textContent = "対戦モードを選択";
+    sub.textContent = "クラブを選んで対戦（クラブ選択画面でランダムも選べます）";
     Object.assign(sub.style, { fontSize: "13px", opacity: "0.6", marginBottom: "2px" } as Partial<CSSStyleDeclaration>);
 
     const bigBtn = (label: string, desc: string, onClick: () => void): HTMLButtonElement => {
@@ -87,25 +87,11 @@ UI.prototype.buildTitle = function(): void {
     }
     paintMode();
 
+    // ⚠️ 「ランダムクラブ」「ランダム対戦」はここから外した。ランダムはクラブ選択
+    //    画面の中で選べる（リーグ選択前なら全チーム、リーグ選択後はそのリーグから）。
     const clubBtn = bigBtn("クラブチーム対戦", "リーグとチームを選んで対戦", () => this.startClubMatchup());
-    const randClubBtn = bigBtn("ランダムクラブ", "実クラブをランダムに選んで対戦", () => {
-      // 実クラブから重複しない2つをランダムに選ぶ
-      const a = Math.floor(Math.random() * CLUBS.length);
-      let b = Math.floor(Math.random() * CLUBS.length);
-      if (CLUBS.length > 1) { while (b === a) b = Math.floor(Math.random() * CLUBS.length); }
-      this.assignClub(0, a);        // ロスター + 名前 + ユニフォーム + 自動ラインナップ/ロール
-      this.assignClub(1, b);
-      this.onSetupLineups();        // 相手を考慮した DEFAULT の5人（エディタ表示前）
-      this.refreshEditors();
-      this.setPhase("pregame");
-    });
-    const randBtn = bigBtn("ランダム対戦", "ランダム編成で対戦（編成は自由に変更可）", () => {
-      this.newMatchup();
-      this.onSetupLineups();        // 相手を考慮した DEFAULT の5人（エディタ表示前）
-      this.setPhase("pregame");
-    });
 
-    p.append(title, modeRow, sub, clubBtn, randClubBtn, randBtn);
+    p.append(title, modeRow, sub, clubBtn);
     this.root.appendChild(p);
     this.titlePanel = p;
 };
@@ -317,6 +303,10 @@ UI.prototype.openMatchupWizard = function(): void {
     // リーグ一覧とクラブ一覧の共有ビルダー（maxRows 行まで、超えるとスクロール）。
     const IDLE_BORDER = "rgba(255,255,255,0.16)";
     const COL = 100, GAP = 8, ROW_H = 54;
+    /** 最低でもこの列数は並べる。⚠️ 100px 固定だとスマホ幅で 2 列になっていた。 */
+    const MIN_COLS = 3;
+    /** これ以上は詰めない（文字が読めなくなる）。 */
+    const MIN_COL = 62;
     const makeScroll = (): { scrollArea: HTMLDivElement; grid: HTMLDivElement } => {
       const maxRows = window.innerWidth <= 480 ? 3 : 4;
       const scrollArea = document.createElement("div");
@@ -333,8 +323,18 @@ UI.prototype.openMatchupWizard = function(): void {
     // グリッドブロックを収まる整数個の列幅にサイズ調整する。DOM に入った後で呼ぶこと。
     const centerGrid = (scrollArea: HTMLDivElement, grid: HTMLDivElement): void => {
       const avail = scrollArea.clientWidth || COL;
-      const cols = Math.max(1, Math.floor((avail + GAP) / (COL + GAP)));
-      grid.style.width = `${cols * (COL + GAP) - GAP}px`;
+      let col = COL;
+      let cols = Math.max(1, Math.floor((avail + GAP) / (col + GAP)));
+      // 幅が足りずに MIN_COLS 未満になるなら、ボタンを詰めて列数を確保する。
+      if (cols < MIN_COLS) {
+        col = Math.max(MIN_COL, Math.floor((avail - (MIN_COLS - 1) * GAP) / MIN_COLS));
+        cols = Math.max(1, Math.floor((avail + GAP) / (col + GAP)));
+        for (const c of Array.from(grid.children) as HTMLElement[]) {
+          c.style.width = `${col}px`;
+          c.style.flex = `0 0 ${col}px`;
+        }
+      }
+      grid.style.width = `${cols * (col + GAP) - GAP}px`;
     };
     const makeFlag = (design: string[] | undefined, overlay: string, label: string): HTMLButtonElement => {
       const btn = document.createElement("button");
@@ -373,6 +373,25 @@ UI.prototype.openMatchupWizard = function(): void {
       display: "block", gridTemplateColumns: "", maxHeight: "none", overflowY: "visible", padding: "0",
     } as Partial<CSSStyleDeclaration>);
 
+    /**
+     * 「ランダム」のタイル。leagues が null ならすべてのクラブから、
+     * 指定があればそのリーグの中から1つ引いて、通常の選択と同じ流れに乗せる。
+     */
+    const randomTile = (leagues: string[] | null): HTMLButtonElement => {
+      const btn = makeFlag(["h", "3a3f4d", "5a6272"], "?", "ランダム");
+      btn.onclick = () => {
+        const pool: number[] = [];
+        CLUBS.forEach((c, i) => { if (!leagues || leagues.includes(c[1])) pool.push(i); });
+        if (!pool.length) return;
+        const idx = pool[Math.floor(Math.random() * pool.length)];
+        picked[team] = true;
+        this.assignClub(team, idx);   // ロスター + 名前 + ユニフォーム
+        refreshTop();
+        openClubModal(CLUBS[idx][0], CLUBS[idx][1]);
+      };
+      return btn;
+    };
+
     const showLeagues = (): void => {
       header.textContent = team === 0
         ? "ホーム（1チーム目）— リーグを選択"
@@ -380,6 +399,8 @@ UI.prototype.openMatchupWizard = function(): void {
       content.replaceChildren();
       resetContent();
       const { scrollArea, grid } = makeScroll();
+      // ランダム: リーグを選ぶ前なので**全チーム**から引く。
+      grid.appendChild(randomTile(null));
       for (const g of this.leagueGroups()) {
         const btn = makeFlag(LEAGUE_FLAGS[g.label], "", g.label);
         btn.onclick = () => showClubs(g);
@@ -557,6 +578,8 @@ UI.prototype.openMatchupWizard = function(): void {
       resetContent();
       const { scrollArea, grid } = makeScroll();
       let selectedBtn: HTMLButtonElement | null = null;
+      // ランダム: リーグを選んだ後なので**そのリーグ**から引く。
+      grid.appendChild(randomTile(group.leagues));
       CLUBS.forEach((c, idx) => {
         if (!group.leagues.includes(c[1])) return;
         const btn = makeFlag(CLUB_FLAGS[c[0]], CLUB_ABBR[c[0]] ?? "", c[0]);
