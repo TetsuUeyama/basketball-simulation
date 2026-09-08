@@ -67,6 +67,9 @@ export function defendOnBall(game: Game, dt: number, d: Player, man: Player, pro
     }
   }
 
+/** 早仕掛けギャンブルの起こりやすさ。大きいほど頻繁に跳ぶ。 */
+const GAMBLE_RATE = 1.5;
+
   // 早仕掛けのギャンブル: 射程で構えるシューターに攻撃的守備が先に跳ぶ。
   if (!d.airborne && d.landT <= 0 && d.shovedT <= 0
       && man.beatenT <= 0 && man.powerT <= 0 && man.jukeT <= 0
@@ -75,7 +78,10 @@ export function defendOnBall(game: Game, dt: number, d: Player, man: Player, pro
     const threat = shotThreat(man);
     const gamble = (0.015 + rate(d.attr.aggression) * 0.045
       + game.tactics[d.team].defense.pressure * 0.02) * threat;
-    if (chance(gamble * dt * 6)) {
+    // ⚠️ 頻度を 1/4 にした。実測で守備のジャンプ 547 回のうち 223 回(41%)が
+    //    「ドリブル中の相手へ」で、その滞空中にブロックが記録されたのは 7 回だけ。
+    //    無駄跳びで置き去りにされるだけなので、仕掛けは稀にする。
+    if (chance(gamble * dt * GAMBLE_RATE)) {
       game.contestLeap(d, man.pos, leapHeight(d), 0.62);
     }
   }

@@ -2,7 +2,21 @@
 // 状態は変更しない純粋関数。抽選(chance)と状態変更(evade/jump/shotMade)は game.ts 側に残す。
 import { Player } from "../../objects/player/player";
 import { rate, clamp, dist2D } from "../../util";
-import { palmRadius } from "../../eval";
+import { palmRadius, leapHeight } from "../../eval";
+
+/**
+ * 跳んで手が届く高さ(m)。ブロッカーは跳び切り、シューターはリリースのために
+ * 跳ぶぶんの一部しか使えない（放つ動作に高さを使い切らない）。
+ */
+function reachTop(p: Player, shooter: boolean): number {
+  return p.height * 1.35 + leapHeight(p) * (shooter ? SHOOTER_LIFT : 1);
+}
+/** シューターがリリース時に使えるジャンプの割合。 */
+const SHOOTER_LIFT = 0.55;
+/** 到達点の差 1m あたり、ブロック確率へどれだけ効かせるか。 */
+const REACH_GAIN = 0.95;
+/** 到達点の差で足せる/引ける上限。 */
+const REACH_CAP = { lo: -0.30, hi: 0.60 };
 
 // このショットを最も止められる守備者とそのブロック確率を返す（抽選はしない）。
 // isFinish=リム下フィニッシュか / shotWindup=溜め時間 / palmHitbox=手のひら判定モデルの有効フラグ。
@@ -26,9 +40,12 @@ export function bestBlocker(
       ? rate(d.attr.jump) * 0.4 + rate(d.attr.dunk) * 0.35 + rate(d.attr.defense) * 0.25
       : rate(d.attr.jump) * 0.42 + rate(d.attr.reaction) * 0.3 + rate(d.attr.defense) * 0.28;
     const close = 1 - dd / range;              // 1 = 密着, 0 = 端
-    // 身長差はリム保護のエッジ
-    const heightAdv = clamp((d.height - shooter.height) * 0.9, -0.25, 0.4);
-    let p = (isFinish ? 0.30 : 0.23) * (0.2 + blk * 1.35) * close + heightAdv * close;
+    // ⚠️ 身長だけでなく**跳んで届く高さの差**で見る。高さもジャンプ力も効き、
+    //    低身長のシューターは押さえ込まれやすくなる。
+    //    （旧: 身長差 × 0.9 を ±0.25/0.4 で頭打ち）
+    const over = reachTop(d, false) - reachTop(shooter, true);
+    const reachAdv = clamp(over * REACH_GAIN, REACH_CAP.lo, REACH_CAP.hi);
+    let p = (isFinish ? 0.34 : 0.27) * (0.2 + blk * 1.35) * close + reachAdv * close;
     p += windupEdge * (0.18 + blk * 0.2) * close;   // 遅い溜めほど止められやすい
     // 既に空中（溜めを読んで跳ね上がった）: 手がシュートポケットの真上でピーク
     if (d.airborne) p += 0.18 * close;
@@ -36,7 +53,7 @@ export function bestBlocker(
     else if (d.landT > 0) p *= 0.3;
     // 弾道高さ: 高い虹のジャンパーはコンテストを越える（リム下は別動作で対象外）
     if (!isFinish) p *= clamp(1.5 - rate(shooter.attr.bank), 0.5, 1.5);
-    p = clamp(p, 0, 0.7);
+    p = clamp(p, 0, 0.85);
     if (p > bestP) { bestP = p; best = d; }
   }
   return best ? { def: best, p: bestP } : null;

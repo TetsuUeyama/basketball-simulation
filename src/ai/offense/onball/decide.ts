@@ -4,7 +4,7 @@ import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { THREE_DIST, SHOT_CLOCK, BUZZER_WINDOW } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dirTo2D } from "../../../util";
-import { twWeight, gatherFor, effShootRange, wontLoadUp } from "../../../eval";
+import { twWeight, gatherFor, effShootRange, wontLoadUp, leapHeight } from "../../../eval";
 import { pass, passToReceiver } from "../../../move/action/passing";
 import { shoot, finishAtRim } from "../../../move/action/shooting";
 import { denySmother } from "../../defense/shared";
@@ -27,6 +27,12 @@ function clockPush(game: Game, frac: number): number {
 
   // ボールハンドラーの選択 — シュート/ドライブ/パス/リセット — 選手自身の
   // 傾向とスキルを、チームの戦術的ゲームプランと融合させる。
+/** 背の高い守備者の圧を見る距離(m)。 */
+const TALL_PRESS_RANGE = 2.2;
+/** 圧を受けたときシュート意欲をどれだけ削るか。 */
+const TALL_PRESS_SHOOT = 0.55;
+/** 同じくドライブ意欲をどれだけ足すか。 */
+const TALL_PRESS_DRIVE = 0.45;
 export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFloor: Vector3): void {
     const tac = game.tactics[h.team].offense;
     const prio = h.offPriority;
@@ -289,6 +295,20 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       driveDesire += selfish;
       shootDesire += selfish;
       passDesire = Math.max(0, passDesire - selfish * 1.2);
+    }
+
+    // 背の高い（跳んで高く届く）守備者に近くで構えられている選手は、シュートを
+    // やめて仕掛ける方へ寄る。⚠️ 身長そのものではなく**跳んで届く高さの差**で見る。
+    // 低身長の選手ほどここが大きくなり、シュートを打たずドライブを選びやすくなる。
+    {
+      const cd = game.nearestDefender(h);
+      if (cd && dDef < TALL_PRESS_RANGE) {
+        const over = (cd.height * 1.35 + leapHeight(cd))
+          - (h.height * 1.35 + leapHeight(h) * 0.55);
+        const press = clamp(over, 0, 0.6) * clamp(1 - (dDef - 0.8) / (TALL_PRESS_RANGE - 0.8), 0, 1);
+        shootDesire -= press * TALL_PRESS_SHOOT;
+        driveDesire += press * TALL_PRESS_DRIVE;
+      }
     }
 
     const laneOpen = laneClear(game, h, rimFloor);

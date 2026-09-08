@@ -119,10 +119,11 @@ export function updateCharge(game: Game, dt: number): void {
       // リリースが近づいたら、間に合わなくても(だめもと)踏み切って挑む。近ければ真上でコンテスト、
       // 遠ければ横っ飛び(contestLeap が最大1.5mランジ)。フリーで撃たせないため間合い(~3.6m)と
       // 窓(~0.22s)を広げ、遠いシューターにも跳ぶ。
-      if (game.chargeT < 0.22 && gap < 3.6) {
-        const read = rate(c.attr.reaction) * 0.5 + rate(c.attr.defense) * 0.5;
-        const near = clamp(1 - (gap - 1.0) / 2.6, 0.35, 1);   // 近いほど確実、遠いだめもとでも最低35%係数
-        if (chance((0.25 + read * 1.5) * near * dt * 9)) game.contestLeap(c, h.pos, leapHeight(c), 0.6);
+      // ⚠️ 抽選をやめた。シュートに対しては**跳べるなら必ず跳ぶ**。
+      //    跳べない条件(既に空中・着地硬直・押し込まれ)は contestLeap と上の
+      //    continue が見ている。無駄跳びになっても、跳ばないよりは良い。
+      if (game.chargeT < CONTEST_WINDOW && gap < CONTEST_RANGE) {
+        game.contestLeap(c, h.pos, leapHeight(c), 0.6);
       }
       // ギャザー中のストリップ: 頭上に溜められたボールを守備者がはたく。長いギャザーほど
       // 弾かれやすく、高いボールに届く必要がある(空中だと有利)。背の高いシューターは遠ざける。
@@ -171,6 +172,11 @@ export function stripGather(game: Game, h: Player, d: Player): void {
     h.touchCool = 0.4;
     game.goLoose(h.team, 1.6, { stealBy: d, victim: h, grabAfter: 0.35 });
   }
+
+/** リリースまで何秒を切ったらコンテストに跳ぶか。 */
+const CONTEST_WINDOW = 0.22;
+/** この距離(m)まではだめもとでも跳ぶ。 */
+const CONTEST_RANGE = 3.6;
 
 export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, prepDone?: number): void {
     game.chargeShooter = null;

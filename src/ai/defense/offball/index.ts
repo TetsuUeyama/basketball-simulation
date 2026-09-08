@@ -23,6 +23,9 @@ export function defendOffBall(
     return;
   }
 
+/** リムアンカーが自分から飛び込む起こりやすさ。 */
+const ANCHOR_RATE = 0.75;
+
   // リムアンカー: 常時ペイントに残る壁役。ハンドラーがリムへ迫れば飛んでコンテスト、
   // 遠ければゴール下(リムと担当の間・リム寄り)に常駐してゴール下を空けない。
   if (d === anchor && game.handler) {
@@ -31,8 +34,11 @@ export function defendOffBall(
     // リムプロテクターは飛ぶタイミングを計る
     if (!d.airborne && d.landT <= 0 && dRim < 4.5
         && dist2D(d.pos, game.handler.pos) < 2.6) {
+      // ⚠️ 頻度を 1/4 にした。シュートが始まっていないのに跳ぶので、外すと
+      //    着地硬直のあいだゴール下が空く。実際のシュートには shooting.ts 側が
+      //    必ず跳ぶようになっているので、こちらは待つ方が守れる。
       const timing = rate(d.attr.reaction) * 0.5 + rate(d.attr.defense) * 0.3;
-      if (chance((0.35 + timing * 0.9) * dt * 3)) {
+      if (chance((0.35 + timing * 0.9) * dt * ANCHOR_RATE)) {
         game.contestLeap(d, game.handler.pos, leapHeight(d), 0.6);
       }
     }
