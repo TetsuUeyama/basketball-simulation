@@ -1,4 +1,5 @@
 // ルーズボール物理。自由球の飛翔・反射、選手の追走、接触判定、確保(secureLoose)を集約。
+import { Vector3 } from "@babylonjs/core";
 import { Player } from "../objects/player/player";
 import { COURT, SHOT_CLOCK, OOB_WALL } from "../config";
 import { rate, clamp, chance, dist2DTo, moveToward2D, rand, nearestOf } from "../util";
@@ -137,6 +138,15 @@ const FLOOR_Y = 0.32;
  * ⚠️ バランス差と同じ土俵に足す値なので、これを超えるバランス差があれば攻撃側が勝てる
  *    （能力で覆せる範囲に留める）。0 のときオフェンスリバウンドは 45%、0.45 で 26%。
  */
+/** これより低いボールは「床のボール」。腰を折って手を伸ばして拾う。 */
+const LOW_BALL = 0.45;
+/** 床のボールへ手が届く水平距離(m)。立ったままの 0.6m より近い。 */
+const LOW_REACH = 0.45;
+/** 床のボールへ腰を折り始める距離(m)。走りながらこの形に入る。 */
+const SCOOP_NEAR = 1.6;
+/** 床の球を掴み切れる割合。1 未満だと弾いて争奪が続く。 */
+const LOW_SECURE = 0.62;
+const _dig = new Vector3();
 const BOX_OUT_EDGE = 0.45;
 /** 落下点の取り合いで、相手に前を取られていると判定する距離（m）。 */
 const BOX_OUT_NEAR = 0.9;
@@ -219,6 +229,17 @@ export function chaseLoose(game: Game, dt: number): void {
         const mult = clamp(want / Math.max(0.1, p.runSpeed), lo, 1.35);
         moveToward2D(p.pos, cv.x, cv.z, p.accelSpeed(dt, mult) * dt);
         game.clampCourt(p.pos);
+        // 床のボールへは腰を折って手を伸ばす。走りながらでも同じ形で入る。
+        // ⚠️ これが無いと、床のボールへは棒立ちのまま近づくだけだった。
+        if (game.ball.pos.y < LOW_BALL && !p.airborne) {
+          const near = dist2DTo(game.ball.pos, p.pos.x, p.pos.z);
+          if (near < SCOOP_NEAR) {
+            const t = clamp(1 - (near - LOW_REACH) / (SCOOP_NEAR - LOW_REACH), 0, 1);
+            p.scoopLoadTarget = Math.max(p.scoopLoadTarget, t);
+            _dig.set(game.ball.pos.x, Math.max(0.28, game.ball.pos.y), game.ball.pos.z);
+            p.digReach(_dig);
+          }
+        }
         // 落下点の取り合い: 相手に前（落下点側）を取られていると踏み切りが遅れる
         let blocked = 0;
         for (const o of game.players) {
@@ -338,7 +359,12 @@ export function resolveLooseContact(game: Game, ): void {
       if (p.looseReactT > 0) continue;   // まだ反応していない
       if (dist2DTo(game.ball.pos, p.pos.x, p.pos.z) > 0.6) continue;
       const top = p.reachTopY();
-      if (game.ball.pos.y > top || game.ball.pos.y < 0.3) continue; // 高すぎ／低すぎて届かない
+      if (game.ball.pos.y > top) continue;   // 高すぎて届かない
+      // ⚠️ 以前は 0.3m 未満のボールを一律で除外していた。床を転がる球（静止時の
+      //    中心高さ 0.12m）は接触判定に入らず、時間切れの安全網でしか手に入らな
+      //    かった。腰を折って手を伸ばせば届くので、より近い距離で拾えるようにする。
+      if (game.ball.pos.y < LOW_BALL
+        && dist2DTo(game.ball.pos, p.pos.x, p.pos.z) > LOW_REACH) continue;
       reachers.push(p);
       if (top > bestReach) { bestReach = top; best = p; }
     }
@@ -375,6 +401,8 @@ export function contactLooseBall(game: Game, p: Player, contested: boolean, edge
       let ch = looseSecureChance(p, defending, game.looseTips);
       if (contested) ch *= 0.45 + 0.55 * over;   // 競っていると落としやすい(上を取れていれば別)
       if (horiz > 0.45) ch *= 0.7;      // 体から遠いほど収まりにくい
+      // 床の球は掻き出すだけになりやすい。相手も手を出していれば弾いて争奪が続く。
+      if (game.ball.pos.y < LOW_BALL) ch *= LOW_SECURE;
       if (chance(ch)) { secureLoose(game, p); return; }
     }
     if (game.looseTips >= 3) { secureLoose(game, p); return; }   // ピンボール化させない

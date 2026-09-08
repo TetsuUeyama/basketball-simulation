@@ -49,7 +49,9 @@ function hash(s: string): number {
   return h >>> 0;
 }
 
-interface Style { tuck: number; swing: number; splay: number }
+/** 関節ごとの値。左右それぞれ独立に持つ。 */
+interface Side { tuck: number; swing: number; splay: number }
+interface Style { l: Side; r: Side }
 /** 選手ごとの癖（名前で決まる）。 */
 const CACHE = new Map<string, Style>();
 function styleFor(p: Player): Style {
@@ -57,13 +59,16 @@ function styleFor(p: Player): Style {
   if (hit) return hit;
   let x = hash(p.name) || 1;
   const r = (): number => { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
-  const st: Style = { tuck: r() * 2 - 1, swing: r() * 2 - 1, splay: r() * 2 - 1 };
+  // ⚠️ 左右を反転させた1組の値で回すと、結局「きれいに対称」な動きになる。
+  //    関節ごとに独立の値を持たせる。
+  const side = (): Side => ({ tuck: r() * 2 - 1, swing: r() * 2 - 1, splay: r() * 2 - 1 });
+  const st: Style = { l: side(), r: side() };
   CACHE.set(p.name, st);
   return st;
 }
 
 /** ジャンプ1回ごとの状態。踏み切りで引き直し、着地の立て直しで 0 へ戻す。 */
-interface Take { tuck: number; swing: number; splay: number; w: number }
+interface Take { l: Side; r: Side; w: number }
 const TAKE = new WeakMap<Player, Take>();
 
 /**
@@ -80,8 +85,10 @@ export function applyJumpLegs(vb: VoxelBody, p: Player): void {
       // リプレイのたびに変わるので、跳んだ時刻と選手番号から決める。
       let x = (hash(p.name) ^ Math.imul(Math.round(p.jumpDur * 1000) + p.idx, 0x9e3779b9)) >>> 0;
       const r = (): number => { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+      // 選手の癖を土台に、関節ごとに毎回少し振る。
       const mix = (base: number): number => clamp(base * 0.65 + (r() * 2 - 1) * 0.35, -1, 1);
-      t = { tuck: mix(st.tuck), swing: mix(st.swing), splay: mix(st.splay), w: 0 };
+      const one = (b: Side): Side => ({ tuck: mix(b.tuck), swing: mix(b.swing), splay: mix(b.splay) });
+      t = { l: one(st.l), r: one(st.r), w: 0 };
       TAKE.set(p, t);
     }
     // 滞空の進み: 立ち上がりで入り、着地に向けて戻す（山なり）
@@ -98,14 +105,14 @@ export function applyJumpLegs(vb: VoxelBody, p: Player): void {
   if (w < 0.01) return;
   // 腿が先、脛は遅れて効く（体幹に近い方から）
   const wt = w, ws = w * SHIN_LAG;
-  // 片脚を多く畳む
-  tilt(vb, "LeftLowerLeg", X, -TUCK * t.tuck * ws);
-  tilt(vb, "RightLowerLeg", X, TUCK * t.tuck * ws);
-  // 腿の前後差
-  tilt(vb, "LeftUpperLeg", X, SWING * t.swing * wt);
-  tilt(vb, "RightUpperLeg", X, -SWING * t.swing * wt);
-  // 膝の向き（外/内）
-  tilt(vb, "LeftUpperLeg", Y, SPLAY * t.splay * wt);
-  tilt(vb, "RightUpperLeg", Y, SPLAY * t.splay * wt);
+  // 膝の畳み（脛）— 左右それぞれ独立
+  tilt(vb, "LeftLowerLeg", X, -TUCK * t.l.tuck * ws);
+  tilt(vb, "RightLowerLeg", X, TUCK * t.r.tuck * ws);
+  // 腿の前後 — 左右それぞれ独立
+  tilt(vb, "LeftUpperLeg", X, SWING * t.l.swing * wt);
+  tilt(vb, "RightUpperLeg", X, -SWING * t.r.swing * wt);
+  // 膝の向き（外/内）— 左右それぞれ独立
+  tilt(vb, "LeftUpperLeg", Y, SPLAY * t.l.splay * wt);
+  tilt(vb, "RightUpperLeg", Y, -SPLAY * t.r.splay * wt);
   void Z;
 }
