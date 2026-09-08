@@ -132,6 +132,12 @@ function landSpot(game: Game): { x: number; z: number; t: number } {
 }
 /** これより低くなったらボールは床に着いたとみなす（resolveLooseContact の下限に合わせる）。 */
 const FLOOR_Y = 0.32;
+/**
+ * リバウンドで守る側に付く、位置取りの有利さ。0 = 攻守同じ。
+ * ⚠️ バランス差と同じ土俵に足す値なので、これを超えるバランス差があれば攻撃側が勝てる
+ *    （能力で覆せる範囲に留める）。0 のときオフェンスリバウンドは 45%、0.45 で 26%。
+ */
+const BOX_OUT_EDGE = 0.45;
 /** 落下点の取り合いで、相手に前を取られていると判定する距離（m）。 */
 const BOX_OUT_NEAR = 0.9;
 /** 踏み切りで横へ詰められる距離(m)の上限。leap は飛行全体に配られるので頂点では半分。 */
@@ -219,7 +225,14 @@ export function chaseLoose(game: Game, dt: number): void {
           if (o.team === p.team || o === p) continue;
           if (dist2DTo(o.pos, p.pos.x, p.pos.z) > BOX_OUT_NEAR) continue;
           const mine = gapNow, theirs = dist2DTo(o.pos, land.x, land.z);
-          if (theirs < mine) blocked = Math.max(blocked, clamp(rate(o.attr.balance) - rate(p.attr.balance) + 0.25, 0, 1));
+          // ⚠️ リバウンドでは守る側にボックスアウトの分を足す。守備者はシュートの時点で
+          //    相手とゴールの間に居るので、位置取りで先に入れる。これが無いと
+          //    オフェンスリバウンドが 45% になっていた（実際のバスケットは 22〜28%）。
+          const box = game.looseIsRebound && o.team !== game.looseOff ? BOX_OUT_EDGE : 0;
+          if (theirs < mine) {
+            blocked = Math.max(blocked,
+              clamp(rate(o.attr.balance) - rate(p.attr.balance) + 0.25 + box, 0, 1));
+          }
         }
         if (REB_DEBUG.onEval) {
           const d = plan ? clamp(0.34 + plan.h * 0.34, 0.34, 0.70) : 0;
@@ -302,7 +315,9 @@ export function contestShove(game: Game, dt: number): void {
         if (dd < qd) { qd = dd; q = o; }
       }
       if (!q) continue;
-      const edge = clamp(rate(q.attr.balance) - rate(p.attr.balance), 0, 0.6);  // 相手が強い分だけ押される
+      // リバウンドでは守る側が内側を取っているぶん、押し勝ちやすい。
+      const box = game.looseIsRebound && q.team !== game.looseOff ? BOX_OUT_EDGE : 0;
+      const edge = clamp(rate(q.attr.balance) - rate(p.attr.balance) + box, 0, 0.6);  // 相手が強い分だけ押される
       if (edge <= 0) continue;
       const rx = p.pos.x - b.x, rz = p.pos.z - b.z;                              // ボール中心から外向き
       const rl = Math.hypot(rx, rz) || 1;
