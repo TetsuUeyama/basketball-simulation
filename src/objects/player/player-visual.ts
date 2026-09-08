@@ -14,6 +14,7 @@ import { stepDefense, stepDefenseMix } from "../../animation/action/defense-arms
 import { aimPalms, releaseHands } from "../../animation/action/palm";
 import { armStyleFor } from "../../animation/basic/arm-style";
 import { applyFingers } from "../../animation/basic/fingers";
+import { applyJumpLegs } from "../../animation/basic/jump-legs";
 
 declare module "./player" {
   interface Player {
@@ -196,6 +197,7 @@ Player.prototype.syncVoxel = function(): void {
     }
     if (applyClipPose(vb, this, this.lastDt)) {
       applyStance(vb, this);
+      applyJumpLegs(vb, this);   // ジャンプの脚の癖（クリップ・構えの上に重ねる）
       // ⚠️ 手のひらは最後に決める。前腕を動かしたあとでないと打ち消せない。
       if (this.dribblePosed) levelDribbleHand(vb, this);
       if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
@@ -223,6 +225,7 @@ Player.prototype.syncVoxel = function(): void {
       kneeL: this.kneeL, kneeR: this.kneeR,
     });
     applyStance(vb, this);
+    applyJumpLegs(vb, this);   // ジャンプの脚の癖（クリップ・構えの上に重ねる）
     if (this.dribblePosed) levelDribbleHand(vb, this);
     if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
     blendPose(this, vb, "", this.lastDt);
