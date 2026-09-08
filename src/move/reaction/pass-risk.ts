@@ -60,11 +60,14 @@ export function styleRisk(
   const block = laneBlock(defenders, from, to);
   let r = block ? interceptChance(from, to, block, style) : 0;
   const d = dist2D(from.pos, to.pos);
-  if (d > 9) {   // ロングボールの滞空も加味する
-    const fade = d > 12 ? clamp(1 - (d - 12) * 0.05, 0.85, 1) : 1;
-    const flightT = d / (passZip(from) * fade);
-    r += (longBallBest(defenders, from, to, flightT, d)?.p ?? 0) * 0.9;
-  }
+  const fade = d > 12 ? clamp(1 - (d - 12) * 0.05, 0.85, 1) : 1;
+  const flightT = d / Math.max(1, passZip(from) * fade);
+  // 走り込んでくる相手のぶんも見積もる。⚠️ ここを入れないと、パサーは「いま
+  //    レーンに居るか」しか見ず、動いてカットしに来る相手の前へ投げてしまう。
+  //    どれだけ読めるかは P精度（低い選手は過小評価する）。
+  const foresee = 0.45 + rate(from.attr.passAcc) * 0.55;
+  r += (closingBest(defenders, from, to, flightT, style)?.p ?? 0) * foresee;
+  if (d > 9) r += (longBallBest(defenders, from, to, flightT, d)?.p ?? 0) * 0.9;
   return r;
 }
 
@@ -121,12 +124,61 @@ export function longBallRead(
 
 // 確率以前の幾何ルール: パスレーンのど真ん中に守備が立っていたらそのパスは通らない。
 // ただしその投げ方が守備者の手の届く高さを外すなら(バウンズ/オーバーヘッド)通してよい。
+/**
+ * すでにパスレーンに立っている相手が居れば、そのパスは出さない（出せない）。
+ * ⚠️ 以前は「レーン中央から 0.65m 以内」だけを拒否していた。レーン幅は 1.1m なので、
+ *    0.65〜1.1m に立っている相手の前へは平気で投げ、そのままカットされていた。
+ *    立っている相手の前へは投げない、という形にする。カットは「レーンの外から
+ *    走り込んで間に合った者」だけが成立する（closingBest）。
+ */
 export function laneVetoed(
   defenders: Player[], from: Player, to: Player, style: PassStyle = "chest",
 ): boolean {
   const block = laneBlock(defenders, from, to);
-  return !!block && block.perp < 0.65 && reachAt(from, block, style) > 0;
+  return !!block && block.perp < LANE_W * VETO_FRAC && reachAt(from, block, style) > 0;
 }
+/** レーン幅のこの割合までに相手が立っていたら投げない。1.0 = レーン全部。 */
+const VETO_FRAC = 1.0;
+
+/**
+ * レーンの**外**に居る相手が、ボールが自分の前を横切るまでに走り込んでカットできるか。
+ * これが本来のパスカット。走って詰める距離と、手を伸ばす分で届くかを見る。
+ *   ・速いパスほど滞空が短く、詰める時間が無い（P速度）
+ *   ・パサーの P精度 が高いほど、動いてくる相手の先まで読んで通す
+ */
+export function closingBest(
+  defenders: Player[], from: Player, to: Player, flightT: number, style: PassStyle,
+): { def: Player; at: number; p: number } | null {
+  let best: { def: Player; at: number; p: number } | null = null;
+  for (const d of defenders) {
+    const { t, perp } = segPerp(from.pos.x, from.pos.z, to.pos.x, to.pos.z, d.pos.x, d.pos.z);
+    if (t <= 0.10 || t >= 0.90) continue;                 // パサー/受け手の真横
+    if (perp <= LANE_W * VETO_FRAC) continue;             // 既にレーンの中 → そこへは投げない
+    if (perp > CLOSE_MAX) continue;                       // 遠すぎて話にならない
+    const reach = reachFactor(d, passHeightAt(style, t, passReleaseY(style), 1.0));
+    if (reach <= 0) continue;                             // 手の届かない高さを通る
+    const tt = flightT * t;                               // その点をボールが通るまでの時間
+    const cover = d.runSpeed * CLOSE_SPEED * tt
+      + 0.35 + rate(d.attr.agility) * 0.25                // 最後の一歩＋手を伸ばす分
+      + (d.has("interceptor") ? 0.35 : 0);
+    const margin = cover - perp;
+    if (margin < 0) continue;                             // 間に合わない
+    const hawk = rate(d.attr.reaction) * 0.5 + rate(d.attr.defense) * 0.3
+      + rate(d.attr.agility) * 0.2;
+    let p = clamp(margin / CLOSE_SPAN, 0, 1) * (0.30 + hawk * 0.55) * reach;
+    p *= 1.15 - rate(from.attr.passSpd) * 0.5;            // 速い球ほど切りにくい
+    p -= rate(from.attr.passAcc) * 0.22;                  // 精度が高いほど動きを読んで通す
+    p = clamp(p, 0, 0.85);
+    if (!best || p > best.p) best = { def: d, at: t, p };
+  }
+  return best;
+}
+/** 走り込みでカットを狙える、レーンからの最大距離(m)。 */
+const CLOSE_MAX = 4.5;
+/** 詰めに使える走速度の割合（横方向へのダッシュなので全速では走れない）。 */
+const CLOSE_SPEED = 0.85;
+/** どれだけ余裕を持って届けば確実になるか(m)。 */
+const CLOSE_SPAN = 1.0;
 
 // パサー自身の「このパスは通るか」の見積り。最も通る投げ方で評価する(バウンズで
 // 手の下をくぐらせられるなら、そのリスクで判断する)。全パス判断がここを通る。
@@ -138,12 +190,23 @@ export function passRisk(defenders: Player[], from: Player, to: Player): number 
 export function evalInterception(
   defenders: Player[], from: Player, to: Player, passStyle: PassStyle,
 ): { def: Player; at: number; reach: number } | null {
+  const d0 = dist2D(from.pos, to.pos);
+  const fade = d0 > 12 ? clamp(1 - (d0 - 12) * 0.05, 0.85, 1) : 1;
+  const flightT = d0 / Math.max(1, passZip(from) * fade);
+  // ⚠️ 本命は「レーンの外から走り込んでくる相手」。レーンに立っている相手へは
+  //    そもそも投げない(laneVetoed)ので、そこを主役にしない。
+  const run = closingBest(defenders, from, to, flightT, passStyle);
+  if (run) {
+    let p = run.p;
+    if (from.has("throughPass") && to.cutting) p *= 0.75;
+    if (chance(p)) return { def: run.def, at: run.at, reach: 1 };
+  }
+  // 拒否をすり抜けてレーンに残っている相手（強制フィード等）はこれまでどおり
   const block = laneBlock(defenders, from, to);
   if (!block) return null;
   const reach = reachAt(from, block, passStyle);
   if (reach <= 0) return null;   // 手の届く高さを外して通った
   let p = interceptChance(from, to, block, passStyle);
-  // スルーパス: カッターへのフィードは彼だけが触れる場所に届く
   if (from.has("throughPass") && to.cutting) p *= 0.75;
   return chance(p) ? { def: block.def, at: block.t, reach } : null;
 }
