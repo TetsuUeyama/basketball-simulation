@@ -12,6 +12,7 @@ import { clubTeam } from "../src/roster";
 import { segPerp, dist2D } from "../src/util";
 import { LANE_W } from "../src/config";
 import { CUT_SOURCE } from "../src/move/reaction/pass-risk";
+import { passHeightAt, passReleaseY } from "../src/eval";
 const scene = new Scene(new NullEngine());
 const hoops = buildCourt(scene); const game = new Game(scene);
 (game as unknown as { attachHoops(h: unknown): void }).attachHoops(hoops);
@@ -32,6 +33,10 @@ const perpAt: number[] = [];
 const passLen: number[] = [];
 const cutLen: number[] = [];
 const srcCount: Record<string, number> = {};
+const cutY: number[] = [];         // カット地点のボールの高さ
+const cutOver: number[] = [];      // その高さ − 立ったまま手が届く高さ
+let needJump = 0;                  // 跳ばないと届かなかった本数
+const cutYStyle: Record<string, number[]> = {};
 const accAll: number[] = [], accCut: number[] = [];
 const spdAll: number[] = [], spdCut: number[] = [];
 let tov = 0;
@@ -76,7 +81,7 @@ for (let gi = 0; gi < NG; gi++) {
         tb[sy] = tb[sy] ?? { n: 0, cut: 0 };
         tb[sy].n++;
       }
-      const st = (game as unknown as { passSteal: { def: Player } | null }).passSteal;
+      const st = (game as unknown as { passSteal: { def: Player; at: number } | null }).passSteal;
       if (st && from && to) {
         cuts++;
         const { perp } = segPerp(from.pos.x, from.pos.z, to.pos.x, to.pos.z, st.def.pos.x, st.def.pos.z);
@@ -86,6 +91,15 @@ for (let gi = 0; gi < NG; gi++) {
         byStyle[game.passStyle as string].cut++;
         const key = (game.passStyle as string) + " / " + CUT_SOURCE.last;
         srcCount[key] = (srcCount[key] ?? 0) + 1;
+        {
+          const sy = game.passStyle;
+          const yy = passHeightAt(sy, st.at, passReleaseY(sy), 1.0);
+          cutY.push(yy);
+          cutOver.push(yy - st.def.height * 1.33);
+          if (yy > st.def.height * 1.33) needJump++;
+          cutYStyle[sy] = cutYStyle[sy] ?? [];
+          cutYStyle[sy].push(yy);
+        }
         const tb2 = curTight ? tight : open;
         if (tb2[game.passStyle as string]) tb2[game.passStyle as string].cut++;
         accCut.push(from.attr.passAcc); spdCut.push(from.attr.passSpd);
@@ -128,6 +142,12 @@ const show = (t: Record<string, { n: number; cut: number }>, lab: string): void 
 console.log("");
 show(tight, "レーンに相手が居る場面での投げ方ごとのカット率");
 show(open, "レーンが空いている場面での投げ方ごとのカット率");
+const mm = (a: number[]): string => a.length ? [...a].sort((x, y) => x - y)[a.length >> 1].toFixed(2) : "-";
+console.log("");
+console.log(`カット地点のボールの高さ 中央 ${mm(cutY)}m`);
+for (const [k, v] of Object.entries(cutYStyle)) console.log(`  ${k.padEnd(9)} 中央 ${mm(v)}m（${v.length} 本）`);
+console.log(`カットした選手の「立ったまま届く高さ」との差 中央 ${mm(cutOver)}m（正なら跳ばないと届かない）`);
+console.log(`跳ばないと届かなかった ${needJump} 本`);
 console.log("");
 console.log("カットの経路（投げ方 / 経路）");
 for (const [k, v] of Object.entries(srcCount).sort((a, b) => b[1] - a[1])) console.log(`  ${k.padEnd(24)} ${v} 本`);
