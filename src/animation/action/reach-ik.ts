@@ -125,7 +125,10 @@ const BACK_ARM_BEND = 1.40;   // 片手を伸ばす間、逆腕は深く畳ん�
 const BACK_ARM_IN = 0.40;
 
 function stretchOne(p: Player, world: Vector3): void {
-  const right = p.dribbleWithRight(world);           // ボールに近い側が先行する
+  // ⚠️ ここも「ボールに近い側」だけで決めていた。届かない高さの球（ジャンプボール等）は
+  //    毎回ここへ落ちるので、実測でジャンプボールの上げ手が利き腕と無関係だった。
+  //    reachBall と同じ判定にする（正面付近なら利き手）。
+  const right = leadArm(p, world);                  // ボールに近い側 / 正面なら利き手
   const lead = right ? p.armPivotR : p.armPivotL;
   const leadElbow = right ? p.elbowR : p.elbowL;
   const back = right ? p.armPivotL : p.armPivotR;
@@ -163,6 +166,21 @@ function stretchOne(p: Player, world: Vector3): void {
 
 /** ハイブリッド reach：手先が届く近い目標はIKで正確に乗せ、遠い目標は片手で伸ばし切る。
  *  守備の手をボール/パスコース点へ向けるのにも使う。 */
+/**
+ * 片手で伸ばすとき、どちらの腕を使うか（true = 仮想の右腕）。
+ * ボールが明らかに片側にあるならその側の手。真上など体の正面付近なら**利き手**。
+ * ⚠️ 仮想の左右 → モデルの左右 の対応は numberSide で入れ替わる。利き手を出すための
+ *    式は shootArms と同じものを使う（あちらは実機で確認済み）。
+ */
+const SIDE_CLEAR = 0.25;   // これ以上横にあれば「片側」とみなす(m)
+function leadArm(p: Player, world: Vector3): boolean {
+  const th = p.root.rotation.y + p.torsoTwist;
+  const wx = world.x - p.root.position.x, wz = world.z - p.root.position.z;
+  const localX = Math.cos(th) * wx - Math.sin(th) * wz;
+  if (Math.abs(localX) > SIDE_CLEAR) return localX >= 0;
+  return (p.hand === "R") === (p.numberSide > 0);
+}
+
 Player.prototype.reachBall = function(world: Vector3, both = false): void {
     this.armRateCap = MOVE_RATE.reach;   // ボールへ素早く手を出す（掴む/弾く）
     if (both) {
@@ -173,12 +191,21 @@ Player.prototype.reachBall = function(world: Vector3, both = false): void {
       this.armRateCap = 0;
       return;
     }
-    if (!this.reachIK(this.armPivotR, this.elbowR, world)) {
+    // ⚠️ 以前はここが常に armPivotR（仮想の右腕）だった。仮想の左右は numberSide で
+    //    モデルの左右へ入れ替わるので、**コートのどちらを攻めるかで上げる手が変わり**、
+    //    利き腕はまったく見ていなかった（実測: ジャンプボールで利き腕 R/L に関わらず
+    //    番号側 +1 なら左手、-1 なら右手を上げていた）。
+    const useR = leadArm(this, world);
+    const lead = useR ? this.armPivotR : this.armPivotL;
+    const leadElbow = useR ? this.elbowR : this.elbowL;
+    const off = useR ? this.armPivotL : this.armPivotR;
+    const offElbow = useR ? this.elbowL : this.elbowR;
+    if (!this.reachIK(lead, leadElbow, world)) {
       stretchOne(this, world);
       this.armRateCap = 0;
       return;
     }
-    this.easeArm(this.armPivotL, Quaternion.Identity());
-    this.bendElbow(this.elbowL, 0.28);
+    this.easeArm(off, Quaternion.Identity());
+    this.bendElbow(offElbow, 0.28);
     this.armRateCap = 0;
 };
