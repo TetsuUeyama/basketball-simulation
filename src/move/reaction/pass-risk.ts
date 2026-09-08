@@ -67,7 +67,7 @@ export function styleRisk(
   //    どれだけ読めるかは P精度（低い選手は過小評価する）。
   const foresee = 0.45 + rate(from.attr.passAcc) * 0.55;
   r += (closingBest(defenders, from, to, flightT, style)?.p ?? 0) * foresee;
-  if (d > 9) r += (longBallBest(defenders, from, to, flightT, d)?.p ?? 0) * 0.9;
+  if (d > 9) r += (longBallBest(defenders, from, to, flightT, d, style)?.p ?? 0) * 0.9;
   return r;
 }
 
@@ -95,6 +95,7 @@ export function bestPassStyle(
 // 守備者はカットのチャンスを持つ。スライディング持ちは早く抜け出す。
 export function longBallBest(
   defenders: Player[], from: Player, to: Player, flightT: number, flightDist: number,
+  style: PassStyle = "chest",
 ): { def: Player; at: number; p: number } | null {
   const hang = clamp((flightDist - 9) / 6, 0, 1);   // 9m→0, 15m→1
   let best: { def: Player; at: number; p: number } | null = null;
@@ -104,10 +105,18 @@ export function longBallBest(
     // ボールが自分の点を横切る前に稼げる距離（スライディング持ちは先手）
     const cover = df.runSpeed * 0.85 * (flightT * t) * (df.has("interceptor") ? 1.35 : 1);
     if (perp > cover + 0.4) continue;               // 単純に届かない
+    // ⚠️ ここは**ボールの高さを見ていなかった**。実測でバウンズパスのカット 22 本中
+    //    18 本がこの経路で、床を這う球を普通のロブと同じように読んで奪っていた。
+    //    その地点のボールの高さで手の届き具合を掛ける。走り込みながら低い球へ手を
+    //    下ろすのは難しいので、低いほど厳しくする。
+    const y = passHeightAt(style, t, passReleaseY(style), 1.0);
+    let reach = reachFactor(df, y);
+    if (reach <= 0) continue;
+    if (y < LOW_PASS) reach *= LOW_CLOSE + (1 - LOW_CLOSE) * clamp(y / LOW_PASS, 0, 1);
     let p = 0.35 + hang * 0.3 + rate(df.attr.reaction) * 0.2
       - rate(from.attr.passAcc) * 0.2;
     if (df.has("interceptor")) p += 0.2;
-    p = clamp(p, 0.05, 0.85);
+    p = clamp(p, 0.05, 0.85) * reach;
     if (!best || p > best.p) best = { def: df, at: t, p };
   }
   return best;
@@ -116,10 +125,12 @@ export function longBallBest(
 // ロングボールが実際に読まれてカットされたか（一度だけ抽選）。
 export function longBallRead(
   defenders: Player[], from: Player, to: Player, flightT: number, flightDist: number,
+  style: PassStyle = "chest",
 ): { def: Player; at: number; reach: number } | null {
-  const best = longBallBest(defenders, from, to, flightT, flightDist);
+  const best = longBallBest(defenders, from, to, flightT, flightDist, style);
   // 走り込んで正面で捕るので、手は完全に届いている
-  return best && chance(best.p) ? { def: best.def, at: best.at, reach: 1 } : null;
+  if (best && chance(best.p)) { CUT_SOURCE.last = "ロングボール読み"; return { def: best.def, at: best.at, reach: 1 }; }
+  return null;
 }
 
 // 確率以前の幾何ルール: パスレーンのど真ん中に守備が立っていたらそのパスは通らない。
@@ -155,8 +166,14 @@ export function closingBest(
     if (t <= 0.10 || t >= 0.90) continue;                 // パサー/受け手の真横
     if (perp <= LANE_W * VETO_FRAC) continue;             // 既にレーンの中 → そこへは投げない
     if (perp > CLOSE_MAX) continue;                       // 遠すぎて話にならない
-    const reach = reachFactor(d, passHeightAt(style, t, passReleaseY(style), 1.0));
+    const y = passHeightAt(style, t, passReleaseY(style), 1.0);
+    let reach = reachFactor(d, y);
     if (reach <= 0) continue;                             // 手の届かない高さを通る
+    // ⚠️ 走り込みながら低い球へ手を下ろすのは難しい。バウンズパスが「相手が近くに
+    //    居ても通る」のはこれが理由。止まって構えている相手より厳しくする。
+    //    これが無いと、バウンズは球が遅いぶん詰める時間が増えるだけになり、実測で
+    //    カット率がチェスト 0.0% に対しバウンズ 8.9% と逆転していた。
+    if (y < LOW_PASS) reach *= LOW_CLOSE + (1 - LOW_CLOSE) * clamp(y / LOW_PASS, 0, 1);
     const tt = flightT * t;                               // その点をボールが通るまでの時間
     const cover = d.runSpeed * CLOSE_SPEED * tt
       + 0.35 + rate(d.attr.agility) * 0.25                // 最後の一歩＋手を伸ばす分
@@ -179,6 +196,10 @@ const CLOSE_MAX = 4.5;
 const CLOSE_SPEED = 0.85;
 /** どれだけ余裕を持って届けば確実になるか(m)。 */
 const CLOSE_SPAN = 1.0;
+/** これより低い球は、走り込みながらだと手を下ろしにくい(m)。 */
+const LOW_PASS = 0.75;
+/** 床すれすれの球へ走り込んだときの、届きやすさの残り。 */
+const LOW_CLOSE = 0.25;
 
 // パサー自身の「このパスは通るか」の見積り。最も通る投げ方で評価する(バウンズで
 // 手の下をくぐらせられるなら、そのリスクで判断する)。全パス判断がここを通る。
@@ -187,6 +208,9 @@ export function passRisk(defenders: Player[], from: Player, to: Player): number 
 }
 
 // リリース時に一度だけ、選んだパスが実際にカットされたか判定する。
+/** どの経路でカットされたかの記録（計測用）。 */
+export const CUT_SOURCE = { last: "" };
+
 export function evalInterception(
   defenders: Player[], from: Player, to: Player, passStyle: PassStyle,
 ): { def: Player; at: number; reach: number } | null {
@@ -199,7 +223,7 @@ export function evalInterception(
   if (run) {
     let p = run.p;
     if (from.has("throughPass") && to.cutting) p *= 0.75;
-    if (chance(p)) return { def: run.def, at: run.at, reach: 1 };
+    if (chance(p)) { CUT_SOURCE.last = "走り込み"; return { def: run.def, at: run.at, reach: 1 }; }
   }
   // 拒否をすり抜けてレーンに残っている相手（強制フィード等）はこれまでどおり
   const block = laneBlock(defenders, from, to);
@@ -208,5 +232,6 @@ export function evalInterception(
   if (reach <= 0) return null;   // 手の届く高さを外して通った
   let p = interceptChance(from, to, block, passStyle);
   if (from.has("throughPass") && to.cutting) p *= 0.75;
-  return chance(p) ? { def: block.def, at: block.t, reach } : null;
+  if (chance(p)) { CUT_SOURCE.last = "レーンに居た"; return { def: block.def, at: block.t, reach }; }
+  return null;
 }

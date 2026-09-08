@@ -135,6 +135,8 @@ export class Game {
   passer: Player | null = null;                         // 現在のパスを放った選手
   // パス時に一度だけ決定。reach = その地点で手がどれだけ届いたか(綺麗に奪えるかに効く)
   passSteal: { def: Player; at: number; reach: number } | null = null;
+  // このパスがレーンの拒否を通さずに出されたか（強制フィード等）。計測用。
+  passForced = false;
   // ライン外へ逸れたパスを追う選手（move/action/save.ts）。この選手だけ clampCourt を
   // 素通しし、コートの外へ出られる。復帰しきる/時間切れで null に戻る。
   saveBy: Player | null = null;

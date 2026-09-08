@@ -11,6 +11,7 @@ Player.HEADLESS = true;
 import { clubTeam } from "../src/roster";
 import { segPerp, dist2D } from "../src/util";
 import { LANE_W } from "../src/config";
+import { CUT_SOURCE } from "../src/move/reaction/pass-risk";
 const scene = new Scene(new NullEngine());
 const hoops = buildCourt(scene); const game = new Game(scene);
 (game as unknown as { attachHoops(h: unknown): void }).attachHoops(hoops);
@@ -20,10 +21,17 @@ const NG = Number(process.env.NG ?? 12);
 
 let passes = 0, cuts = 0, inLane = 0, closing = 0;
 let thrownIntoLane = 0;      // リリース時にレーンへ相手が立っていたパス
+let laneForced = 0, laneClock = 0, laneOther = 0;
+const byStyle: Record<string, { n: number; cut: number }> = {};
+// レーンに相手が居る場面 / 居ない場面 に分けた、投げ方ごとのカット率
+const tight: Record<string, { n: number; cut: number }> = {};
+const open: Record<string, { n: number; cut: number }> = {};
+let curTight = false;
 const laneGap: number[] = [];  // リリース時、レーンに一番近い相手の距離
 const perpAt: number[] = [];
 const passLen: number[] = [];
 const cutLen: number[] = [];
+const srcCount: Record<string, number> = {};
 const accAll: number[] = [], accCut: number[] = [];
 const spdAll: number[] = [], spdCut: number[] = [];
 let tov = 0;
@@ -50,8 +58,23 @@ for (let gi = 0; gi < NG; gi++) {
         }
         if (closest < Infinity) {
           laneGap.push(closest);
-          if (closest <= LANE_W) thrownIntoLane++;
+          curTight = closest <= LANE_W;
+          if (closest <= LANE_W) {
+            thrownIntoLane++;
+            const gf = game as unknown as { passForced: boolean };
+            if (gf.passForced) laneForced++;
+            else if (game.shotClock <= 2.2) laneClock++;
+            else laneOther++;
+          }
         }
+      }
+      {
+        const sy = game.passStyle as string;
+        byStyle[sy] = byStyle[sy] ?? { n: 0, cut: 0 };
+        byStyle[sy].n++;
+        const tb = curTight ? tight : open;
+        tb[sy] = tb[sy] ?? { n: 0, cut: 0 };
+        tb[sy].n++;
       }
       const st = (game as unknown as { passSteal: { def: Player } | null }).passSteal;
       if (st && from && to) {
@@ -60,6 +83,11 @@ for (let gi = 0; gi < NG; gi++) {
         perpAt.push(perp);
         if (perp <= LANE_W) inLane++; else closing++;
         cutLen.push(dist2D(from.pos, to.pos));
+        byStyle[game.passStyle as string].cut++;
+        const key = (game.passStyle as string) + " / " + CUT_SOURCE.last;
+        srcCount[key] = (srcCount[key] ?? 0) + 1;
+        const tb2 = curTight ? tight : open;
+        if (tb2[game.passStyle as string]) tb2[game.passStyle as string].cut++;
         accCut.push(from.attr.passAcc); spdCut.push(from.attr.passSpd);
       }
     }
@@ -85,4 +113,22 @@ console.log(`
 パサーの能力（全パス vs カットされたパス）`);
 console.log(`  P精度 全 ${mean(accAll)} / カットされた ${mean(accCut)}`);
 console.log(`  P速度 全 ${mean(spdAll)} / カットされた ${mean(spdCut)}`);
+console.log(`  内訳: 強制パス ${laneForced} / ショットクロック2.2秒未満 ${laneClock} / それ以外 ${laneOther}`);
+console.log(`
+パスの投げ方ごとのカット率`);
+for (const [k, v] of Object.entries(byStyle)) {
+  console.log(`  ${k.padEnd(9)} ${String(v.n).padStart(4)} 本 → カット ${v.cut} 本（${(v.cut / Math.max(1, v.n) * 100).toFixed(1)}%）`);
+}
+const show = (t: Record<string, { n: number; cut: number }>, lab: string): void => {
+  console.log(lab);
+  for (const [k, v] of Object.entries(t)) {
+    console.log(`  ${k.padEnd(9)} ${String(v.n).padStart(4)} 本 → カット ${v.cut} 本（${(v.cut / Math.max(1, v.n) * 100).toFixed(1)}%）`);
+  }
+};
+console.log("");
+show(tight, "レーンに相手が居る場面での投げ方ごとのカット率");
+show(open, "レーンが空いている場面での投げ方ごとのカット率");
+console.log("");
+console.log("カットの経路（投げ方 / 経路）");
+for (const [k, v] of Object.entries(srcCount).sort((a, b) => b[1] - a[1])) console.log(`  ${k.padEnd(24)} ${v} 本`);
 console.log(`ターンオーバー 試合あたり ${(tov / NG).toFixed(1)}`);

@@ -108,6 +108,7 @@ export function passToReceiver(
   if (style === "chest") style = bestPassStyle(game.oppTeam(h), h, target).style;
   game.passStyle = style;
   game.noLookPass = false;
+  game.passForced = force;   // レーンの拒否を通したか（計測用）
   // 片手投げ: 確保が収まる前(pickup中)、または至近で圧を受けた近距離。体重は乗らないが
   // ワインドアップが要らないので素早く出せる。
   game.passOneHand = (h.pickupT > 0 && !h.grabTwoHand)
@@ -190,7 +191,7 @@ export function passToReceiver(
   game.passSteal = evalInterception(game.oppTeam(h), h, target, game.passStyle);
   // 滞空するロングは誰も真正面に居なくても走り込んで取れる
   if (!game.passSteal && d > 9) {
-    game.passSteal = longBallRead(game.oppTeam(h), h, target, game.passDur, d);
+    game.passSteal = longBallRead(game.oppTeam(h), h, target, game.passDur, d, game.passStyle);
   }
   // トラップからの強制: 巧いパサー(P精度)は通す — 能力が決める。雑なパサーはカットされる。
   if (force && game.passSteal && chance(rate(h.attr.passAcc) * 0.6)) {
