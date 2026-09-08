@@ -1,7 +1,7 @@
 // パス処理（受け手選択・投球・飛行/受球）。Option B: 状態は Game(=GameState)が持ち、
 // ここは game を受け取る関数群。パスのリスク/インターセプト計算は resolution/pass-risk。
 import { Player } from "../../objects/player/player";
-import { COURT, MAX_PASS, SHOT_CLOCK, PASS_STYLE, PASS_ONE_HAND, PASS_AIRBORNE, PASS_ZIP_MIN } from "../../config";
+import { COURT, MAX_PASS, SHOT_CLOCK, PASS_STYLE, PASS_ONE_HAND, PASS_AIRBORNE, PASS_ZIP_MIN, PASS_GATHER, MAX_PASS_GATHER } from "../../config";
 import type { PassStyle } from "../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D } from "../../util";
 import { twWeight, effShootRange, reactionLag, shotThreat, passZip, passReleaseY, passHeightAt } from "../../eval";
@@ -133,8 +133,14 @@ export function passToReceiver(
   // ボールは受け手へホーミングするので、重要なのはキャッチ点までの距離。走る受け手を
   // 速度でリード。球威は P速度 × 種別 × 片手 × 空中。
   const sm = PASS_STYLE[style];
-  const zipMul = sm.zip * (game.passOneHand ? PASS_ONE_HAND.zip : 1) * (h.airborne ? PASS_AIRBORNE.zip : 1);
-  const missMul = sm.miss * (game.passOneHand ? PASS_ONE_HAND.miss : 1) * (h.airborne ? PASS_AIRBORNE.miss : 1);
+  // 確保が収まる前は球威が出ない。収まるにつれて 1 へ戻す。
+  const gp = h.gatherT > 0 && h.gatherDur > 0 ? clamp(h.gatherT / h.gatherDur, 0, 1) : 0;
+  const gZip = 1 + (PASS_GATHER.zip - 1) * gp;
+  const gMiss = 1 + (PASS_GATHER.miss - 1) * gp;
+  const zipMul = sm.zip * (game.passOneHand ? PASS_ONE_HAND.zip : 1)
+    * (h.airborne ? PASS_AIRBORNE.zip : 1) * gZip;
+  const missMul = sm.miss * (game.passOneHand ? PASS_ONE_HAND.miss : 1)
+    * (h.airborne ? PASS_AIRBORNE.miss : 1) * gMiss;
   const zip0 = Math.max(PASS_ZIP_MIN, passZip(h) * zipMul);
   const d0 = dRaw;
   const lead = d0 / zip0;                              // 第一次の飛行時間
@@ -143,6 +149,9 @@ export function passToReceiver(
   const cz = clamp(target.pos.z + target.velZ * lead, -(COURT.halfL - 0.35), COURT.halfL - 0.35);
   const d = Math.hypot(cx - h.pos.x, cz - h.pos.z);    // 実飛行距離
   if (d > MAX_PASS + 1.5) return false;                // 一発は無理 — 保持
+  // ⚠️ 収まる前は遠くへ投げられない。実測で、確保した次のフレームに 6.3m 先へ
+  //    14m/s のパスを出していた。緩い近距離なら収まる前でも出してよい。
+  if (gp > 0.15 && d > MAX_PASS_GATHER) return false;
 
   // クロック終盤の現実チェック: 滞空後に撃つ時間が残らないなら投げない
   if (game.shotClock < 2.2 && game.shotClock - d / zip0 < 0.9) return false;

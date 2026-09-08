@@ -88,17 +88,22 @@ function planCatch(game: Game, p: Player): { x: number; z: number; t: number; h:
   for (let t = STEP; t <= 2.5; t += STEP) {
     const by = y0 + vy * t - BALL_G * t * t / 2;
     if (by < FLOOR_Y) break;                          // 床に着く — 以後は弾道が変わる
-    // ⚠️ 上昇中のボールに合わせてはいけない。リムから跳ね上がっている途中の高さで解くと
-    //    そこへ向けて踏み切ってしまい、実測で 37回中18回が「ボール上昇中の踏み切り」に
-    //    なっていた（＝早すぎる）。落ちてくる側だけを取る。
-    if (vy - BALL_G * t > 0) continue;
+    const x0 = game.ball.pos.x + game.ball.vel.x * t;
+    const z0 = game.ball.pos.z + game.ball.vel.z * t;
+    // ⚠️ **すでにその真下にいる**選手は別扱い。走って移動する必要がないので、
+    //    上がってくる球でも、最大リーチぎりぎりでも跳んで competing する。
+    //    これを分けないと、ゴール下で競っている選手の頭上をボールが通過しても
+    //    「弾道が読めない／跳ぶ必要がない」と判定して跳ばなかった
+    //    （実測: 6試合99場面のうち 68% でボールが最寄りの選手の手の上を通過）。
+    const here = dist2DTo(p.pos, x0, z0) < CONTEST_NEAR;
+    // 上昇中のボールに合わせてはいけない。リムから跳ね上がっている途中の高さで解くと
+    // そこへ向けて踏み切ってしまい早すぎる。ただし真下にいる選手は例外。
+    if (!here && vy - BALL_G * t > 0) continue;
     // 最大リーチぎりぎりは狙わない。手をボールの上に REACH_OVER だけ出せる高さまで。
     // （割合で削ると跳躍力の低い選手ほど余裕が足りなくなるので、絶対量で引く）
-    if (by > stand + maxH - REACH_OVER) continue;
-    const x = game.ball.pos.x + game.ball.vel.x * t;
-    const z = game.ball.pos.z + game.ball.vel.z * t;
-    if (dist2DTo(p.pos, x, z) > runDist(p, t) + 0.35) continue;   // そこまで走って間に合わない
-    return { x, z, t, h: Math.max(0, by - stand) };
+    if (by > stand + maxH - (here ? CONTEST_OVER : REACH_OVER)) continue;
+    if (!here && dist2DTo(p.pos, x0, z0) > runDist(p, t) + 0.35) continue;   // 間に合わない
+    return { x: x0, z: z0, t, h: Math.max(0, by - stand) };
   }
   return null;
 }
@@ -137,6 +142,10 @@ const AIR_LEAN = 1.5;
 const GRAB_R = 0.45;
 /** 相手の最高到達点をこれだけ上回れば「上を取った」＝競り負けない(m)。 */
 const HIGH_POINT = 0.30;
+/** この距離(m)以内にボールが落ちてくる選手は「もう競っている」とみなす。 */
+const CONTEST_NEAR = 0.9;
+/** 競っている選手が狙ってよい高さの余裕(m)。走る必要がないので目一杯まで手を出す。 */
+const CONTEST_OVER = 0.08;
 /** ボールの高さより手をどれだけ上に出すか(m)。上から被せて取るぶん。 */
 const REACH_OVER = 0.30;
 /** 計測用のフック（headless_sim のプローブが差す）。通常は何もしない。 */
@@ -221,7 +230,9 @@ export function chaseLoose(game: Game, dt: number): void {
         if (plan && plan.h > 0.05) {
           // 頂点が到達時刻に合うよう、跳ぶ時間の半分だけ早く踏み切る。
           // 前を取られているとさらに遅れ、跳ぶ高さも下がる。
-          const dur = clamp(0.34 + plan.h * 0.34, 0.34, 0.70);
+          // ⚠️ 滞空が長いほど「頂点の半分前」に踏み切るので、早く跳んで見える。
+          //    実測で踏み切り時のボールの高さが 3.28m（まだリムの高さ）だった。短くする。
+          const dur = clamp(0.30 + plan.h * 0.32, 0.30, 0.64);
           const lead = dur / 2 * (1 - blocked * 0.5);
           // 落下点に立てていないうちは跳ばない（跳んでも空振りして、着地後に拾う形になる）
           // planCatch が加速込みで到達可能な時刻しか返さないので、踏み込み(leap)の分だけ余裕を見る。
@@ -398,7 +409,15 @@ export function secureLoose(game: Game, p: Player, label?: string): void {
     // 部分リセット、それ以外のオフェンス確保はそのまま走らせる。
     if (!offensive) game.shotClock = SHOT_CLOCK;
     else if (game.looseFromRim) game.partialShotClock();
-    p.decisionT = 0.4;
+    // 確保したボールが手に収まるまでの時間。パスを受けたときと同じ扱い(gatherT)で、
+    // この間はボールがまだ緩い（strip の対象・ドリブルも出せない）。
+    // ⚠️ これが無かったので、確保した次のフレームに速いパスを投げられていた
+    //    （実測: 確保からパスまで 25% が 0.03 秒以内）。
+    const hard = (p.airborne ? 0.18 : 0) + (game.ball.pos.y > 2.0 ? 0.12 : 0)
+      + (p.grabTwoHand ? 0 : 0.14) + (game.looseTips > 0 ? 0.06 : 0);
+    const settle = clamp((0.22 + hard) * (1.25 - rate(p.attr.handling) * 0.5), 0.18, 0.75);
+    p.gatherT = p.gatherDur = settle;
+    p.decisionT = Math.max(0.4, settle * 0.8);
     game.ball.vel.set(0, 0, 0);
     game.resetMotion();
     if (!offensive) game.maybeStartPush();   // ポゼッション交代 → 速攻を走らせる

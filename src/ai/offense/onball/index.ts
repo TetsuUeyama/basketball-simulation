@@ -1,7 +1,7 @@
 // オンボールの入口。ハンドラーの1フレーム: 判断tick(./decide)を回し、仕掛けた move の
 // 展開（抜き去り/押し込み/ピック使い/探りドリブル）を進める。
 import { rate, clamp, chance, rand, dist2D, moveToward2D, dirTo2D } from "../../../util";
-import { PALM_HITBOX } from "../../../config";
+import { PALM_HITBOX, AIR_OUTLET_RANGE } from "../../../config";
 import { palmRadius } from "../../../eval";
 import { Player } from "../../../objects/player/player";
 import { finishAtRim } from "../../../move/action/shooting";
@@ -184,6 +184,10 @@ function reboundAirAction(game: Game, h: Player): void {
       return;
     }
     // 空中からのアウトレットはジャンプパス(頭上リリース)。通常のジャンプパスと同じ経路。
+    // ⚠️ 距離を制限する。空中では踏ん張れないので遠投はできない。実測で 6.7m 先へ
+    //    12m/s のパスを空中から出していた。遠い相手しか居なければ投げずに着地する。
     const target = chooseReceiver(game, h);
-    if (target) passToReceiver(game, h, target, false, "jump");   // 通らなければ着地
+    if (target && dist2D(h.pos, target.pos) <= AIR_OUTLET_RANGE) {
+      passToReceiver(game, h, target, false, "jump");   // 通らなければ着地
+    }
   }

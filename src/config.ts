@@ -82,6 +82,13 @@ export const PASS_STYLE: Record<PassStyle, { zip: number; miss: number }> = {
 };
 export const PASS_ONE_HAND = { zip: 0.82, miss: 1.45 };   // 体重が乗らない。代わりにピボット不要
 export const PASS_AIRBORNE = { zip: 0.85, miss: 1.35 };   // 踏ん張れない
+// 確保が収まる前(gatherT中)に放るパス。ボールがまだ手に落ち着いていないので体重が
+// 乗らず、球威が出ない・散らばる。収まるにつれて 1 へ戻る。
+export const PASS_GATHER = { zip: 0.55, miss: 1.5 };
+/** 収まる前に投げられる最長距離(m)。これより遠い相手へは収まるまで投げない。 */
+export const MAX_PASS_GATHER = 7.0;
+/** 空中でリバウンドを確保した直後のアウトレットで届く最長距離(m)。 */
+export const AIR_OUTLET_RANGE = 5.5;
 export const PASS_ZIP_MIN = 6.0;   // 倍率を掛け合わせても遅くなりすぎない下限(m/s)
 export const LANE_W = 1.1;        // 守備がパスレーンを脅かす横方向の距離(m)
 // 手のひら当たり判定モデル: 守備のリーチ半径を(守備−オフェンス)でスケール。false で
