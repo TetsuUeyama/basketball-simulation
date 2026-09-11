@@ -117,13 +117,25 @@ const bone = (name: string): Bone | null =>
   skel?.bones.find((b) => b.name === name || b.name.endsWith(":" + name) || b.name.endsWith("_" + name)) ?? null;
 
 /** 素のスケールを覚えておく（毎回そこから掛け直す。掛け算で溜まらないように）。 */
-const restScale = new Map<Bone, Vector3>();
+const restScale = new Map<string, Vector3>();
+/** リンクされた TransformNode を持つボーンの数（診断用）。 */
+let linkedBones = 0;
+/**
+ * ボーンのスケールを設定する。
+ * ⚠️ glTF ローダーはボーンを **TransformNode にリンク**する。リンクがある間、
+ *    ボーンのローカル行列は毎フレームそのノードから作り直されるので、
+ *    bone.setScale() は**書いた次のフレームで消える**（スライダーを動かしても
+ *    何も起きない、の原因）。リンクがあるときはノード側を触ること。
+ */
 const setBone = (name: string, x: number, y: number, z: number): void => {
   const b = bone(name);
   if (!b) return;
-  if (!restScale.has(b)) restScale.set(b, b.getScale().clone());
-  const r = restScale.get(b)!;
-  b.setScale(new Vector3(r.x * x, r.y * y, r.z * z));
+  const tn = b.getTransformNode();
+  if (!restScale.has(name)) restScale.set(name, (tn ? tn.scaling : b.getScale()).clone());
+  const r = restScale.get(name)!;
+  const next = new Vector3(r.x * x, r.y * y, r.z * z);
+  if (tn) tn.scaling.copyFrom(next);
+  else b.setScale(next);
 };
 
 /** 今の見た目の身長(m)。スキン後の頂点で測る。 */
@@ -249,6 +261,7 @@ function infoText(): string {
   const c = counts();
   const h = measuredHeight();
   return `身長 ${(h * 100).toFixed(1)}cm\n`
+    + `ボーン ${skel ? skel.bones.length : 0} 本（ノード連動 ${linkedBones} 本）\n`
     + `メッシュ ${c.mesh} / 頂点 ${c.vert.toLocaleString()} / 三角形 ${c.tri.toLocaleString()}\n`
     + `比較: 現行ボクセル(18.75mm) 1人 = 頂点 85,728 / 三角形 40,896\n`
     + `ドラッグで回転・ホイールで拡大`;
@@ -273,8 +286,11 @@ async function load(): Promise<void> {
   placeMouth();
   buildUI();
   info = infoText();
+  linkedBones = skel ? skel.bones.filter((b) => !!b.getTransformNode()).length : 0;
   const names = skel ? skel.bones.map((b) => b.name) : [];
-  console.log("ボーン", names.length, names.slice(0, 60));
+  console.log("ボーン", names.length, "リンク", linkedBones, names.slice(0, 60));
+  console.log("メッシュ", bodyMeshes.map((m) => m.name));
+  applyBody();
 }
 
 function buildUI(): void {

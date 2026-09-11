@@ -1100,3 +1100,13 @@ body は髪・頭皮・目を別パーツへ分離したため**穴が空いて�
   Node には XMLHttpRequest が無く Babylon の内部がそれを直接使うため、ヘッドレスでは
   GLB を読み込めなかった。**`/poly.html` を開いて確認すること**。
 - `@babylonjs/loaders@8.56.2` を新規に追加した（GLB 読み込みのため）。
+
+**⚠️ 修正: スライダーを動かしても何も変わらなかった件**
+- 原因: **glTF ローダーはボーンを TransformNode にリンクする**
+  （`@babylonjs/loaders/glTF/2.0/glTFLoader.js:1228` の `babylonBone.linkTransformNode(...)`）。
+  リンクがある間、ボーンのローカル行列は毎フレームそのノードから作り直されるので、
+  `bone.setScale()` に書いた値は**次のフレームで消える**。
+- 直し: リンクされた TransformNode があればそちら（`bone.getTransformNode().scaling`）を
+  触る。無いときだけ `bone.setScale()` を使う。素のスケールはボーン名をキーに覚える。
+- 情報欄に「ボーン N 本（ノード連動 M 本）」を出すようにした。M が 0 でないことが
+  この経路を通っている証拠になる。読み込み直後に `applyBody()` を一度当てるようにもした。
