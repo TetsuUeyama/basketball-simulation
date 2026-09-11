@@ -109,7 +109,8 @@ export function poseHands(game: Game, ): void {
       case "held": {
         if (game.handler) {
           if (game.pendingPassTo) {
-            // ジャンプパスのウィンドアップ: 両手でボールを頭上に掲げる
+            // パスのウィンドアップ: 反動動作(体へ引き付け)/ピボット/ジャンプパスのいずれも、
+            // 両手はボールを追う。ボール位置は updateLive が動かす。
             catchBall(game.handler, b);
           } else if (game.handler.gatherT > 0) {
             // キャッチをまとめている間: 両手のキャッチポーズを続ける

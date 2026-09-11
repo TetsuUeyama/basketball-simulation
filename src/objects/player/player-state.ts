@@ -29,6 +29,7 @@ Player.prototype.resetStats = function(): void {
 Player.prototype.resetPose = function(): void {
   // ジャンプ/着地
   this.jumpRemaining = 0; this.jumpDur = 0; this.jumpHeight = 0;
+  this.loadT = 0; this.loadDur = 0; this.jumpLoad = 0; this.jumpLoadTarget = 0;
   this.landT = 0; this.leapX = 0; this.leapZ = 0;
   // リアクション/ひるみ
   this.foulReactT = 0; this.defWinT = 0;
@@ -48,7 +49,12 @@ Player.prototype.resetPose = function(): void {
   this.frontRunT = 0;                              // スローイン後の前進
   // アクション3段階
   this.actKind = ""; this.actPhase = ""; this.actT = 0; this.actFired = false;
-  this.stealReachT = 0;
+  this.stealReachT = 0; this.stealReachDur = 0; this.digLeanX = 0; this.digLeanZ = 0; this.lungeD = 0;
+  this.punchRight = false; this.punchHoldT = 0;
+  this.leadRight = false; this.leadHoldT = 0;
+  this.digLoad = 0; this.digLoadTarget = 0;
+  this.reflexTiltX = 0; this.reflexTiltZ = 0;
+  this.offBalT = 0; this.fakeT = 0; this.fakeGo = false; this.fakeFinish = false; this.fakeCoolT = 0;
   // 腕を即座に休めへ（イーズを介さず直接セット）
   this.armPivotL.rotationQuaternion = Quaternion.Identity();
   this.armPivotR.rotationQuaternion = Quaternion.Identity();

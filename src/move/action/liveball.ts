@@ -8,6 +8,9 @@ import { passToReceiver } from "./passing";
 import { flashBall } from "../../core/visuals";
 import type { Game } from "../../game";
 
+// 出だしと終わりを滑らかにする 0..1 の補間(反動動作の引き付けに使う)。
+const smooth = (u: number): number => u * u * (3 - 2 * u);
+
 export function updateLive(game: Game, dt: number): void {
   const h = game.handler!;
   // ジャンプパスのウィンドアップ中: 跳び上がってボールを頭上に掲げ、最高点
@@ -19,13 +22,35 @@ export function updateLive(game: Game, dt: number): void {
     if (game.pendingPassTurn) {
       const cf = h.chestFront(0.32);
       game.ball.pos.set(cf.x, 1.0, cf.z);
+    } else if (game.pendingPassWind) {
+      // 反動動作: 溜め開始時の位置から胸の手前へボールを引き付け、引き切ったら止める。
+      // 手はボールへ追従する(poses の catchBall)ので、腕がそのまま投げる方向と逆へ動く。
+      const u = clamp(1 - game.pendingPassT / (game.pendingPassDur || 1), 0, 1);
+      if (game.windBallY < 0) {   // 溜めの1フレーム目: 今ボールがある場所が起点
+        game.windBallX = game.ball.pos.x - h.pos.x;
+        game.windBallY = game.ball.pos.y;
+        game.windBallZ = game.ball.pos.z - h.pos.z;
+      }
+      const e = smooth(clamp(u / 0.55, 0, 1));         // 引き切って一瞬止まる
+      const cf = h.chestFront(0.12);                   // 胸のすぐ前 = 引き切った位置
+      const sx = h.pos.x + game.windBallX, sz = h.pos.z + game.windBallZ;
+      game.ball.pos.set(sx + (cf.x - sx) * e, game.windBallY + (1.05 - game.windBallY) * e,
+        sz + (cf.z - sz) * e);
     } else game.ball.pos.set(h.pos.x, 2.0, h.pos.z);
     if (game.pendingPassT <= 0) {
       const target = game.pendingPassTo;
       const turn = game.pendingPassTurn;
+      const wind = game.pendingPassWind;
       game.pendingPassTo = null;
       game.pendingPassTurn = false;
-      if (turn) {
+      game.pendingPassWind = false;
+      if (wind) {
+        // 溜め切った → 投げると決めた球をそのまま放る(溜めと安全ゲートは通し直さない)。
+        // カット判定はここで走るので、溜めている間に詰めた守備者は間に合う。
+        game.windReleased = true;
+        passToReceiver(game, h, target, false, game.passStyle);
+        game.windReleased = false;
+      } else if (turn) {
         // ピボット完了 → 通常のパス（強制でない）としてリリース: レーン/リスクの安全ゲートは
         // 走り、弧のチェックだけスキップ（すでに正対済み）。
         game.turnReleased = true;

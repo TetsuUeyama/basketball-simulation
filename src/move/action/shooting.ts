@@ -43,7 +43,81 @@ export const SHOT_PARAMS: Record<ShotType, {
 // 溜め中のボールに守備者の手が届く間合い。ここまで詰められると stripGather の対象。
 const STRIP_RANGE = 1.3;
 
+// 出だしと終わりを滑らかにする 0..1 の補間(反動動作の引き付けに使う)。
+const smooth = (u: number): number => u * u * (3 - 2 * u);
+// 溜めの3段の境目(進捗 0..1)。CHARGE_DIP までが反動、CHARGE_LIFT から頭上へ上げる。
+const CHARGE_DIP = 0.35, CHARGE_LIFT = 0.50;
+// シュートの溜めのどこからクローズアウトを始めるか(進捗)。
+const CLOSEOUT_AT = 0.30;
+// 急ぎ撃ち: この秒数だけ溜めたら、残りを RUSH_TAIL 秒で振り上げ切って放つ。
+// ⚠️ 途中で切ってはいけない。切るとボールが頭上に無いまま放たれ、リリースの瞬間に
+//    ボールが飛び上がって見える（＝ノーモーション）。速くするのは良いが、省いてはだめ。
+const RUSH_AFTER = 0.06, RUSH_TAIL = 0.14;
+// 溜めモーション全体の下限(秒)。⚠️ これを短くすると、ポケット(≈1.09m)から頭上
+//    (2.05m)までの 0.95m を数フレームで駆け上がることになり、ボールが飛んで見える。
+//    実在の振り上げは 0.25〜0.3 秒。CHARGE_LIFT 以降がその区間なので全体はその倍。
+const MIN_MOTION = 0.42;
+// シュートが上手いほど振り上げが速い(0.14 → 0.10秒)。
+const rushTail = (p: Player): number => RUSH_TAIL - rate(p.attr.shotTech) * 0.04;
+// 頭上の構え = リリース点の高さ。releaseShot の shotFrom と揃える(ワープさせない)。
+const SHOT_RELEASE_Y = 2.05;
+
+// 体を当ててブロッカーを跳ばせなくする間合い(m)と、押しのける距離(m)。
+export const CLEAR_OUT = { range: 1.35, push: 0.16 };
+
+/** シュートに入る前に、寄っている守備者へ体を当てて重心を崩す。
+ *  ボディバランス(attr.balance)が高いほど押し勝ち、崩れた相手はその間**跳べない**。
+ *  ⚠️ 範囲内の全員に判定する — ダブルチームなら複数人が崩れる。 */
+export function clearOut(game: Game, h: Player): void {
+    for (const d of game.teamPlayers(1 - h.team)) {
+      if (d.airborne || d.landT > 0 || d.offBalT > 0) continue;
+      const gap = dist2D(d.pos, h.pos);
+      if (gap > CLEAR_OUT.range) continue;
+      const edge = rate(h.attr.balance) - rate(d.attr.balance);
+      if (!chance(clamp(0.24 + edge * 1.2, 0.03, 0.85))) continue;
+      d.offBalT = clamp(0.32 + edge * 0.5, 0.18, 0.80);
+      d.shovedT = Math.max(d.shovedT, d.offBalT);
+      // 半歩押しのける。重心も崩す(次の一歩が出ない)。
+      const ux = (d.pos.x - h.pos.x) / (gap || 1), uz = (d.pos.z - h.pos.z) / (gap || 1);
+      d.pos.x += ux * CLEAR_OUT.push;
+      d.pos.z += uz * CLEAR_OUT.push;
+      game.clampCourt(d.pos);
+      d.leanAxisX = ux; d.leanAxisZ = uz;
+      d.lean = clamp(d.lean + 0.6, -1, 1);
+      d.setPlant(0.25 + Math.max(0, edge) * 0.4);
+    }
+  }
+
+// シュートフェイク: 跳ばせてから打つ。
+export const FAKE = { range: 1.8, hold: 0.30, cool: 2.2 };
+
+/** S技術の高い選手が、寄っているブロッカーを先に跳ばせるフェイク。
+ *  仕掛けたら true（呼び出し側はこのフレームは打たない）。fakeT が切れたフレームに
+ *  fakeGo が立ち、decide が本番のシュートへ入る。 */
+export function tryShotFake(game: Game, h: Player, finish: boolean): boolean {
+    if (h.fakeT > 0 || h.fakeCoolT > 0 || h.airborne) return false;
+    if (game.shotClock < 1.6) return false;            // 撃つ時間が無い
+    const near = game.nearestDefender(h);
+    if (!near || near.airborne || near.landT > 0) return false;
+    if (dist2D(near.pos, h.pos) > FAKE.range) return false;
+    // 技術が高いほど仕掛ける。
+    if (!chance(clamp(rate(h.attr.shotTech) * 0.85 - 0.22, 0, 0.72))) return false;
+    h.fakeT = FAKE.hold;
+    h.fakeCoolT = FAKE.cool;
+    h.fakeFinish = finish;
+    // 引っかかった相手は跳ぶ。規律(守備・反応)が高いほど我慢する。
+    for (const d of game.teamPlayers(1 - h.team)) {
+      if (d.airborne || d.landT > 0 || d.offBalT > 0) continue;
+      if (dist2D(d.pos, h.pos) > FAKE.range + 0.6) continue;
+      const bite = clamp(0.32 + rate(h.attr.shotTech) * 0.6
+        - rate(d.attr.defense) * 0.5 - rate(d.attr.reaction) * 0.3, 0.05, 0.85);
+      if (chance(bite)) game.contestLeap(d, h.pos, leapHeight(d), 0.6);
+    }
+    return true;
+  }
+
 export function shoot(game: Game, h: Player, dHoop: number, dDef: number): void {
+    clearOut(game, h);   // 寄っている相手に体を当ててから溜めに入る
     const windup = shotWindupFor(h, dHoop);
     // ブザービーター: ギャザーの時間が無い — ホーンと同時に投げ上げる。準備は全く
     // 出来ていない(prepDone=0)ので、必要準備が長いほど(深いほど)精度は急落する。
@@ -57,10 +131,19 @@ export function shoot(game: Game, h: Player, dHoop: number, dDef: number): void 
     game.chargeShooter = h;
     game.chargeDHoop = dHoop;
     game.chargeDDef = dDef;
-    game.chargeT = windup;
+    // ⚠️ 溜めの長さは「精度に必要な準備(shotWindup)」と「モーションの長さ」の
+    //    両方で決まる。短い準備でもモーションは端折らない。
+    game.chargeSpan = Math.max(windup, MIN_MOTION);
+    game.chargeT = game.chargeSpan;
+    game.chargeP = 0;
+    game.chargeElapsed = 0;
+    game.chargeRush = false;
+    game.chargeDDefLift = -1;
     game.shooter = h;              // ギャザー中のポーズの所有者
     game.handler = null;
     game.ballMode = "charge";
+    // ⚠️ 構えへ瞬間移動させない: 今ボールがある位置を起点に、そこから引き付ける。
+    game.windBallY = -1;   // setChargeBall がボールの現在地を起点として捕まえる
     // ボールは胸前・低めのポケットで構える（溜め中は前・低いまま、リリースで頭上へ）
     setChargeBall(game, h);
   }
@@ -69,16 +152,39 @@ export function shoot(game: Game, h: Player, dHoop: number, dDef: number): void 
   // 少し沈み、前傾／沈み込みの深さ(shootLoadTarget)も進捗で設定する（sync が姿勢に反映）。
   // リリースで一気に頭上やや前へ上がる（releaseShot / shot アーク側）。
 export function setChargeBall(game: Game, h: Player): void {
-    const w = game.shotWindup || 0.001;
-    const p = clamp(1 - game.chargeT / w, 0, 1);   // ギャザー開始0 → リリース1
-    h.shootLoadTarget = p;
+    const p = game.chargeP;   // 溜めモーションの進捗 0(開始) → 1(頭上の構え)
     const rim = game.attackFloor(h.team);
     const fx = rim.x - h.pos.x, fz = rim.z - h.pos.z, fl = Math.hypot(fx, fz) || 1;
-    h.gatherDeep = fl >= THREE_DIST - 0.3;         // 3P の溜め（腕・脚とも深い構え）
-    // おなかの少し前で両手に抱える。リリースで releaseShot が頭上へ持ち上げる。
-    const front = 0.24;                            // おなかの少し前
-    const y = SHOT_GATHER_Y - 0.12 + p * 0.05;     // おなか〜みぞおちの高さ(≈1.08→1.13)
-    game.ball.pos.set(h.pos.x + (fx / fl) * front, y, h.pos.z + (fz / fl) * front);
+    if (game.windBallY < 0) {   // 溜めの1フレーム目: 今ボールがある場所が起点
+      game.windBallX = game.ball.pos.x - h.pos.x;
+      game.windBallY = game.ball.pos.y;
+      game.windBallZ = game.ball.pos.z - h.pos.z;
+    }
+    // 溜めは3段。頭上に構える「前」が反動動作で、構え終わりにはボールは頭上にある。
+    //   A) p<0.35        反動: 今ある位置からおなかの前(ポケット)へ引き付けて沈める
+    //   B) 0.35〜0.50    そこで一瞬止まる
+    //   C) 0.50〜1.0     頭上の構え(リリース点)へ持ち上げる → そのまま放つ
+    // ⚠️ 以前はリリースの瞬間に releaseShot が頭上へワープさせていた。構え終わりに
+    //    ボールが頭上に無いと、放つ瞬間だけ 1m 飛び上がって見える。
+    const pocketY = SHOT_GATHER_Y - 0.11;          // おなかの前(≈1.09)
+    const px = h.pos.x + (fx / fl) * 0.14, pz = h.pos.z + (fz / fl) * 0.14;
+    if (p < CHARGE_LIFT) {
+      // A+B: 反動と静止。3P は腕・脚とも深い構えを作る(肘を畳んで高く保持)。
+      h.gatherDeep = fl >= THREE_DIST - 0.3;
+      const e = smooth(clamp(p / CHARGE_DIP, 0, 1));
+      const sx = h.pos.x + game.windBallX, sz = h.pos.z + game.windBallZ;
+      game.ball.pos.set(sx + (px - sx) * e, game.windBallY + (pocketY - game.windBallY) * e,
+        sz + (pz - sz) * e);
+      h.shootLoadTarget = e;                       // 脚もボールと一緒に沈む
+    } else {
+      // C: 頭上の構えへ。ここは深い構えを解く(もう肘を畳む段ではない)。
+      h.gatherDeep = false;
+      const e = smooth(clamp((p - CHARGE_LIFT) / (1 - CHARGE_LIFT), 0, 1));
+      const tx = h.pos.x + (fx / fl) * 0.18, tz = h.pos.z + (fz / fl) * 0.18;
+      game.ball.pos.set(px + (tx - px) * e, pocketY + (SHOT_RELEASE_Y - pocketY) * e,
+        pz + (tz - pz) * e);
+      h.shootLoadTarget = 1 - e * 0.35;            // 上げながら脚が伸び始める
+    }
   }
 
   // ギャザーの1フレーム: ボールを溜めたまま保持し、守備者にシュートを読ませて
@@ -87,7 +193,9 @@ export function updateCharge(game: Game, dt: number): void {
     const h = game.chargeShooter;
     if (!h) { game.ballMode = "held"; return; }
     game.chargeT -= dt;
-    setChargeBall(game, h);   // 胸前・低めで構え、進捗で前傾＋沈み込みを深める
+    game.chargeElapsed += dt;
+    game.chargeP = Math.min(1, game.chargeP + dt / game.chargeSpan);
+    setChargeBall(game, h);   // 反動 → 一瞬静止 → 頭上の構えへ
     // トランジション戻りを溜め(シュートモーション)開始から効かせて判定を早める:
     // リムを競らない味方が攻撃性に応じて自陣へ戻り始める(速攻を守る)。
     for (const p of game.teamPlayers(h.team)) { if (p !== h) game.retreatOnShot(p, dt); }
@@ -97,13 +205,17 @@ export function updateCharge(game: Game, dt: number): void {
     const man = game.teamPlayers(1 - h.team)[h.slot];   // シューターの担当守備者
     const nd = game.nearestDefender(h);
     const ndGap = nd ? dist2D(nd.pos, h.pos) : 99;
+    // 振り上げに入った瞬間のコンテスト間合いを凍結する(以後に詰めても遅れた寄せ)。
+    if (game.chargeDDefLift < 0 && game.chargeP >= CHARGE_LIFT) game.chargeDDefLift = ndGap;
     const beaten = h.beatenT > 0 || h.powerT > 0;       // 抜き去った担当 → クローズアウトが遅れる
     // 目の前まで詰められたら溜めを打ち切って即リリース。はたかれる(stripGather)より、
     // 準備不足ぶんの精度低下を受け入れる。見切る間合いは反応で決まり、鈍い選手は
     // はたかれる間合い(STRIP_RANGE)まで詰められてから放つので隙が残る。
-    if (game.chargeT > 0 && ndGap < 1.05 + rate(h.attr.reaction) * 0.55) {
-      releaseShot(game, h, game.chargeDHoop, game.chargeDDef, game.shotWindup - game.chargeT);
-      return;
+    // 目の前まで詰められた → 溜めを**急ぐ**（放り出さない）。残りの振り上げを
+    // RUSH_TAIL 秒に圧縮する。準備不足ぶんの精度低下は prepDone(実際の溜め秒数)が負う。
+    if (game.chargeT > 0 && !game.chargeRush && game.chargeElapsed >= RUSH_AFTER
+        && ndGap < 1.05 + rate(h.attr.reaction) * 0.55) {
+      rushCharge(game, h);
     }
     const contesters: Player[] = [];
     if (man && !beaten) contesters.push(man);           // 担当: 抜かれていなければ閉じる
@@ -111,8 +223,11 @@ export function updateCharge(game: Game, dt: number): void {
     for (const c of contesters) {
       if (c.airborne || c.landT > 0) continue;
       const gap = dist2D(c.pos, h.pos);
-      // シューターへ強くクローズアウト
-      if (gap > 0.75) {
+      // シューターへ強くクローズアウト。⚠️ 溜めの頭から走らせない。ボールを抱えている
+      // 段階ではまだシュートと決まっておらず、反動動作を長くしたぶんだけ守備が
+      // 一方的に近づいてしまう(実測: 溜め0.42秒でミドル 49%→35%)。振り上げ＝シュートが
+      // 明らかになった時点から寄せる。
+      if (gap > 0.75 && game.chargeP >= CLOSEOUT_AT) {
         moveToward2D(c.pos, h.pos.x, h.pos.z, c.accelToward(dt, h.pos.x, h.pos.z, 1.15) * dt);
         game.clampCourt(c.pos);
       }
@@ -141,8 +256,10 @@ export function updateCharge(game: Game, dt: number): void {
     const blockImminent = !!nd && nd.airborne && gap < 1.6;   // 守備者が跳んでブロックに来た
     if (game.chargeT > 0) {
       // 溜め未完。クロック逼迫かブロック差し込みなら早めリリース(不足分だけ精度低下)。
-      if (panic || blockImminent) {
-        releaseShot(game, h, game.chargeDHoop, game.chargeDDef, game.shotWindup - game.chargeT);
+      if (panic) {
+        releaseShot(game, h, game.chargeDHoop, game.chargeDDef, game.chargeElapsed);
+      } else if (blockImminent && !game.chargeRush) {
+        rushCharge(game, h);   // 跳ばれた → 急ぐ。ただし振り上げは省かない
       }
       return;   // それ以外は溜め継続(次フレームで chargeT が減る)
     }
@@ -151,7 +268,18 @@ export function updateCharge(game: Game, dt: number): void {
       game.chargeHeld += dt;
       return;
     }
-    releaseShot(game, h, game.chargeDHoop, game.chargeDDef, game.shotWindup + game.chargeHeld);
+    releaseShot(game, h, game.chargeDHoop, game.chargeDDef, game.chargeElapsed);
+  }
+
+  // 急ぎ撃ちへの切り替え。残りの進捗を RUSH_TAIL 秒で終わらせる。進捗(chargeP)は
+  // そのまま・速度だけ上がるので、ボールは飛ばずに素早く頭上へ上がりきる。
+export function rushCharge(game: Game, h: Player): void {
+    game.chargeRush = true;
+    const rest = Math.max(0.05, 1 - game.chargeP);
+    // 残り rest を rushTail 秒で登り切る。ただし振り上げ区間が MIN_MOTION 由来の
+    // 下限より速くならないようにする(速くしてよいが、飛ばしてはいけない)。
+    game.chargeSpan = Math.max(rushTail(h) / rest, MIN_MOTION);
+    game.chargeT = game.chargeSpan * rest;
   }
 
   // 溜めた(頭上の)ボールがリリース前にシューターの手から叩き出される —
@@ -196,7 +324,9 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
     // コンテストの間合いはリリース時の実距離で測る。引数の dDef は決断時に凍結された
     // 値なので、溜め中に詰めてきた/跳んだ守備者を取りこぼす。
     const cn = game.nearestDefender(h);
-    const dDefLive = cn ? dist2D(h.pos, cn.pos) : dDef;
+    // ⚠️ 振り上げ開始で凍結した間合いを使う。無い(急ぎ撃ち/ブザー)ときだけ実測。
+    const dDefLive = game.chargeDDefLift >= 0 ? game.chargeDDefLift
+      : cn ? dist2D(h.pos, cn.pos) : dDef;
     const p = jumpShotMakeProbability(h, dHoop, dDefLive, {
       nearestDef: cn,
       helpCount: game.defendersWithin(h, 2.4),
@@ -215,10 +345,13 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
     grazeShot(game, h);   // かすり: 手が触れれば軌道が乱れて外れる(スワットには至らない部分接触)
     if (tryShootingFoul(game, h, dDef, false)) return;
 
-    // リリースは頭上やや前（利き手を前へ伸ばして放つ）
+    // リリースは頭上やや前（利き手を前へ伸ばして放つ）。⚠️ 高さは**今ボールがある所**から。
+    // 溜めが完了していれば既に頭上(SHOT_RELEASE_Y)まで上がっている。急ぎ撃ちで上げ切って
+    // いなければそこから放つ — 放つ瞬間にボールを頭上へワープさせない。
     const frim = game.attackFloor(h.team);
     const rfx = frim.x - h.pos.x, rfz = frim.z - h.pos.z, rfl = Math.hypot(rfx, rfz) || 1;
-    game.shotFrom.set(h.pos.x + (rfx / rfl) * 0.18, 2.05, h.pos.z + (rfz / rfl) * 0.18);
+    const relY = clamp(game.ball.pos.y, 1.5, SHOT_RELEASE_Y);
+    game.shotFrom.set(h.pos.x + (rfx / rfl) * 0.18, relY, h.pos.z + (rfz / rfl) * 0.18);
     aimShotTarget(game, dHoop);   // 決まればリム、ロングミスはリムから大きく外れた点へ
     game.shotT = 0;
     // アークの外ではボールは弾くのでなく放り投げる: 遠いほど高く遅い放物線。
@@ -244,6 +377,7 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
 
   // レイアップまたはダンク: 平坦で速いアークによるリムでの高確率フィニッシュ。
 export function finishAtRim(game: Game, h: Player, dDef: number): void {
+    clearOut(game, h);   // ⚠️ ダンク/レイアップこそ体を当ててから。崩れた相手は跳べない
     game.pendingAssist = assistCreditFor(game, h);
     game.shotPoints = 2;
     // make% とダンク判定は効果層(resolution/shot-outcome)へ分離。文脈(最寄り守備者・

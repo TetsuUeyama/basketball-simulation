@@ -173,12 +173,20 @@ function stretchOne(p: Player, world: Vector3): void {
  *    式は shootArms と同じものを使う（あちらは実機で確認済み）。
  */
 const SIDE_CLEAR = 0.25;   // これ以上横にあれば「片側」とみなす(m)
+const LEAD_HOLD = 0.10;    // 伸ばす腕を保持する時間(秒)
 function leadArm(p: Player, world: Vector3): boolean {
-  const th = p.root.rotation.y + p.torsoTwist;
+  // ⚠️ 判定に torsoTwist を混ぜてはいけない。stretchOne がその直後に torsoTwist を
+  //    書くので、次フレームの判定が裏返り、腕と胴が毎フレーム左右に振れる
+  //    （SIDE_CLEAR の境目あたりで小刻みな反復運動になる）。体の向きだけで決める。
+  //    決めた側は伸ばしている間ずっと保持する（境目で細かく揺れないように）。
+  if (p.leadHoldT > 0) { p.leadHoldT = LEAD_HOLD; return p.leadRight; }
+  const th = p.root.rotation.y;
   const wx = world.x - p.root.position.x, wz = world.z - p.root.position.z;
   const localX = Math.cos(th) * wx - Math.sin(th) * wz;
-  if (Math.abs(localX) > SIDE_CLEAR) return localX >= 0;
-  return (p.hand === "R") === (p.numberSide > 0);
+  p.leadRight = Math.abs(localX) > SIDE_CLEAR ? localX >= 0
+    : (p.hand === "R") === (p.numberSide > 0);
+  p.leadHoldT = LEAD_HOLD;
+  return p.leadRight;
 }
 
 Player.prototype.reachBall = function(world: Vector3, both = false): void {

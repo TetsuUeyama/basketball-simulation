@@ -198,7 +198,8 @@ function pickClip(p: Player): string {
   if (p.scoopLoad > 0.003) return "pickup";
   // シュートの溜め: 手続き側が屈んだぶん root を下げているので、クリップで脚を
   // 伸ばし直すと足が床にめり込む。溜めている間は手続きポーズに任せる。
-  if (p.shootLoad > 0.003) return "";
+  // 踏み切り前の沈み込み・突きの沈み込みも同様（クリップで脚を伸ばすと床にめり込む）
+  if (p.shootLoad > 0.003 || p.jumpLoad > 0.003 || p.digLoad > 0.003) return "";
   const frac = p.runSpeed > 0 ? Math.min(1, p.curSpd / p.runSpeed) : 0;
   const ball = p.holdingBall;
   // 押し込むドリブル: 逆肩を当てて体ごと運ぶ（速さに依らず専用クリップ）

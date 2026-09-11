@@ -102,6 +102,10 @@ export class Player {
   prevZ = 0;
   velX = 0;        // 計測した速度(m/s) — 動く受け手をリードするのに使う
   velZ = 0;
+  // 平滑化した加速度(m/s^2)。体を加速する向きへ倒すのに使う（= 反動動作の見た目）。
+  // 踏み出しは進む方へ、急停止・切り返しは進行方向と**逆**へ倒れる（踏ん張り）。
+  accX = 0;
+  accZ = 0;
   prevVelX = 0;    // 前フレームの速度、急な方向転換の検出用
   prevVelZ = 0;
 
@@ -124,6 +128,10 @@ export class Player {
   // される（accelSpeed）。tickMotionで設定。
   plantT = 0;
   plantDur = 0;  // 同上、クロスオーバー/停止のプラント用（動き直し）
+  // プラントに入った瞬間の**進行方向**(単位XZ)。体はこの向きへ流れたまま踏ん張るので、
+  // 見た目の傾きはこの向きへ出す = 切り返しの反動動作。plantT が減るにつれ戻る。
+  plantDirX = 0;
+  plantDirZ = 0;
   // 完全硬直: 着地/切り返し/ダッシュ急停止の直後、一瞬まったく動けない（accelSpeed=0）。
   // 硬直(landT/plantT)の頭側の一部。敏捷でスケール。
   rootT = 0;
@@ -203,8 +211,32 @@ export class Player {
   // スティールに手を出している間(秒)。> 0 の間はボールへ片手を伸ばすポーズになる。
   // 突きの溜めから当てた直後まで続くので、何が起きたか見えるようにする。
   stealReachT = 0;
+  stealReachDur = 0;   // 手を出している総時間（突きモーションの進捗に使う）
+  lungeD = 0;          // 突きで前へ踏み込んでいる量(m)。回復で 0 へ戻す
+  // 突きで前に出す腕。⚠️ 一度決めたら突きの間は変えない。左右をフレームごとに
+  // 決め直すと、digReach が入れた胴のひねりが次フレームの判定を裏返し、
+  // 腕と胴が毎フレーム左右に振れる（小刻みな反復運動になる）。
+  punchRight = false;
+  punchHoldT = 0;      // >0 の間は上の左右を保持。sync が毎フレーム減らす
+  // 片手で伸ばすとき(リバウンド/ルーズボール)に出す腕。突きと同じ理由で保持する。
+  leadRight = false;
+  leadHoldT = 0;
+  // 突き/掻き出しの沈み込み。⚠️ 肩は低いボールより 0.4m 以上高いので、腕だけでは
+  // 手が水平に出ない（伸ばすほど上がる）。実際の守備と同じく膝を折って肩を下げる。
+  digLoad = 0; digLoadTarget = 0;
+  // 体を当てられてバランスを崩している秒数。>0 の間は**跳べない**（ブロックに行けない）。
+  offBalT = 0;
+  // シュートフェイク: 保持中は打たずに持つ。切れた次のフレームに fakeGo で本番へ。
+  fakeT = 0;
+  fakeGo = false;
+  fakeFinish = false;   // 本番がリムフィニッシュ(true)かジャンパー(false)か
+  fakeCoolT = 0;        // 続けてフェイクしない
+  // 突き(スティール)で体を踏み込む向き×量。sync が見た目の傾きに足す。
+  digLeanX = 0;
+  digLeanZ = 0;
   actPhase: "" | "windup" | "active" | "cooldown" = "";
   actT = 0;            // 現段階の残り秒
+  actWindDur = 0;      // windup フェーズ長（保持）— 突きの溜めの進捗に使う
   actActiveDur = 0;    // active フェーズ長（保持）
   actCoolDur = 0;      // cooldown フェーズ長（保持）
   actFired = false;    // windup→active の遷移フレームで真（呼び出し側が消費）
@@ -257,6 +289,11 @@ export class Player {
   // ═════════ ジャンプ ═════════
   // 垂直ジャンプのアニメ（シュート、ダンク、レイアップ、コンテスト、リバウンド）
   jumpRemaining = 0;
+  // 踏み切り前の沈み込み(反動動作)。この間はまだ床にいる(airborne は false)。
+  // loadT が 0 になった瞬間に、溜めておいたパラメータで実際に踏み切る。
+  loadT = 0; loadDur = 0;
+  loadH = 0; loadJDur = 0; loadLX = 0; loadLZ = 0;
+  jumpLoad = 0; jumpLoadTarget = 0;   // 沈み込みの深さ 0..1（見た目）
   jumpDur = 0;
   jumpHeight = 0;
   // 斜めの跳躍: ジャンプ全体に分散させた水平移動(m)。通常の垂直ジャンプでは0。updateJumpで適用。
@@ -441,6 +478,11 @@ export class Player {
   }
 
   tiltX = 0;  // 平滑化した見た目の体の傾き(rad)、sync()で適用
+  // そのうち「反射（加速・切り返し・急停止・踏み込み）」ぶんの傾き。
+  // 上半身はこのぶんだけ逆へ回して、頭と胴を地面に対して水平に保つ。
+  // ⚠️ 守備の重心移動(lean)は含めない — あれは体ごと傾けたままでよい。
+  reflexTiltX = 0;
+  reflexTiltZ = 0;
   tiltZ = 0;
 
   // 脚のジオメトリ/ポーズの定数。

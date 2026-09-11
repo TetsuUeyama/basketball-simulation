@@ -15,6 +15,9 @@ import { setGripOverride, gripOf } from "./animation/basic/fingers";
 import { rawPrototype, startRawPreload } from "./objects/player/player-raw";
 import { defenseArms } from "./animation/action/defense-arms";
 import { catchBall, catchLabel } from "./animation/action/catch";
+// ⚠️ スティールは**試合と同じ関数・同じ定数**を使う。ここでいじった値がそのまま試合に出る。
+import { PUNCH } from "./animation/action/reach";
+import { STEAL, stepLunge, lungeWant } from "./ai/defense/vs-onball";
 import type { JawShape, RawModel } from "./voxraw";
 // ⚠️ Player の各メソッドは副作用インポートで prototype に生える。1つでも欠けると
 //    sync() の途中で undefined を呼んで落ちる。ゲーム本体と同じ顔ぶれを読む。
@@ -182,6 +185,9 @@ pct("ドライブ気配", driveRisk, (v) => { driveRisk = v; });
 // ⚠️ キャッチの形はゲームでは grabPose が作る。確認ページからも同じ catchBall を
 //    呼び、ボールの位置をスライダーで動かして形の変わり方を見る。
 let catching = false, ballY = 2.05, ballX = 0, ballZ = 0.35;
+// スティールの確認: 相手のボールを正面 stealGap m・高さ stealBallY に置いて突く。
+let stealing = false, stealGap = 1.05, stealBallY = 0.95, stealWait = 0;
+let stealAnchorX = 0, stealAnchorZ = 0;
 let catchShown = "";
 const ball = MeshBuilder.CreateSphere("ballPreview", { diameter: 0.24, segments: 12 }, scene);
 ball.material = makeMat(scene, "ballMat", { diffuse: new Color3(0.85, 0.42, 0.12) });
@@ -213,6 +219,40 @@ range("ボールの横ズレ", -0.9, 0.9, 0.05, ballX, (v) => (v >= 0 ? "右 " :
 // 奥行き。負にすると体の後ろ（頭の上から後ろへ回したリバウンドなどを見るため）。
 range("ボールの奥行き", -0.6, 0.9, 0.05, ballZ, (v) => (v >= 0 ? "前 " : "後 ") + Math.abs(v).toFixed(2) + "m",
   (v) => { ballZ = v; });
+
+// ───────── スティールの突き（reach.ts digReach ＋ vs-onball stepLunge）─────────
+// ⚠️ 試合と同じ経路: beginAction("steal") の段階 → stepLunge で踏み込み →
+//    digReach でポーズ。スライダーは試合で使う定数そのものを書き換える。
+const stealRow = row("スティール");
+const stealBtn = button(stealRow, "▶ 見る", () => {
+  stealing = !stealing;
+  stealBtn.textContent = stealing ? "■ やめる" : "▶ 見る";
+  ball.isVisible = stealing || catching;
+  if (player) {
+    // 踏み込みで動かした位置と、進行中の段階を戻してから始める/やめる。
+    player.lungeD = 0;
+    player.pos.set(0, 0, 0);
+    player.actKind = ""; player.actPhase = ""; player.actT = 0; player.actFired = false;
+    if (!stealing) player.stand();
+  }
+  stealWait = 0;
+});
+range("相手との距離", 0.6, 2.0, 0.05, stealGap, (v) => v.toFixed(2) + "m", (v) => { stealGap = v; });
+range("相手のボールの高さ", 0.3, 1.6, 0.05, stealBallY, (v) => v.toFixed(2) + "m", (v) => { stealBallY = v; });
+range("踏み込む距離", 0, 0.8, 0.02, STEAL.lungeIn, (v) => v.toFixed(2) + "m", (v) => { STEAL.lungeIn = v; });
+range("溜めの長さ", 0.04, 0.40, 0.01, STEAL.windup, (v) => v.toFixed(2) + "秒", (v) => { STEAL.windup = v; });
+range("溜めに使う割合", 0.1, 0.9, 0.02, PUNCH.cockFrac, (v) => (v * 100).toFixed(0) + "%", (v) => { PUNCH.cockFrac = v; });
+range("逆手の振り（溜め）", -1.4, 0.8, 0.05, PUNCH.backCock, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.backCock = v; });
+range("逆手の振り（突き）", -1.4, 0.8, 0.05, PUNCH.backThrust, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.backThrust = v; });
+range("逆手の肘", 0, 2.0, 0.05, PUNCH.backBend, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.backBend = v; });
+range("引き手の位置", -0.1, 0.4, 0.02, PUNCH.cockIn, (v) => v.toFixed(2) + "m", (v) => { PUNCH.cockIn = v; });
+range("引き手の高さ", -0.3, 0.4, 0.02, PUNCH.cockRise, (v) => (v === 0 ? "水平" : v.toFixed(2) + "m"), (v) => { PUNCH.cockRise = v; });
+range("沈み込み", 0, 2, 0.05, PUNCH.sink, (v) => (v === 0 ? "なし" : v.toFixed(2) + "倍"), (v) => { PUNCH.sink = v; });
+range("肩を出す回転", 0, 1.0, 0.02, PUNCH.twist, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.twist = v; });
+range("溜めで肩を引く", 0, 0.8, 0.02, PUNCH.cockShoulder, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.cockShoulder = v; });
+range("溜めで肘を畳む", 0, 2.0, 0.05, PUNCH.cockElbow, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.cockElbow = v; });
+range("踏み込みの前傾", 0, 0.4, 0.01, PUNCH.lungeLean, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.lungeLean = v; });
+range("胴回転の符号", -1, 1, 2, PUNCH.sign, (v) => (v < 0 ? "−1（実測でリーチ最大）" : "+1"), (v) => { PUNCH.sign = v || -1; });
 
 // ───────── 走る腕振りの癖（arm-style.ts）と手の握り（fingers.ts）─────────
 // ⚠️ ゲームでは選手ごとに名前から決まる。ここは全員へ同じ値を被せて幅を確かめるためのもの。
@@ -352,7 +392,7 @@ function step(dt: number): void {
   if (!p) return;
   p.lastDt = dt;
   // ボールキャッチ（ゲームでは grabPose が呼ぶのと同じもの）
-  if (catching) {
+  if (catching && !stealing) {
     const th = p.root.rotation.y;
     const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
     const rx = fz, rz = -fx;                         // 体の右
@@ -360,8 +400,29 @@ function step(dt: number): void {
       p.pos.z + fz * ballZ + rz * ballX);
     catchShown = catchLabel(p, catchBall(p, ball.position));
   }
+  // スティールの突き。⚠️ 試合とまったく同じ手順:
+  //   tickAction で段階を進める → stepLunge で体ごと踏み込む → digReach でポーズ。
+  if (stealing) {
+    // ボールは床に固定して置く（踏み込みで選手が前へ出るのが見えるように）。
+    if (!p.actPhase && stealWait <= 0) {
+      const th = p.root.rotation.y;
+      const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
+      stealAnchorX = fx * stealGap;
+      stealAnchorZ = fz * stealGap;
+    }
+    ball.position.set(stealAnchorX, stealBallY, stealAnchorZ);
+    p.tickAction(dt);
+    if (!p.actPhase) {
+      stealWait -= dt;
+      if (stealWait <= 0) { p.beginAction("steal", STEAL.windup, STEAL.active, STEAL.cooldown); stealWait = 0.6; }
+      else p.stand();
+    }
+    // ⚠️ 試合では毎フレーム呼ばれ、段階が無い時は踏み込みを 0 へ戻す。ここも同じにする。
+    stepLunge(p, stealAnchorX, stealAnchorZ, 9);   // 確認ページには相手の体が無いので余地は十分
+    if (p.actPhase) p.digReach(new Vector3(stealAnchorX, stealBallY, stealAnchorZ));
+  }
   // 守備の腕（ゲームでは poseHands が呼ぶのと同じもの）。相手は正面 1.2m に居る想定。
-  if (!catching && defense > 0.02) {
+  if (!catching && !stealing && defense > 0.02) {
     p.defenseTarget = defense;
     const th = p.root.rotation.y;
     const fx = Math.sin(th) * -p.numberSide, fz = Math.cos(th) * -p.numberSide;
@@ -387,6 +448,12 @@ engine.runRenderLoop(() => {
   infoEl.textContent = (loadingHair ? `読み込み中 ${loadingHair}…\n` : "") + info
     + `\n${motion} ${at}/${dur.toFixed(2)}s`
     + (catching ? `\nキャッチ: ${catchShown}` : "")
+    + (stealing && player
+      ? `\nスティール: ${player.actPhase || "待ち"} ｜ 踏み込み ${player.lungeD.toFixed(2)}m`
+        + ` / 目標 ${lungeWant(player).toFixed(2)}m`
+        + `\n  踏み込み ${STEAL.lungeIn.toFixed(2)}m / 溜め ${STEAL.windup.toFixed(2)}s / 引き割合 ${(PUNCH.cockFrac * 100).toFixed(0)}%`
+        + `\n  肩 ${PUNCH.twist.toFixed(2)} 引き ${PUNCH.cockShoulder.toFixed(2)} 肘 ${PUNCH.cockElbow.toFixed(2)} 前傾 ${PUNCH.lungeLean.toFixed(2)} 符号 ${PUNCH.sign}`
+      : "")
     + `\n${Math.round(engine.getFps())} fps ｜ ドラッグで回転・ホイールで拡大`;
   scene.render();
 });

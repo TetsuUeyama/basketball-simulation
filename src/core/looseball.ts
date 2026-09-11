@@ -1,5 +1,6 @@
 // ルーズボール物理。自由球の飛翔・反射、選手の追走、接触判定、確保(secureLoose)を集約。
 import { Vector3 } from "@babylonjs/core";
+import { jumpLoadFor } from "../move/basic/jump";
 import { Player } from "../objects/player/player";
 import { COURT, SHOT_CLOCK, OOB_WALL } from "../config";
 import { rate, clamp, chance, dist2DTo, moveToward2D, rand, nearestOf } from "../util";
@@ -267,14 +268,19 @@ export function chaseLoose(game: Game, dt: number): void {
           // ⚠️ 滞空が長いほど「頂点の半分前」に踏み切るので、早く跳んで見える。
           //    実測で踏み切り時のボールの高さが 3.28m（まだリムの高さ）だった。短くする。
           const dur = clamp(0.30 + plan.h * 0.32, 0.30, 0.64);
-          const lead = dur / 2 * (1 - blocked * 0.5);
+          // ⚠️ 踏み切りは即時ではない。膝を沈める時間(jumpLoadFor)ぶん遅れて離陸するので、
+          //    その分だけ**早く**跳び始め、頂点の時刻も L だけ後ろにずらして解く。
+          //    入れ忘れると全員が頂点に遅れて着き、空中で取れずにルーズが増える
+          //    (実測: オフェンスリバウンドが 21% → 37% に跳ね上がった)。
+          const L = jumpLoadFor(p, 0.45);
+          const lead = L + dur / 2 * (1 - blocked * 0.5);
           // 落下点に立てていないうちは跳ばない（跳んでも空振りして、着地後に拾う形になる）
           // planCatch が加速込みで到達可能な時刻しか返さないので、踏み込み(leap)の分だけ余裕を見る。
           const ready = gapNow <= runDist(p, plan.t) + LEAP_MAX / 2 + 0.35;
           if (plan.t <= lead + 0.03 && ready) {
             // ⚠️ 跳ぶ高さは plan.h ではなく**頂点の時刻のボールの高さ**から出す。plan.h だと
             //    少し早く踏み切った分ボールがまだ高く、実測で頂点のボールが手の上に残った。
-            const th = dur / 2;                       // 頂点までの時間
+            const th = L + dur / 2;                   // 今から頂点までの時間(沈み込み込み)
             const byPeak = game.ball.pos.y + game.ball.vel.y * th - BALL_G * th * th / 2;
             const maxH = 0.55 + rate(p.attr.jump) * 0.45;
             // ⚠️ 「手がボールの高さちょうど」を狙うと実測で頂点の誤差が中央 0.00m になり、
@@ -300,7 +306,7 @@ export function chaseLoose(game: Game, dt: number): void {
               p.jump(jh, dur, dx * s, dz * s);
             }
             // 実際に踏み切れた時だけ記録する（着地硬直中は jump が空振りする）
-            if (p.airborne) REB_DEBUG.onJump?.(p, gapNow, plan.t, jh, blocked);
+            if (p.airborne || p.loadT > 0) REB_DEBUG.onJump?.(p, gapNow, plan.t, jh, blocked);
           }
         } else if (!plan && game.ball.pos.y > 1.7 && distToBall(p) < 1.3) {
           // 弾道が読めない（はたかれた直後など）は従来どおり、頭の上へ来たら跳ぶ

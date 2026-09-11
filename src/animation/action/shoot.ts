@@ -28,6 +28,10 @@ const DEEP_LIFT = 0.16;
 // 溜めの姿勢の角度(rad, shootLoad=1 のとき)。lean=上半身の前傾、thigh=腿を前へ倒す角、
 // shin=脛を後ろへ折り返す角。thigh を深く・lean を浅くするほど腰で「く」の字になる。
 const POSE = { lean: 0.30, thigh: 0.55, shin: 0.33 };
+// 踏み切り前の沈み込み: ほぼ垂直に沈む(前傾は浅い)。上へ跳ぶための溜め。
+const POSE_JUMP = { lean: 0.12, thigh: 0.46, shin: 0.30 };
+// 突き/掻き出しの沈み込み: 膝を折って腰を落とす。上体は起こしたまま（前のめりにしない）。
+const POSE_DIG = { lean: 0.10, thigh: 0.62, shin: 0.42 };
 // 3P: 下半身を前斜めへ深く倒し、上半身はほぼ起こす。
 const POSE_3P = { lean: 0.08, thigh: 0.70, shin: 0.30 };
 
@@ -61,8 +65,11 @@ Player.prototype.gatherHold = function(world: Vector3, deep = false): void {
  *  上半身を起こして腰で「く」の字を作る。リリースで shootLoad が0へ戻ると自動で
  *  直立に伸び上がる。sync() から毎フレーム呼ぶ。 */
 Player.prototype.applyShootLoad = function(): void {
-    const L = this.shootLoad;
-    const F = this.gatherDeep ? POSE_3P : POSE;
+    // シュートの溜め・踏み切り・突きの沈み込みは同じ屈み。深い方を採る。
+    const L = Math.max(this.shootLoad, Math.max(this.jumpLoad, this.digLoad));
+    const F = this.digLoad >= L ? POSE_DIG
+      : this.jumpLoad > this.shootLoad ? POSE_JUMP
+        : this.gatherDeep ? POSE_3P : POSE;
     this.hingePosed = true;   // 胴の腰ヒンジを当てた（sync が戻さないように）
     // 前傾: 胸を腰の切れ目でヒンジさせて前へ倒す（脚・腰は垂直のまま）。dejected と同規約。
     const Pt = -this.numberSide * F.lean * L;

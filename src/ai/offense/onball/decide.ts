@@ -6,7 +6,7 @@ import { THREE_DIST, SHOT_CLOCK, BUZZER_WINDOW } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dirTo2D } from "../../../util";
 import { twWeight, gatherFor, effShootRange, wontLoadUp, leapHeight } from "../../../eval";
 import { pass, passToReceiver } from "../../../move/action/passing";
-import { shoot, finishAtRim } from "../../../move/action/shooting";
+import { shoot, finishAtRim, tryShotFake } from "../../../move/action/shooting";
 import { denySmother } from "../../defense/shared";
 import { doubleTeamApproaching, betterOptionAvailable, laneClear } from "../reads";
 import { canIso, postMove, pushBreak, driveDecision, stepBack } from "./drive";
@@ -34,6 +34,21 @@ const TALL_PRESS_SHOOT = 0.55;
 /** 同じくドライブ意欲をどれだけ足すか。 */
 const TALL_PRESS_DRIVE = 0.45;
 export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFloor: Vector3): void {
+    // シュートフェイク。⚠️ ここを唯一の入口にする（打つ判断は全部この2つを通す）。
+    // 仕掛けたフレームは打たずに持ち、fakeT が切れた次のフレームに fakeGo で本番へ。
+    const goShoot = (): void => {
+      if (!h.fakeGo && tryShotFake(game, h, false)) return;
+      h.fakeGo = false;
+      shoot(game, h, dHoop, dDef);
+    };
+    const goFinish = (): void => {
+      if (!h.fakeGo && tryShotFake(game, h, true)) return;
+      h.fakeGo = false;
+      finishAtRim(game, h, dDef);
+    };
+    // フェイク中は持つ（ドライブもパスもしない）。切れたら本番のシュートへ。
+    if (h.fakeT > 0) return;
+    if (h.fakeGo) { if (h.fakeFinish) goFinish(); else goShoot(); return; }
     const tac = game.tactics[h.team].offense;
     const prio = h.offPriority;
     // ロール由来の行動プロファイル: 何をするかはオフェンスロールが支配する。
@@ -54,12 +69,12 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     // (クォーター終わりのゲームブザーは対象外。)
     const canGather = game.shotClock >= gatherFor(h, dHoop);
     if ((gameBuzzer || (shotBuzzer && canGather && !denySmother(game, h, dDef))) && dHoop > 1.8) {
-      shoot(game, h, dHoop, dDef); return;
+      shoot(game, h, dHoop, dDef); return;   // ブザー: フェイクしている時間が無い
     }
 
     // ゴール至近でフリーで受けた: 迷わずフィニッシュ。
     if (dDef > 1.0 && game.frontT) {
-      if (dHoop <= 2.3) { finishAtRim(game, h, dDef); return; }
+      if (dHoop <= 2.3) { goFinish(); return; }
       if (dHoop <= 4.0 && laneClear(game, h, rimFloor)) { game.setDrive(h, rimFloor, 1.2); return; }
     }
 
@@ -80,7 +95,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     if (game.pushT > 0) { pushBreak(game, h, dHoop); return; }
 
     // リム際 → フィニッシュ。全力バーストで到達したハンドラーは早めに踏み切る。
-    if (dHoop < (h.beatenT > 0 ? 2.3 : 1.8)) { finishAtRim(game, h, dDef); return; }
+    if (dHoop < (h.beatenT > 0 ? 2.3 : 1.8)) { goFinish(); return; }
 
     // 形成中のダブルチーム → 早めに手放す。ハンドル(D精度)が悪いほど早く手放す。
     // (既に仕掛けた move は続行。安全なアウトレットが無ければ下へ抜ける。)
@@ -201,7 +216,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       if (game.shotClock < SHOT_CLOCK * 0.3 && dHoop > 1.8 && canGather && !wontLoadUp(h, dHoop, dDef) && !denySmother(game, h, dDef)) {
         // 投げ捨てる前に: 1秒以上あるなら深い3を避けてラインへ寄る。
         if (dHoop > effShootRange(h) + 0.6 && game.shotClock > 1.0) { game.setDrive(h, rimFloor, THREE_DIST + 0.2); return; }
-        shoot(game, h, dHoop, dDef);
+        goShoot();
         return;
       }
       const inRange = dHoop <= effShootRange(h) + 0.3;
@@ -214,7 +229,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       }
       const open = dDef > 1.7;
       const pS = clamp(0.16 + rate(h.attr.threeAcc) * 0.28 + (dDef - 1.7) * 0.2 + push * 0.5, 0.04, 0.9);
-      if (inRange && open && chance(pS)) { shoot(game, h, dHoop, dDef); return; }
+      if (inRange && open && chance(pS)) { goShoot(); return; }
       if (pass(game, h)) return;
       game.setDrive(h, rimFloor, Math.min(4.5, Math.max(dHoop, 1.2)));   // 探り/リセット — 選手をペイントの外へ後退させない
       return;
@@ -226,7 +241,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       if (game.shotClock < SHOT_CLOCK * 0.3 && dHoop > 1.8 && canGather && !wontLoadUp(h, dHoop, dDef) && !denySmother(game, h, dDef)) {
         // 投げ捨てる前に: 1秒以上あるなら深い3を避けてラインへ寄る。
         if (dHoop > effShootRange(h) + 0.6 && game.shotClock > 1.0) { game.setDrive(h, rimFloor, THREE_DIST + 0.2); return; }
-        shoot(game, h, dHoop, dDef);
+        goShoot();
         return;
       }
       const inRange = dHoop <= effShootRange(h) + 0.3;
@@ -245,7 +260,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       const open = dDef > (h.has("isoShooter") ? 1.3 : 1.5);
       const pS = clamp(0.42 + rate(h.attr.aggression) * 0.2 + (dDef - 1.5) * 0.22
         + (isThreeL ? tac.threeBias * 0.2 * twWeight(h) : 0.12) + push * 0.4, 0.06, 0.95);
-      if (inRange && open && chance(pS)) { shoot(game, h, dHoop, dDef); return; }
+      if (inRange && open && chance(pS)) { goShoot(); return; }
       if (pass(game, h)) return;
       game.setDrive(h, rimFloor, Math.min(4.5, Math.max(dHoop, 1.2)));
       return;
@@ -273,7 +288,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     if (urgent && canGather && !wontLoadUp(h, dHoop, dDef) && !denySmother(game, h, dDef)) {
       // 打ち急ぎでも深い3は投げ捨てない: 1秒以上あればラインへ寄る。
       if (dHoop > effShootRange(h) + 0.6 && game.shotClock > 1.0) { game.setDrive(h, rimFloor, THREE_DIST + 0.2); return; }
-      shoot(game, h, dHoop, dDef);
+      goShoot();
       return;
     }
 
@@ -320,7 +335,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     if ((beaten || laneOpen) && dHoop <= 9) {
       if (!beaten && isThree && dDef > 2.0 && rate(h.attr.threeAcc) > 0.65
           && dHoop <= effShootRange(h) + 0.3           // 効き射程内(深い3はエリートのみ)
-          && chance(0.25 + tac.threeBias * 0.4 * tw)) { shoot(game, h, dHoop, dDef); return; }
+          && chance(0.25 + tac.threeBias * 0.4 * tw)) { goShoot(); return; }
       const driveChance = beaten ? 1 : clamp(0.35 + driveDesire * 0.55, 0.25, 0.95);
       if (chance(driveChance)) { driveDecision(game, h); return; }
       if (chance(passDesire * 0.7) && pass(game, h)) return;
@@ -337,7 +352,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       let pShoot = 0.20 + shootDesire * 0.55 - (dHoop - 2) * 0.04 + (dDef - 1) * 0.3 + push * 0.5;
       if (isThree) pShoot += tac.threeBias * 0.22 * tw - 0.05;
       pShoot = clamp(pShoot, 0.03, 0.96);
-      if (open && chance(pShoot)) { shoot(game, h, dHoop, dDef); return; }
+      if (open && chance(pShoot)) { goShoot(); return; }
 
       // クローズアウトしてくる守備者をステップバックで罰する: 抜き去るか綺麗な空間で打つ
       if (!open && dDef < 1.5 && canIso(game, h, dHoop) && h.jukeT <= 0
@@ -356,7 +371,7 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       const better = betterOptionAvailable(game, h);
       if (better && passToReceiver(game, h, better)) return;
 
-      if (chance(pShoot)) { shoot(game, h, dHoop, dDef); return; } // でなければ自分を信じて打つ
+      if (chance(pShoot)) { goShoot(); return; } // でなければ自分を信じて打つ
     }
     // 射程外(または打つのを見送った): ドリブルから攻める、さもなければ動かす、
     // さもなければ探ってリセット。クロックが減るとドライブ欲が上がる。

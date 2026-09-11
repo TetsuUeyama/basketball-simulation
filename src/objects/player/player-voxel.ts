@@ -927,6 +927,22 @@ export function syncVoxelHeadTorso(
   }
 }
 
+/**
+ * 反射の傾きを上半身で打ち消す。下半身（腰〜膝〜足）は root ごと傾いたまま、
+ * Spine から上だけ逆へ回して、頭と胴を地面に対して水平に保つ。
+ * ⚠️ 符号はリグ依存（vb.root が numberSide で π 回っている）。推測せず
+ *    probe-upright で「頭の傾きが 0 に近づく側」を実測して決めること。
+ */
+const _upQ = new Quaternion();
+export function applyUpright(vb: VoxelBody, tiltX: number, tiltZ: number, sign: number): void {
+  if (Math.abs(tiltX) + Math.abs(tiltZ) < 0.002) return;
+  const spine = vb.rig.node("Spine");
+  if (!spine?.rotationQuaternion) return;
+  const s = (vb.root.rotation.y > 1 ? -1 : 1) * sign;
+  Quaternion.RotationYawPitchRollToRef(0, -tiltX * s, -tiltZ * s, _upQ);
+  _upQ.multiplyToRef(spine.rotationQuaternion, spine.rotationQuaternion);
+}
+
 const _splayQ = new Quaternion();
 const SPLAY_AXIS = new Vector3(0, 0, 1);
 

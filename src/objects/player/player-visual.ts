@@ -5,7 +5,7 @@ import { HUD_OPTS, uniformOf } from "../../config";
 import { clamp, expEase } from "../../util";
 import { Player } from "./player";
 import { Quaternion, Vector3 } from "@babylonjs/core";
-import { buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
+import { applyUpright, buildVoxelBody, syncVoxelPose, type VoxelBody } from "./player-voxel";
 import { applyClipPose } from "../../animation/voxel-motion";
 import { buildRawVoxelBody, rawReady, useRawFor } from "./player-raw";
 import { applyStance, armSplayFor, stepUpright } from "../../animation/basic/stance";
@@ -201,6 +201,7 @@ Player.prototype.syncVoxel = function(): void {
       // ⚠️ 手のひらは最後に決める。前腕を動かしたあとでないと打ち消せない。
       if (this.dribblePosed) levelDribbleHand(vb, this);
       if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
+      applyUpright(vb, this.reflexTiltX, this.reflexTiltZ, UPRIGHT_SIGN);
       blendPose(this, vb, this.clipName, this.lastDt);
       limitBoneRate(this, vb);
       applyFingers(vb, this);   // 指は最後（他のポーズを全部書き終えてから）
@@ -228,6 +229,7 @@ Player.prototype.syncVoxel = function(): void {
     applyJumpLegs(vb, this);   // ジャンプの脚の癖（クリップ・構えの上に重ねる）
     if (this.dribblePosed) levelDribbleHand(vb, this);
     if (this.palmBall) aimPalms(vb, this); else releaseHands(this, vb);
+    applyUpright(vb, this.reflexTiltX, this.reflexTiltZ, UPRIGHT_SIGN);
     blendPose(this, vb, "", this.lastDt);
     limitBoneRate(this, vb);
     applyFingers(vb, this);   // 指は最後（他のポーズを全部書き終えてから）
@@ -266,6 +268,15 @@ Player.prototype.setJerseyMark = function(text: string, color: string): void {
     this.setNumberSide(this.numberSide || 1);
 };
 
+// 加速の反動の強さ: 加速度1 m/s^2 あたりの傾き(rad)と、その上限(rad ≈ 11°)。
+const ACC_TILT = 0.015, ACC_TILT_MAX = 0.16;
+// 反射の傾きを上半身で打ち消す向き。⚠️ probe-upright で実測して決める。
+const UPRIGHT_SIGN = 1;   // 実測: +1 で胴・頭が 2.9°/1.2° のまま。-1 だと傾きが倍になる
+// 切り返し・急停止のプラント中に、流れていた進行方向へ倒れる量(rad ≈ 13°)。
+// ⚠️ シムは方向転換を1フレームで済ませ、減速を経ない。だから加速度からは踏ん張りが
+//    出てこない(実測: プラント中に進行方向と逆へ倒れたのは 7% だけ)。plantT から直接出す。
+const PLANT_TILT = 0.23;
+
 Player.prototype.sync = function(): void {
     if (this.seated) {
       // リグを下げて腰がベンチ座面に合うようにする。畳んだ脚は前で床に届く。
@@ -283,18 +294,41 @@ Player.prototype.sync = function(): void {
     // （RotationY(θ)がローカル+Zを(sinθ,0,cosθ)へ対応、faceToward参照）でヨーローカル
     // フレームへ変換し、rootをピッチ/ロールする。平滑化する。
     const m = this.lean * 0.30;                     // フルの傾きで最大~17°
-    let tx = 0, tz = 0;
-    if (Math.abs(m) > 0.02) {
-      const wx = this.leanAxisX * m, wz = this.leanAxisZ * m;
-      const th = this.root.rotation.y;
-      const c = Math.cos(th), s = Math.sin(th);
-      const lx = wx * c - wz * s;                   // ヨーローカルフレームでの傾き
-      const lz = wx * s + wz * c;
-      tx = lz;                                      // ピッチ: ローカル+Zへ傾ける
-      tz = -lx;                                     // ロール: ローカル+Xへ傾ける
+    // 加速の反動。空中では踏ん張れないので効かせない。踏み出しは進む方へ、
+    // 急停止・切り返しは加速度が進行方向と逆を向くので**逆へ倒れる**＝踏ん張りに見える。
+    let ax = 0, az = 0;
+    if (!this.airborne) {
+      const al = Math.hypot(this.accX, this.accZ);
+      if (al > 0.5) {
+        const g = Math.min(al * ACC_TILT, ACC_TILT_MAX) / al;
+        ax = this.accX * g; az = this.accZ * g;
+      }
+      // 切り返し/急停止の踏ん張り: 足が先に前へ出て、体は**進行方向と逆**へ倒れる
+      // （急停止でのけぞる形）。plantT が減る＝重心が足の上へ戻るにつれ起き上がる。
+      // ⚠️ 符号に注意。元の進行方向へ倒すと「流れているだけ」に見えて反動にならない。
+      if (this.plantT > 0 && this.plantDur > 0) {
+        const k = (this.plantT / this.plantDur) * PLANT_TILT;
+        ax -= this.plantDirX * k; az -= this.plantDirZ * k;
+      }
+      // 突き(スティール)の踏み込み。digReach が毎フレーム入れ、ここで消費する。
+      ax += this.digLeanX; az += this.digLeanZ;
+      this.digLeanX = this.digLeanZ = 0;
     }
-    this.tiltX += (tx - this.tiltX) * 0.25;
-    this.tiltZ += (tz - this.tiltZ) * 0.25;
+    // ワールドの傾きベクトル → ヨーローカルのピッチ/ロール。
+    // ⚠️ 反射ぶん(ax,az)は別に持っておく。下半身はこの角度で傾け、上半身は同じだけ
+    //    逆へ回して頭を水平に保つ（applyUpright）。守備の重心移動(m)は体ごと傾ける。
+    const th = this.root.rotation.y;
+    const cc = Math.cos(th), ss = Math.sin(th);
+    const toLocal = (wx: number, wz: number): { x: number; z: number } => {
+      const lx = wx * cc - wz * ss, lz = wx * ss + wz * cc;
+      return { x: lz, z: -lx };                     // ピッチ=ローカル+Z / ロール=ローカル+X
+    };
+    const all = toLocal(this.leanAxisX * m + ax, this.leanAxisZ * m + az);
+    const ref = toLocal(ax, az);
+    this.tiltX += (all.x - this.tiltX) * 0.25;
+    this.tiltZ += (all.z - this.tiltZ) * 0.25;
+    this.reflexTiltX += (ref.x - this.reflexTiltX) * 0.25;
+    this.reflexTiltZ += (ref.z - this.reflexTiltZ) * 0.25;
     this.root.rotation.x = this.tiltX + this.flinchPitch;   // + ファウルひるみの後ろへのけぞり
     this.root.rotation.z = this.tiltZ + this.flinchRoll;
     // シュートの溜め姿勢（前傾＋沈み込み）を反映。target は updateCharge が毎フレーム
@@ -305,7 +339,15 @@ Player.prototype.sync = function(): void {
     //    フレーム固定の 0.25 は 60fps 前提でしか合わないので dt から出す。
     this.shootLoad = expEase(this.shootLoad, this.shootLoadTarget, 34, this.lastDt);
     this.shootLoadTarget = 0;
-    if (this.shootLoad > 0.003) this.applyShootLoad();
+    // 突く腕の保持を切らす（digReach が呼ばれなくなったら次の突きで決め直す）。
+    if (this.punchHoldT > 0) this.punchHoldT = Math.max(0, this.punchHoldT - this.lastDt);
+    if (this.leadHoldT > 0) this.leadHoldT = Math.max(0, this.leadHoldT - this.lastDt);
+    this.jumpLoad = expEase(this.jumpLoad, this.jumpLoadTarget, 34, this.lastDt);
+    this.digLoad = expEase(this.digLoad, this.digLoadTarget, 26, this.lastDt);
+    this.digLoadTarget = 0;   // digReach が毎フレーム入れ直す
+    if (this.shootLoad > 0.003 || this.jumpLoad > 0.003 || this.digLoad > 0.003) {
+      this.applyShootLoad();
+    }
     // 床のボールをすくい上げる進捗（target は liveball の pickup が毎フレーム設定）。
     // 姿勢そのものは objcts の "pickup" クリップ（voxel-motion）が持つ。
     this.scoopLoad += (this.scoopLoadTarget - this.scoopLoad) * 0.25;

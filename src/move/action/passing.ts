@@ -1,7 +1,7 @@
 // パス処理（受け手選択・投球・飛行/受球）。Option B: 状態は Game(=GameState)が持ち、
 // ここは game を受け取る関数群。パスのリスク/インターセプト計算は resolution/pass-risk。
 import { Player } from "../../objects/player/player";
-import { COURT, MAX_PASS, SHOT_CLOCK, PASS_STYLE, PASS_ONE_HAND, PASS_AIRBORNE, PASS_ZIP_MIN, PASS_GATHER, MAX_PASS_GATHER } from "../../config";
+import { COURT, MAX_PASS, LONG_PASS, SHOT_CLOCK, PASS_STYLE, PASS_ONE_HAND, PASS_AIRBORNE, PASS_ZIP_MIN, PASS_GATHER, MAX_PASS_GATHER, PASS_WIND } from "../../config";
 import type { PassStyle } from "../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D } from "../../util";
 import { twWeight, effShootRange, reactionLag, shotThreat, passZip, passReleaseY, passHeightAt, leapHeight } from "../../eval";
@@ -66,8 +66,11 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
     // ダブルチームへは絶対に戻さない(トラップループを再開させる)
     if ((doubleTeamed(game, p) || p.trappedT > 0) && !atRimCutter && game.shotClock > 2) continue;
     const progress = 1 / (1 + dist2D(p.pos, rimFloor)); // リムに近いほど良い
+    // ⚠️ 遠い相手ほど選びにくくする。射程の頭打ちだけだと、射程内なら距離を問わず
+    //    「空いている・リムに近い」が勝ち、コート横断のパスが普通に選ばれていた。
+    const far = Math.max(0, dist2D(h.pos, p.pos) - LONG_PASS.free) * LONG_PASS.cost;
     // vision: 低い攻判断は各選択肢の良さを見誤る
-    let value = open + progress * 3 + rand(-1, 1) * (1 - rate(h.attr.offense)) * 0.8;
+    let value = open + progress * 3 - far + rand(-1, 1) * (1 - rate(h.attr.offense)) * 0.8;
     if (p.cutting) value += 1.5;            // カッターへのフィードを評価
     // ⚠️ ゴール下でカバーが来ていない味方は最優先。守備が戻る前に入れる。
     //    実測でゴール下の試投が 6.4 本/試合しか出ておらず、パスで穴を突けていなかった。
@@ -178,12 +181,29 @@ export function passToReceiver(
   // チョークポイント)。本当のリムカッター(ギブ&ゴー)のみ例外。
   // ゴール下への配球は、レーン拒否だけ免除する（リスク計算・ダブルチームの判定は残す）。
   const feedRim = dist2D(target.pos, game.attackFloor(target.team)) < RIM_FEED_RANGE;
-  if (!force && game.shotClock > 2
+  if (!force && !game.windReleased && game.shotClock > 2
       && ((!feedRim && laneVetoed(game.oppTeam(h), h, target, style))
         || passRisk(game.oppTeam(h), h, target) > 0.3
         || (!target.cutting && game.nearestDefenderDist(target) < 1.0)
         || (!target.cutting && (doubleTeamed(game, target) || target.trappedT > 0)))) {
     return false;
+  }
+
+  // 反動動作(ワインドアップ): 投げると決まった球を、そのフレームで放たない。ボールを体へ
+  // 小さく引き付け、一瞬止めてから振り抜く。溜めている間も守備は動くので、詰められれば
+  // カット判定(evalInterception はリリース時の位置で走る)が厳しくなる。
+  // 片手投げ/空中(アウトレット)/強制は体を作れない/作らないので溜めない。
+  if (!force && !game.windReleased && !game.turnReleased && !game.pendingPassTo
+      && !h.airborne && game.shotClock > 1.2) {
+    // 片手投げは体を作らないぶん溜めも半分(それでも一拍は置く)。
+    const one = game.passOneHand ? 0.5 : 1;
+    const w = clamp((PASS_WIND.base + d0 * PASS_WIND.perM) * sm.wind * one
+      * (1.15 - rate(h.attr.passSpd) * 0.30), PASS_WIND.min * one, PASS_WIND.max);
+    game.pendingPassTo = target;
+    game.pendingPassWind = true;
+    game.windBallY = -1;   // 次フレームの最初にボールの現在地を起点として捕まえる
+    game.pendingPassT = game.pendingPassDur = w;
+    return true;                                       // 確定; 溜めきってからリリース
   }
 
   // リリース高さ: 通常はチェスト、ジャンプパスは守備の頭上。ただし確保したボールがまだ

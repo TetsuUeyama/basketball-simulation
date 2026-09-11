@@ -132,10 +132,19 @@ export class Game {
   pendingPassT = 0;
   // 保留中のパスがターンパス(対象を射程へ入れるため体をピボット)であること。
   pendingPassTurn = false;
+  // 保留中のパスが「反動動作(ワインドアップ)」であること。投げる直前にボールを体へ
+  // 引き付け、一瞬止めてから放る。ノーモーションで投げないための最小の溜め。
+  pendingPassWind = false;
+  pendingPassDur = 0;          // 溜めの総時間(ポーズの進捗を出すため)
+  // 溜めを始めた瞬間のボール位置(x,z は保持者からの相対、y は絶対)。ここから構えへ
+  // 動かす。⚠️ 固定の構えへ瞬間移動させると、反動どころかボールが飛び上がって見える。
+  windBallX = 0; windBallY = 1.0; windBallZ = 0;
   // ノールック: 体を向けていない対象へ現在の構えのまま振り抜くパス。
   noLookPass = false;
   // ターンパス完了のリリース中のみ true: 弧チェックはスキップ、安全ゲートはスキップしない。
   turnReleased = false;
+  // 反動動作の完了リリース中のみ true: 溜めと安全ゲートを二重に通さない(投げると決めた球)。
+  windReleased = false;
   passer: Player | null = null;                         // 現在のパスを放った選手
   // パス時に一度だけ決定。reach = その地点で手がどれだけ届いたか(綺麗に奪えるかに効く)
   passSteal: { def: Player; at: number; reach: number } | null = null;
@@ -784,6 +793,18 @@ export class Game {
   chargeDDef = 0;
   shotWindup = 0;   // 放たれるシュートのギャザー長(tryBlock 用) = 必要準備時間
   chargeHeld = 0;   // 溜め完了後の追加ホールド秒(どフリー時の精度微増用)
+  // 溜めモーションの進捗 0..1（時間ではなく進捗で持つ）。⚠️ chargeT とは別物。
+  // 急ぎ撃ちは「途中で切る」のではなく chargeSpan を縮めて**速く振り上げ切る**。
+  // 進捗で持っておけば、残り時間を縮めても進捗が飛ばない（ボールがワープしない）。
+  chargeP = 0;
+  chargeSpan = 0.3;      // 進捗1に達するまでの秒数（急ぎ撃ちで縮む）
+  chargeElapsed = 0;     // 実際に溜めた秒数（精度計算の prepDone はこれ）
+  chargeRush = false;    // 急ぎ撃ちへ切り替え済み（多重に縮めない）
+  // 振り上げ開始時点の最寄り守備者までの距離。⚠️ コンテストの厳しさはここで凍結する。
+  // ボールが上がり始めた後に着いた守備者は「遅れたクローズアウト」で、実際のバスケットでも
+  // シュートは止められない。リリース時刻で測ると、モーションを長くしたぶんだけ
+  // 一方的に成功率が落ちる(実測: 溜め0.42秒で 3P 29%→22%、ミドル 49%→35%)。
+  chargeDDefLift = -1;
 
   // target へのシュートに跳んで挑む。正対なら垂直ジャンプで最大の高さ、
   // 横にずれていれば斜めにランジ(高さを射程と引き換え)。
@@ -1042,8 +1063,13 @@ export class Game {
     this.pendingPassTo = null;   // ポゼッション交代はウィンドアップ済みのジャンプ/ターンパスを取り消す
     this.pendingPassT = 0;
     this.pendingPassTurn = false;
+    this.pendingPassWind = false;
+    this.pendingPassDur = 0;
     this.noLookPass = false;
     for (const p of this.players) {
+      // ⚠️ シュートフェイクの保留を持ち越さない。持ち越すと、次にボールを持った
+      //    瞬間に fakeGo で即シュートしてしまう。
+      p.fakeT = 0; p.fakeGo = false;
       p.cutting = false;
       p.offTimer = rand(0.4, 2.0);
       p.spotIdx = this.homeSpotIdx(p);   // ポストのビッグはブロックへ直行
@@ -1095,6 +1121,7 @@ export class Game {
     const ux = ax / len, uz = az / len;            // ハンドラー→守備者
     // 手を出した瞬間から当てた直後まで、ボールへ腕を伸ばすポーズを続ける（poses.ts）。
     // どの経路(突き/密集のはたき/押し込み)から来ても、何をしたかが見えるようにする。
+    if (0.35 > d.stealReachT) d.stealReachDur = 0.35;
     d.stealReachT = Math.max(d.stealReachT, 0.35);
     d.defWin("steal");                             // 争奪が片付いたら祝いのガッツポーズ
     // つかみ取れるか: 手の速さ・守備の巧さ・ボール扱いの技術。相手のハンドリングが硬いと

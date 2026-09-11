@@ -73,7 +73,10 @@ export function passReleaseY(style: PassStyle): number {
 // パス軌道の高さ(m)。k=0(リリース)..1(キャッチ)。判定と描画が同じ式を使うための単一ソース。
 export function passHeightAt(style: PassStyle, k: number, fromY: number, endY: number): number {
   if (style === "bounce") {
-    const kb = 0.58;   // 手元→床(58%)→受け手の手元 のV字
+    // ⚠️ バウンド地点。0.58 だとバウンド前 58% / 後 42% でほぼ同じ距離に見えていた。
+    //    実際のバウンズパスは床に着いてから受け手までが短い。0.75 でバウンド後は
+    //    全体の 25% = 従来(42%)の約 6割。
+    const kb = 0.75;   // 手元→床(75%)→受け手の手元 のV字
     return k < kb
       ? fromY + (0.12 - fromY) * (k / kb)
       : 0.12 + (clamp(endY, 0.7, 0.95) - 0.12) * ((k - kb) / (1 - kb));

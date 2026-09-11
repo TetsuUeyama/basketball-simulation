@@ -75,12 +75,16 @@ export const OOB_WALL = 3.2;
 // パスの球速は P速度から eval.ts passZip() が決める(実在帯 65..95 で 12.0..20.15 m/s)。
 // 種別と投げ方でそこから増減する。チェスト・両手・地上が基準(1.0)。
 export type PassStyle = "chest" | "overhead" | "bounce" | "jump";
-export const PASS_STYLE: Record<PassStyle, { zip: number; miss: number }> = {
-  chest: { zip: 1.00, miss: 1.00 },     // 体幹と両腕で押す = 最速・最も正確
-  overhead: { zip: 0.90, miss: 0.90 },  // 肩で押すぶん遅い。両手なので正確、軌道が高い
-  bounce: { zip: 0.77, miss: 1.10 },    // 床で減速(従来の passDur×1.3 と同値)
-  jump: { zip: 1.00, miss: 1.00 },      // 高さは軌道で表現。力が入らないぶんは空中側で
+export const PASS_STYLE: Record<PassStyle, { zip: number; miss: number; wind: number }> = {
+  chest: { zip: 1.00, miss: 1.00, wind: 1.00 },     // 体幹と両腕で押す = 最速・最も正確
+  overhead: { zip: 0.90, miss: 0.90, wind: 1.25 },  // 肩で押すぶん遅い。両手なので正確、軌道が高い
+  bounce: { zip: 0.77, miss: 1.10, wind: 1.10 },    // 床で減速(従来の passDur×1.3 と同値)
+  jump: { zip: 1.00, miss: 1.00, wind: 0.60 },      // 高さは軌道で表現。力が入らないぶんは空中側で
 };
+// パスの反動動作(ワインドアップ)。投げると決めてから実際に放るまでの溜め。ボールを体へ
+// 小さく引き付け、一瞬止めてから振り抜く。長いパスほど大きく引く。速球型は短い。
+// ⚠️ 守備はこの間も動くので、伸ばしすぎるとカットが激増する。小さく保つこと。
+export const PASS_WIND = { base: 0.13, perM: 0.008, min: 0.10, max: 0.30 };
 export const PASS_ONE_HAND = { zip: 0.82, miss: 1.45 };   // 体重が乗らない。代わりにピボット不要
 export const PASS_AIRBORNE = { zip: 0.85, miss: 1.35 };   // 踏ん張れない
 // 確保が収まる前(gatherT中)に放るパス。ボールがまだ手に落ち着いていないので体重が
@@ -96,7 +100,11 @@ export const LANE_W = 1.1;        // 守備がパスレーンを脅かす横方�
 // 旧来の固定距離モデルへ。スティール/コンテスト/ブロックの確率ゲートに使う。
 export const PALM_HITBOX = true;
 // これより長いパスは投げない
-export const MAX_PASS = 13;
+// パスの射程(m)。⚠️ 実測で 10m超が全パスの 9%、最長 19m あり、コートを横断する球が
+// 何本も出ていた。実在のバスケットはほとんどが 3〜8m。
+export const MAX_PASS = 11;
+/** これを超えた距離から、1m あたり評価をどれだけ下げるか（遠い相手を選びにくくする）。 */
+export const LONG_PASS = { free: 8.0, cost: 1.2 };
 // クォーター圧縮とペースに合わせたショットクロック。部分リセット(ファウル/オフェンスリバウンド後)は短縮。
 export const SHOT_CLOCK = 12;
 export const SHOT_CLOCK_PARTIAL = 8;

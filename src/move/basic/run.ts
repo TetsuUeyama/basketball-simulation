@@ -36,7 +36,14 @@ Player.prototype.applyReactLag = function(): void {
 /** 外部のコミット（例: スティールの踏み込み）からプラント&再プッシュの硬直
  *  （動き直し）を設定する。最も長いものとその全長を加速のイージング用に保持する。 */
 Player.prototype.setPlant = function(t: number): void {
-  if (t > this.plantT) { this.plantT = t; this.plantDur = t; }
+  if (t > this.plantT) {
+    this.plantT = t; this.plantDur = t;
+    // ⚠️ 向きも必ず入れ直す。入れないと前のプラントの向きが残り、見た目の踏ん張りが
+    //    進行方向とずれる(実測: 傾きと進行方向の角度差が中央 12.7° しかなかった)。
+    const sp = Math.hypot(this.velX, this.velZ);
+    if (sp > 0.3) { this.plantDirX = this.velX / sp; this.plantDirZ = this.velZ / sp; }
+    else { this.plantDirX = 0; this.plantDirZ = 0; }
+  }
   this.rootT = Math.max(this.rootT, t * FREEZE_FRAC);   // 頭側は完全硬直
 };
 
@@ -45,6 +52,7 @@ Player.prototype.beginAction = function(kind: string, windup: number, active: nu
   this.actKind = kind;
   this.actPhase = "windup";
   this.actT = windup;
+  this.actWindDur = windup;
   this.actActiveDur = active;
   this.actCoolDur = cooldown;
   this.actFired = false;
@@ -94,6 +102,12 @@ Player.prototype.tickCooldown = function(dt: number): void {
   if (this.setupT > 0) this.setupT = Math.max(0, this.setupT - dt);
   if (this.defWinT > 0) this.defWinT = Math.max(0, this.defWinT - dt);
   if (this.stealReachT > 0) this.stealReachT = Math.max(0, this.stealReachT - dt);
+  if (this.offBalT > 0) this.offBalT = Math.max(0, this.offBalT - dt);
+  if (this.fakeCoolT > 0) this.fakeCoolT = Math.max(0, this.fakeCoolT - dt);
+  if (this.fakeT > 0) {
+    this.fakeT = Math.max(0, this.fakeT - dt);
+    if (this.fakeT === 0) this.fakeGo = true;   // フェイクが切れた → 本番へ
+  }
   if (this.foulReactT > 0) {
     this.foulReactT = Math.max(0, this.foulReactT - dt);
     // よろけ: 押された方向へのバランスを崩したよろめきステップ。リアクションの
@@ -146,6 +160,9 @@ Player.prototype.accelToward = function(dt: number, tx: number, tz: number, mult
  * スタミナが消耗を遅らせる。デッドボール（フリースロー、一時停止）で回復する。
  * すべての移動/衝突が解決した後、フレームごとに1回呼ぶ。
  */
+// 加速度の平滑化レート(1/s)。小さいほど鈍く、大きいほどフレームのノイズを拾う。
+const ACC_SMOOTH = 11;
+
 Player.prototype.tickMotion = function(dt: number, resting: boolean): void {
   this.lastDt = dt;   // レート制限された腕のスルーがフレーム長を知れるように記憶する
   if (dt > 0) {
@@ -171,7 +188,10 @@ Player.prototype.tickMotion = function(dt: number, resting: boolean): void {
           // でも~0.3 s、鈍足(0)では最大~2.5 s かかる。部分的なカット/遅い速度は
           // それを縮小する（sharp × speedFrac）。
           const plant = sharp * speedFrac * (0.3 + (1 - quick) * 2.2); // ~0.3s（エリート）.. ~2.5s（遅い）
-          if (plant > this.plantT) { this.plantT = plant; this.plantDur = plant; }
+          if (plant > this.plantT) {
+            this.plantT = plant; this.plantDur = plant;
+            this.plantDirX = this.prevVelX / psp; this.plantDirZ = this.prevVelZ / psp;
+          }
           this.rootT = Math.max(this.rootT, plant * FREEZE_FRAC);   // 切り返しの頭側は完全硬直
         }
       } else if (psp > 3.0 && sp < 2.0) {
@@ -187,9 +207,19 @@ Player.prototype.tickMotion = function(dt: number, resting: boolean): void {
           // 急停止は再加速(次の踏み出し)だけをスロットルする。完全硬直(rootT)は付けない —
           // ダッシュで詰めてブレーキした守備者(プレス/クローズアウト)がその場で棒立ちに
           // なるのを防ぐ。スライド/構えは即できる。切り返し(カットプラント)の rootT は残す。
-          if (plant > this.plantT) { this.plantT = plant; this.plantDur = plant; }
+          if (plant > this.plantT) {
+            this.plantT = plant; this.plantDur = plant;
+            this.plantDirX = this.prevVelX / psp; this.plantDirZ = this.prevVelZ / psp;
+          }
         }
       }
+    }
+    // 加速度を平滑化して持つ。体の傾き(sync)がこれを使って反動動作を出す。
+    // ⚠️ velX は位置差分なのでフレーム単位では跳ねる。指数平滑を必ず通すこと。
+    {
+      const k = 1 - Math.exp(-ACC_SMOOTH * dt);
+      this.accX += ((this.velX - this.prevVelX) / dt - this.accX) * k;
+      this.accZ += ((this.velZ - this.prevVelZ) / dt - this.accZ) * k;
     }
     this.prevVelX = this.velX;
     this.prevVelZ = this.velZ;

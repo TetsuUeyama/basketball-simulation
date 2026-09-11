@@ -2,7 +2,7 @@
 // 密着すればボールを突く（リーチイン/スティール）。はたき合いは ./strip。
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
-import { PALM_HITBOX, THREE_DIST } from "../../../config";
+import { PALM_HITBOX, THREE_DIST, BODY_MIN_DIST } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D, dirTo2D, towardPoint } from "../../../util";
 import { twWeight, palmRadius, effShootRange, shotThreat, defHands, ballSecurity, leapHeight } from "../../../eval";
 import { reachInFoulRate } from "../../../move/reaction/foul";
@@ -40,17 +40,26 @@ export function defendOnBall(game: Game, dt: number, d: Player, man: Player, pro
   d.leanAxisX = -uz; d.leanAxisZ = ux;
 
   // クッションを保つ。ポスト/リム際で押してくるビッグにはタイトにボディアップ。
-  const postUp = (game.isBig(man) || man.has("post")) && dist2D(man.pos, protect) < 5.5;
+  // ⚠️ 「ビッグがリムから5.5m以内」だけでは広すぎる。フェイスアップのビッグまで
+  //    0.35m のボディアップになり、リム前の下位25%が体の当たる距離(0.62m)に張り付いた。
+  //    背負っている(postT)か、本当のローポスト(3.2m以内)のときだけボディアップする。
+  const postDist = dist2D(man.pos, protect);
+  const postUp = (game.isBig(man) || man.has("post"))
+    && postDist < 5.5 && (man.postT > 0 || postDist < 3.2);
   // 密着限界: 守備能力 vs オフェンス能力。深いほどタイト、高い位置ではサグ。
   const diff = clamp(rate(d.attr.defense) - rate(man.attr.offense), -0.5, 0.5);
   const depth = clamp((dist2D(man.pos, protect) - 3) / 6, 0, 1);  // リムで0 .. 約9m超で1
   let gap = postUp
     ? 0.45 - game.tactics[d.team].defense.pressure * 0.1   // ポストでは約0.35(タイト)
+    // ⚠️ 深さの係数の**下限**が間合いを決める。0.45 だとリム前の目標が 0.56m、
+    //    実測の中央が 0.79m・下位25%が 0.62m(BODY_MIN_DIST)で、体が当たる位置に
+    //    張り付いていた(ほぼフェイスガード)。実在のオンボールは 0.9〜1.5m。
+    //    踏み込み(スティールのランジ)を入れる余地もここで作る。
     : (1.25 - game.tactics[d.team].defense.pressure * 0.35 - diff * 0.7)
-      * (0.45 + 0.55 * depth);
+      * (0.68 + 0.32 * depth);
   if (d.has("manMark")) gap *= 0.85;
   if (d.evalRole === "ロックダウン") gap *= 0.85;   // ストッパーは密着
-  gap = clamp(gap, 0.3, 2.1);
+  gap = clamp(gap, 0.42, 2.1);   // 下限は体の当たる距離(0.62m)より内側に入らない値
   // DENY(ショットクロック終盤): 詰めて撃たせない。
   const dny = denyIntensity(game, d.team);
   if (dny > 0) {
@@ -107,6 +116,56 @@ const GAMBLE_RATE = 1.5;
 
 // ハンドラーに付く1人ぶんの1フレーム。ゲットバック → クッション取り → リーチイン。
 // 戻り値 true = スティール/ファウルで局面が変わった（この tick の守備処理を打ち切る）。
+// 突き(スティール)の踏み込み。溜めの間に体ごとボールへ詰め、回復でゆっくり戻る。
+// ⚠️ これは見た目だけではない。スティールの成否は**実行フレームの間合い**
+//    (gap < reach)で決まるので、踏み込んだぶん届くようになる。基準のマーク位置を
+//    広げた(0.68+0.32*depth)代わりに、突くときだけ体を入れる、という関係。
+// ⚠️ 確認ページ(confirm.ts)がこの値を直接いじって調整する。**同じ値を**試合でも
+//    使うので、確認ページで見えたものがそのまま試合に出る。定数に戻さないこと。
+export const STEAL = {
+  lungeIn: 0.34,    // 踏み込む距離(m)
+  windup: 0.24,     // 溜めの秒数。⚠️ 引き**と**突きの両方がこの中で終わる
+  active: 0.03,     // 突きが当たる窓(秒)
+  cooldown: 0.60,   // 回復(戻り)の秒数
+  // 仕掛けの頻度。⚠️ 実測で 1試合 1.0 回しか突いていなかった（担当が 1.4m 以内に
+  // 居る時間の 0.9%）。1on1 の駆け引きとして成立していない。
+  base: 0.17,       // 素の仕掛けやすさ
+  hands: 0.36,      // 手の速さ(defHands)でどれだけ増えるか
+  minClose: 0.35,   // 一歩ぶん離れていても仕掛ける下限（踏み込みで詰める前提）
+};
+
+/** 突きの踏み込み量(m)を段階から出す。確認ページと試合で同じ式を使う。 */
+export function lungeWant(d: Player): number {
+  if (d.actKind !== "steal" || !d.actPhase) return 0;
+  if (d.actPhase === "windup") {
+    return STEAL.lungeIn * clamp(1 - d.actT / (d.actWindDur || STEAL.windup), 0, 1);
+  }
+  if (d.actPhase === "active") return STEAL.lungeIn;
+  return STEAL.lungeIn * clamp(d.actT / Math.max(0.01, d.actCoolDur), 0, 1);   // 回復で戻る
+}
+
+/** 踏み込みを1フレーム進める。`room` は体が重なるまでに踏み込める余地(m)。
+ *  動いた時だけ true（呼び出し側がコート内へ丸めるかを決める）。 */
+export function stepLunge(d: Player, bx: number, bz: number, room: number): boolean {
+  const mv = lungeWant(d) - d.lungeD;
+  if (Math.abs(mv) < 1e-4) return false;
+  const dx = bx - d.pos.x, dz = bz - d.pos.z;
+  const dl = Math.hypot(dx, dz) || 1;
+  const step = mv > 0 ? Math.min(mv, Math.max(0, room)) : mv;
+  d.pos.x += (dx / dl) * step;
+  d.pos.z += (dz / dl) * step;
+  d.lungeD += step;
+  return true;
+}
+
+function stealLunge(game: Game, d: Player, man: Player): void {
+  // ⚠️ 動いた時だけ丸める。毎フレーム丸めると、ライン外に立っている守備者を
+  //    勝手にコート内へ押し戻してしまう（スローイン時の配置が変わる）。
+  if (stepLunge(d, game.ball.pos.x, game.ball.pos.z, dist2D(d.pos, man.pos) - BODY_MIN_DIST)) {
+    game.clampCourt(d.pos);
+  }
+}
+
 export function defendHandler(
   game: Game, dt: number, d: Player, man: Player, protect: Vector3, defTeam: number,
 ): boolean {
@@ -114,7 +173,11 @@ export function defendHandler(
   if (getBackOnDefense(game, dt, d, man)) return false;
   // 運び上げ中もセンターへ迎えに出ない: defendOnBall がアーク外の非シューターをアーク内側で
   // 待つ(ゾーン)ので、そのまま任せる。相手が射程に入ったら詰める。
-  defendOnBall(game, dt, d, man, protect);
+  // ⚠️ 突きの溜めの間は通常の間合い取りを止める。止めないと溜めの 0.24 秒で
+  //    体が当たる距離(BODY_MIN_DIST)まで詰めてしまい、踏み込む余地が消える
+  //    （実測: 踏み込みが 0.34m → 0.08m に潰れた）。間合いを詰めるのは踏み込みの役目。
+  if (!(d.actKind === "steal" && d.actPhase === "windup")) defendOnBall(game, dt, d, man, protect);
+  stealLunge(game, d, man);
   // クッションからリーチイン(密着時にスティール/ファウル判定)。
   const press = game.tactics[defTeam].defense.pressure * twWeight(d);
   const gap = dist2D(d.pos, man.pos);
@@ -123,16 +186,27 @@ export function defendHandler(
   if (d.actKind === "steal" && d.actFired) {
     d.actFired = false;
     if (gap < reach && !man.airborne) { game.steal(d); return true; }
-    d.reactT = Math.max(d.reactT, 0.3);   // 空振り: 踏み込んだ分の隙
+    // 空振り: 踏み込んだ分そのまま隙になる。⚠️ ここが賭けの代償。体を前へ預けたので
+    // 重心が戻るまで守備へ行けず、ハンドラーには抜き去られた扱い(beatenT)を与える。
+    // 素早い(敏捷性)選手ほど早く立て直す。
+    const slow = 1 - rate(d.attr.agility);
+    d.reactT = Math.max(d.reactT, 0.35 + slow * 0.55);
+    d.setPlant(0.30 + slow * 0.60);
+    man.beatenT = Math.max(man.beatenT, 0.30 + rate(man.attr.agility) * 0.35);
   }
-  if (gap < reach && d.shovedT <= 0) {           // 押し込まれ中は手を出せない
-    const close = 1 - gap / reach;               // 密着1、端0
+  // ⚠️ 仕掛けは「腕が届く距離」ではなく「**一歩踏み込めば届く距離**」から。
+  //    届く距離でしか仕掛けないと、突きは常に密着から始まり踏み込む余地が無い
+  //    (実測: 仕掛け時のマークとの距離が中央 0.70m、踏み込めたのは 0.146m だけ)。
+  //    実行フレームの判定は reach のまま。踏み込みが間に合わなければ空振りして隙になる。
+  const pokeRange = reach + STEAL.lungeIn;
+  if (gap < pokeRange && d.shovedT <= 0) {       // 押し込まれ中は手を出せない
+    const close = Math.max(STEAL.minClose, 1 - gap / pokeRange);   // 密着1、端は下限まで
     const stl = defHands(d);
     const resist = ballSecurity(man);
     // クロスオーバー中はボールが露出。守備のクイックネスが上回った時だけ突ける。
     const exposed = man.jukeT > 0
       ? 1 + Math.max(0, rate(d.attr.agility) * 0.6 + rate(d.attr.reaction) * 0.4 - resist) * 2.2 : 1;
-    const pPoke = Math.max(0.005, (0.03 + stl * 0.1 - resist * 0.06 + press * 0.05) * exposed);
+    const pPoke = Math.max(0.005, (STEAL.base + stl * STEAL.hands - resist * 0.06 + press * 0.05) * exposed);
     // キャリー位置: 守備のボールへの距離 vs 男への距離で突けるか決まる。
     const dBall = dist2DTo(d.pos, game.ball.pos.x, game.ball.pos.z);
     const carryMod = clamp(1 + (gap - dBall) * 1.2, 0.55, 1.6)
@@ -150,8 +224,8 @@ export function defendHandler(
         d.reactT = Math.max(d.reactT, 0.35);
         man.beatenT = Math.max(man.beatenT, 0.2 + rate(man.attr.agility) * 0.15);
       } else {
-        d.beginAction("steal", 0.12, 0.03, 0.6);   // 踏み込み(0.12s)→突き→回復(0.6s)
-        d.stealReachT = 0.30;                      // 溜めの間から手をボールへ出す（見える突き）
+        d.beginAction("steal", STEAL.windup, STEAL.active, STEAL.cooldown);   // 踏み込み→突き→回復
+        d.stealReachT = d.stealReachDur = 0.30;    // 溜めの間から手をボールへ出す（見える突き）
       }
     }
     if (chance(reachInFoulRate(press, close) * dt)) { defensiveFoul(game, man, d); return true; }
