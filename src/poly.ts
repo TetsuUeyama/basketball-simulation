@@ -110,6 +110,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 let skel: Skeleton | null = null;
 let bodyMeshes: AbstractMesh[] = [];
 let eyesMesh: AbstractMesh | null = null;
+let eyeParts: AbstractMesh[] = [];
 let info = "読み込み中…";
 
 /** ボーンを名前で引く（Mixamo 命名。接頭辞が付く書き出しもあるので後方一致で拾う）。 */
@@ -138,16 +139,24 @@ const setBone = (name: string, x: number, y: number, z: number): void => {
   else b.setScale(next);
 };
 
-/** 今の見た目の身長(m)。スキン後の頂点で測る。 */
+/** ボーンのワールド Y。⚠️ ボーンを動かした結果はここに出る。 */
+function boneY(name: string): number {
+  const b = bone(name);
+  if (!b || !bodyMeshes[0]) return 0;
+  return b.getAbsolutePosition(bodyMeshes[0] as TransformNode).y;
+}
+// 素の姿勢で測った「頭のボーン→頭頂」と「足のボーン→足裏」の差。
+let crownGap = 0, soleGap = 0;
+/**
+ * 今の見た目の身長(m)。
+ * ⚠️ refreshBoundingInfo({applySkeleton:true}) では**測れない**。実測で、脚のボーンを
+ *    2倍にして足のボーンが 0.111m → -0.734m へ動いても、境界箱は 1 mm も変わらなかった
+ *    （スキン適用の境界箱がボーン行列の変更を拾わない）。ボーンの位置から出すこと。
+ */
 function measuredHeight(): number {
-  let lo = Infinity, hi = -Infinity;
-  for (const m of bodyMeshes) {
-    m.refreshBoundingInfo({ applySkeleton: true });
-    const bb = m.getBoundingInfo().boundingBox;
-    lo = Math.min(lo, bb.minimumWorld.y);
-    hi = Math.max(hi, bb.maximumWorld.y);
-  }
-  return isFinite(lo) ? hi - lo : 0;
+  const top = boneY("Head") + crownGap * headSize;
+  const foot = Math.min(boneY("LeftFoot"), boneY("RightFoot")) - soleGap;
+  return Math.max(0, top - foot);
 }
 function counts(): { mesh: number; vert: number; tri: number } {
   let mesh = 0, vert = 0, tri = 0;
@@ -193,8 +202,12 @@ async function showHair(): Promise<void> {
   if (hairMesh) { hairMesh.setEnabled(false); hairMesh = null; }
   if (hairPick === "なし") { info = infoText(); return; }
   const all = await loadHairFile(hairFile);
-  const m = all.find((x) => x.name === hairPick);
-  if (!m) { info = "髪が見つからない: " + hairPick; return; }
+  // ⚠️ ここも "_primitive0" が付く。前方一致で拾う。
+  const m = all.find((x) => x.name === hairPick || x.name.startsWith(hairPick + "_primitive"));
+  if (!m) {
+    info = "髪が見つからない: " + hairPick + " / 候補 " + all.map((x) => x.name).join(", ");
+    return;
+  }
   // 頭ボーンへ付ける。⚠️ 髪側にアーマチュアが無いので、ボーンへの親子付けで運ぶ。
   const head = bone("Head");
   if (head && hairNode) {
@@ -220,9 +233,12 @@ function placeHair(): void {
 let eyeRest: Vector3 | null = null;
 let eyeX = 0, eyeY = 0, eyeZ = 0, eyePitch = 0, eyeYaw = 0;
 function applyEyes(): void {
-  if (!eyesMesh || !eyeRest) return;
-  eyesMesh.position.set(eyeRest.x + eyeX, eyeRest.y + eyeY, eyeRest.z + eyeZ);
-  eyesMesh.rotationQuaternion = Quaternion.RotationYawPitchRoll(eyeYaw, eyePitch, 0);
+  if (!eyeRest) return;
+  // 目は白目とまつげでメッシュが分かれている。まとめて動かす。
+  for (const m of eyeParts) {
+    m.position.set(eyeRest.x + eyeX, eyeRest.y + eyeY, eyeRest.z + eyeZ);
+    m.rotationQuaternion = Quaternion.RotationYawPitchRoll(eyeYaw, eyePitch, 0);
+  }
 }
 let mouth: Mesh | null = null;
 let mouthY = 0.08, mouthZ = 0.085, mouthW = 0.045, mouthPitch = 0, mouthRoll = 0;
@@ -272,7 +288,10 @@ async function load(): Promise<void> {
   const r = await SceneLoader.ImportMeshAsync("", "/poly/", "player.glb", scene);
   skel = r.skeletons[0] ?? null;
   bodyMeshes = r.meshes.filter((m) => m.getTotalVertices() > 0);
-  eyesMesh = bodyMeshes.find((m) => m.name === "eyes") ?? null;
+  // ⚠️ glTF ローダーはメッシュをマテリアルごとに分け、"eyes_primitive0" のように
+  //    名前へ接尾辞を付ける。完全一致では引けない（実測でここが null だった）。
+  eyeParts = bodyMeshes.filter((m) => m.name === "eyes" || m.name.startsWith("eyes_primitive"));
+  eyesMesh = eyeParts[0] ?? null;
   if (eyesMesh) eyeRest = eyesMesh.position.clone();
   // 髪を運ぶ入れ物を頭ボーンへ付ける（髪そのものはここの子にする）
   // ⚠️ 髪も口も**頭ボーンへ**付ける。付けないと体型を変えた時に顔から離れる。
@@ -287,6 +306,21 @@ async function load(): Promise<void> {
   buildUI();
   info = infoText();
   linkedBones = skel ? skel.bones.filter((b) => !!b.getTransformNode()).length : 0;
+  // 素の姿勢のうちに、頭のボーンから上と足のボーンから下の分を測っておく。
+  {
+    let lo = Infinity, hi = -Infinity;
+    for (const m of bodyMeshes) {
+      m.computeWorldMatrix(true);
+      // ⚠️ applySkeleton:true でないと箱が潰れる（実測 -0.005〜0.004m）。
+      //    ただし**素の姿勢でしか使えない**。ボーンを動かした後は更新されないので、
+      //    ここで一度だけ測って、以後はボーンの位置から身長を出す。
+      m.refreshBoundingInfo({ applySkeleton: true });
+      const bb = m.getBoundingInfo().boundingBox;
+      lo = Math.min(lo, bb.minimumWorld.y); hi = Math.max(hi, bb.maximumWorld.y);
+    }
+    crownGap = hi - boneY("Head");
+    soleGap = Math.min(boneY("LeftFoot"), boneY("RightFoot")) - lo;
+  }
   const names = skel ? skel.bones.map((b) => b.name) : [];
   console.log("ボーン", names.length, "リンク", linkedBones, names.slice(0, 60));
   console.log("メッシュ", bodyMeshes.map((m) => m.name));
