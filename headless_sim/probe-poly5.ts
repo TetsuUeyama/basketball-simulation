@@ -8,6 +8,9 @@ const scene = new Scene(engine);
 new FreeCamera("c", new Vector3(0, 1, -3), scene);
 const b64 = readFileSync("public/poly/player.glb").toString("base64");
 const r = await SceneLoader.ImportMeshAsync("", "", "data:;base64," + b64, scene, null, ".glb");
+// ⚠️ ページと同じく、自動再生されるアニメーションを止める（止めないと上書きされる）。
+for (const g of r.animationGroups) { g.stop(); g.dispose(); }
+scene.stopAllAnimations();
 const skel = r.skeletons[0]!;
 const mesh = r.meshes.find((m) => m.getTotalVertices() > 0)!;
 const bone = (n: string) => skel.bones.find((b) => b.name === n);
@@ -27,6 +30,8 @@ const applyBody = (legLen: number, spineLen: number, thick: number, hs: number):
   setBone("Hips", thick, 1, thick);
   setBone("Head", hs, hs, hs);
   skel.prepare(true);   // ← poly.ts と同じ
+  // ⚠️ 描画ループと同じだけ回してから測る。数フレームでは上書きが再現しない。
+  for (let i = 0; i < 30; i++) { skel.prepare(true); scene.render(); }
 };
 const snap = (): Float32Array => Float32Array.from(skel.getTransformMatrices(mesh));
 const diff = (a: Float32Array, b: Float32Array): number => {

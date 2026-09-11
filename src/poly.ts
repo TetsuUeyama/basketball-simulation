@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v5";
+const BUILD = "v6";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -206,6 +206,7 @@ async function loadHairFile(file: string): Promise<AbstractMesh[]> {
   const got = hairCache.get(file);
   if (got) return got;
   const r = await SceneLoader.ImportMeshAsync("", "/poly/", file, scene);
+  killedAnims += killAnimations(r.animationGroups);   // 髪側にも入っていれば止める
   for (const m of r.meshes) m.setEnabled(false);
   hairCache.set(file, r.meshes);
   return r.meshes;
@@ -289,7 +290,7 @@ function infoText(): string {
   const c = counts();
   const h = measuredHeight();
   return `身長 ${(h * 100).toFixed(1)}cm\n`
-    + `ボーン ${skel ? skel.bones.length : 0} 本（ノード連動 ${linkedBones} 本）\n`
+    + `ボーン ${skel ? skel.bones.length : 0} 本（ノード連動 ${linkedBones} 本 / 止めたアニメ ${killedAnims} 個）\n`
     + `[${BUILD}] 脚スライダー ${legLen.toFixed(2)} → LeftUpLeg ノードの縦 ${(bone("LeftUpLeg")?.getTransformNode()?.scaling.y ?? -1).toFixed(3)}\n`
     + `メッシュ ${c.mesh} / 頂点 ${c.vert.toLocaleString()} / 三角形 ${c.tri.toLocaleString()}\n`
     + `比較: 現行ボクセル(18.75mm) 1人 = 頂点 85,728 / 三角形 40,896\n`
@@ -297,8 +298,26 @@ function infoText(): string {
 }
 
 // ───────────────────────── 組み立て ─────────────────────────
+/**
+ * 読み込んだ GLB のアニメーションを止めて捨てる。
+ * ⚠️ **これをしないと体型の操作が効かない。** glTF ローダーは既定で最初の
+ *    アニメーションを自動再生する（AnimationStartMode = FIRST）。このモデルには
+ *    52本すべてのボーンの translation/rotation/**scale** を持つクリップが入っており、
+ *    こちらが書いたスケールを毎フレーム元へ戻してしまう。
+ *    実測(probe-poly7): 止めないと 10 フレームでノードの縦が 1.500 → 1.000 に戻り、
+ *    行列の差も 19.574 → 0.000 になる。止めれば保たれる。
+ *    ⚠️ 数フレームしか回さない検証では**再現しない**。描画ループと同じだけ回すこと。
+ */
+function killAnimations(groups: { stop(): void; dispose(): void }[]): number {
+  for (const g of groups) { g.stop(); g.dispose(); }
+  return groups.length;
+}
+let killedAnims = 0;
+
 async function load(): Promise<void> {
   const r = await SceneLoader.ImportMeshAsync("", "/poly/", "player.glb", scene);
+  killedAnims = killAnimations(r.animationGroups);
+  scene.stopAllAnimations();
   skel = r.skeletons[0] ?? null;
   bodyMeshes = r.meshes.filter((m) => m.getTotalVertices() > 0);
   // ⚠️ glTF ローダーはメッシュをマテリアルごとに分け、"eyes_primitive0" のように
