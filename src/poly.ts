@@ -105,6 +105,11 @@ ui.appendChild(title);
 const infoEl = document.createElement("div");
 Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pre-line",
   lineHeight: "1.5", marginTop: "4px" } as Partial<CSSStyleDeclaration>);
+// ⚠️ 最初から貼っておく。buildUI の中で貼ると、読み込みに失敗したとき
+//    エラーが画面に出ないまま「何も起きない」ように見える。
+ui.appendChild(infoEl);
+/** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
+const BUILD = "v4";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -135,7 +140,7 @@ const setBone = (name: string, x: number, y: number, z: number): void => {
   if (!restScale.has(name)) restScale.set(name, (tn ? tn.scaling : b.getScale()).clone());
   const r = restScale.get(name)!;
   const next = new Vector3(r.x * x, r.y * y, r.z * z);
-  if (tn) tn.scaling.copyFrom(next);
+  if (tn) { tn.scaling.copyFrom(next); tn.computeWorldMatrix(true); }
   else b.setScale(next);
 };
 
@@ -278,6 +283,7 @@ function infoText(): string {
   const h = measuredHeight();
   return `身長 ${(h * 100).toFixed(1)}cm\n`
     + `ボーン ${skel ? skel.bones.length : 0} 本（ノード連動 ${linkedBones} 本）\n`
+    + `[${BUILD}] 脚スライダー ${legLen.toFixed(2)} → LeftUpLeg ノードの縦 ${(bone("LeftUpLeg")?.getTransformNode()?.scaling.y ?? -1).toFixed(3)}\n`
     + `メッシュ ${c.mesh} / 頂点 ${c.vert.toLocaleString()} / 三角形 ${c.tri.toLocaleString()}\n`
     + `比較: 現行ボクセル(18.75mm) 1人 = 頂点 85,728 / 三角形 40,896\n`
     + `ドラッグで回転・ホイールで拡大`;
@@ -369,7 +375,6 @@ function buildUI(): void {
   range("傾き（横）", -0.6, 0.6, 0.01, mouthRoll, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { mouthRoll = v; placeMouth(); });
   box = ui;
 
-  ui.appendChild(infoEl);
   void showHair();
 }
 
@@ -379,7 +384,9 @@ load().catch((e: unknown) => {
 });
 
 engine.runRenderLoop(() => {
-  infoEl.textContent = info;
+  // ⚠️ 毎フレーム作り直す。スライダーの値ではなく**実際にノードへ入っている値**を
+  //    出したいので、押した時だけの更新では足りない。
+  infoEl.textContent = skel ? infoText() : info;
   scene.render();
 });
 window.addEventListener("resize", () => engine.resize());
