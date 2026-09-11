@@ -95,8 +95,37 @@ Object.assign(ui.style, {
   flexDirection: "column", gap: "8px", color: "#fff", font: "600 13px system-ui, sans-serif",
   background: "rgba(12,14,20,0.72)", padding: "12px 14px", borderRadius: "12px",
   border: "1px solid rgba(255,255,255,0.12)", backdropFilter: "blur(6px)",
+  // ⚠️ 項目が増えると画面外へ出る。パネル自体をスクロールさせる。
+  maxHeight: "calc(100vh - 24px)", overflowY: "auto", overflowX: "hidden",
+  width: "300px", boxSizing: "border-box",
 } as Partial<CSSStyleDeclaration>);
 document.body.appendChild(ui);
+
+/** 以降の row() を足す先。section() が切り替える。 */
+let box: HTMLElement = ui;
+/**
+ * 折りたたみの見出しを作り、以降の row() をその中へ入れる。
+ * ⚠️ 項目が増えると身長・体重・髪型が画面外へ押し出される。長い調整群は畳んでおく。
+ */
+const section = (label: string, open: boolean): void => {
+  const d = document.createElement("details");
+  d.open = open;
+  Object.assign(d.style, { border: "1px solid rgba(255,255,255,0.14)", borderRadius: "8px",
+    padding: "4px 6px" } as Partial<CSSStyleDeclaration>);
+  const sm = document.createElement("summary");
+  sm.textContent = label;
+  Object.assign(sm.style, { cursor: "pointer", fontSize: "12px", opacity: "0.85",
+    padding: "2px 0" } as Partial<CSSStyleDeclaration>);
+  d.appendChild(sm);
+  const inner = document.createElement("div");
+  Object.assign(inner.style, { display: "flex", flexDirection: "column", gap: "6px",
+    marginTop: "6px" } as Partial<CSSStyleDeclaration>);
+  d.appendChild(inner);
+  ui.appendChild(d);
+  box = inner;
+};
+/** 折りたたみを閉じて、以降の row() をパネル直下へ戻す。 */
+const endSection = (): void => { box = ui; };
 
 const row = (label: string): HTMLDivElement => {
   const d = document.createElement("div");
@@ -105,7 +134,7 @@ const row = (label: string): HTMLDivElement => {
   s.textContent = label;
   Object.assign(s.style, { minWidth: "70px", opacity: "0.8", fontSize: "12px" } as Partial<CSSStyleDeclaration>);
   d.appendChild(s);
-  ui.appendChild(d);
+  box.appendChild(d);
   return d;
 };
 const button = (parent: HTMLElement, label: string, on: () => void): HTMLButtonElement => {
@@ -177,6 +206,7 @@ function pct(label: string, init: number, on: (v: number) => void): void {
 // ⚠️ 守備の腕はゲームでは poseHands が作る。確認ページはそこを通らないので、
 //    同じ関数をこのページからも呼ぶ（見えるものを試合と同じにするため）。
 let defense = 0, shootRisk = 0.3, driveRisk = 0.3;
+section("守備の腕", false);
 pct("守備度", defense, (v) => { defense = v; if (player) { player.defenseTarget = v; player.defense = v; } });
 pct("シュート気配", shootRisk, (v) => { shootRisk = v; });
 pct("ドライブ気配", driveRisk, (v) => { driveRisk = v; });
@@ -206,6 +236,8 @@ function range(label: string, min: number, max: number, step: number, init: numb
   sl.oninput = () => { lb.textContent = fmt(Number(sl.value)); on(Number(sl.value)); };
   r.appendChild(sl); r.appendChild(lb);
 }
+endSection();
+section("キャッチ", false);
 const catchRow = row("キャッチ");
 const catchBtn = button(catchRow, "▶ 見る", () => {
   catching = !catching;
@@ -220,7 +252,9 @@ range("ボールの横ズレ", -0.9, 0.9, 0.05, ballX, (v) => (v >= 0 ? "右 " :
 range("ボールの奥行き", -0.6, 0.9, 0.05, ballZ, (v) => (v >= 0 ? "前 " : "後 ") + Math.abs(v).toFixed(2) + "m",
   (v) => { ballZ = v; });
 
+endSection();
 // ───────── スティールの突き（reach.ts digReach ＋ vs-onball stepLunge）─────────
+section("スティールの突き", false);
 // ⚠️ 試合と同じ経路: beginAction("steal") の段階 → stepLunge で踏み込み →
 //    digReach でポーズ。スライダーは試合で使う定数そのものを書き換える。
 const stealRow = row("スティール");
@@ -254,7 +288,9 @@ range("溜めで肘を畳む", 0, 2.0, 0.05, PUNCH.cockElbow, (v) => (v * 180 / 
 range("踏み込みの前傾", 0, 0.4, 0.01, PUNCH.lungeLean, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { PUNCH.lungeLean = v; });
 range("胴回転の符号", -1, 1, 2, PUNCH.sign, (v) => (v < 0 ? "−1（実測でリーチ最大）" : "+1"), (v) => { PUNCH.sign = v || -1; });
 
+endSection();
 // ───────── 走る腕振りの癖（arm-style.ts）と手の握り（fingers.ts）─────────
+section("走る腕振り・手の握り", false);
 // ⚠️ ゲームでは選手ごとに名前から決まる。ここは全員へ同じ値を被せて幅を確かめるためのもの。
 let swing = 1, pull = 0.23, inward = 0.18;
 const pushStyle = (): void =>
@@ -270,6 +306,7 @@ pushStyle();
 range("手の握り", -1, 1, 0.05, -1,
   (v) => (v < 0 ? "自動" : v === 0 ? "グー" : v.toFixed(2)),
   (v) => { setGripOverride(v < 0 ? null : v); });
+endSection();
 const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
 row("髪型").appendChild(hairSel);
@@ -336,6 +373,7 @@ const infoEl = document.createElement("div");
 Object.assign(infoEl.style, {
   fontSize: "11px", opacity: "0.7", lineHeight: "1.6", maxWidth: "260px", whiteSpace: "pre-line",
 });
+endSection();
 ui.appendChild(infoEl);
 
 // ───────────────────────── モデル ─────────────────────────
