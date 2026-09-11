@@ -265,7 +265,11 @@ const MARK_HALF = 0.5;              // body に対するボクセル比（縦横
 /** 白目・黒目・唇の色（元モデルは白目=182の灰 / 黒目=2の黒）。 */
 const MARK_COLOR = { white: [182, 182, 182], black: [2, 2, 2], lip: [120, 60, 50] };
 /** 枡目の数（半分のボクセルでの数）。元モデルの倍。 */
-const MARK_GRID = { eyeW: 6, eyeH: 4, pupil: 2, mouthW: 8, mouthH: 2 };
+// ⚠️ マスの実寸 = body のボクセル × MARK_HALF。ボクセルを粗くしたらマス数を
+//    そのぶん減らさないと、顔に対して目・口だけが倍の大きさになる。
+//    resolution 110(body 9.38mm) では 6×4/2/8×2 だった。55(18.75mm) はその半分。
+//    実測(probe-facefit): 減らす前は 64マス中 38〜44マスが顔から外れていた。
+const MARK_GRID = { eyeW: 3, eyeH: 2, pupil: 1, mouthW: 4, mouthH: 1 };
 /**
  * 顔の中での位置（頭頂からの距離 m / 中心からの左右 m）。
  * 実測（player_one / 頭頂Z 1.800、Face.jpg を顔のポリゴンへサンプルして得た値）:
@@ -970,9 +974,14 @@ export function buildRawModelFrom(
       const isBody2 = L.part.prefix === "body";
       for (const { ch, voxels } of L.chunks) {
         for (const v of voxels) {
-          const z = ch.grid_origin[2] + (v[2] + 0.5) * S2;
-          if (z < lo) lo = z;
-          if (isBody2 && z > hi) hi = z;
+          // ⚠️ ボクセルの**中心**ではなく描かれる立方体の上下端で測る。中心で測ると
+          //    両端の半ボクセルぶん（合計 1 ボクセル）短く見積もり、そのぶん拡大率が
+          //    大きくなって実際の身長が超過する。ボクセルを粗くするほど効く。
+          //    実測: 18.75mm のとき 193cm 設定が 195.7cm（+1.4%）になっていた。
+          const zLo = ch.grid_origin[2] + v[2] * S2;
+          const zHi = zLo + S2;
+          if (zLo < lo) lo = zLo;
+          if (isBody2 && zHi > hi) hi = zHi;
         }
       }
     }
