@@ -1146,3 +1146,28 @@ body は髪・頭皮・目を別パーツへ分離したため**穴が空いて�
 - ヘッドレスで GLB を読む方法: **data URL で渡す**（`"data:;base64," + b64`）。
   Node に XMLHttpRequest が無く Babylon の内部がそれを直接使うため、ファイルパスでは読めない。
   `scene.render()` にはカメラが要る（NullEngine でも「No camera defined」で落ちる）。
+
+**⚠️ 本当の原因: `skeleton.prepare(true)` を呼んでいなかった（v5 で修正）**
+- 症状: 版の目印も身長の数字も更新されるのに、**見た目が1ミリも変わらない**。
+- ⚠️ ボーンの位置や身長は「ボーンのローカル/絶対行列」から出るので更新される。
+  一方**シェーダへ送る行列（`getTransformMatrices`）は別**で、そちらが古いままだった。
+  数字が動くことは、描画が動く証拠にならない。
+- `skeleton.js` の `prepare()`:
+  1. 冒頭で「今フレーム既に呼ばれていたら何もしない」（`_currentRenderId`）
+  2. リンクノード → ボーンへ写す
+  3. **`if (!this._isDirty) return;`** ← ここで抜けると行列を作り直さない
+- 実測（`probe-poly4`、`getTransformMatrices` の最大差）:
+  | やったこと | 行列の変化 |
+  |---|---|
+  | ノードの scaling へ書くだけ | **0.0000（描画は変わらない）** |
+  | + `bone.markAsDirty()` | 0.0000 |
+  | **+ `skeleton.prepare(true)`** | **46.98（変わる○）** |
+- 直し: `applyBody()` の最後と描画ループの毎フレームで `skel.prepare(true)` を呼ぶ。
+  実測（`probe-poly5`、ページと同じ手順）: 脚1.2倍 17.3 / 胴1.2倍 8.7 / 太さ1.3倍 47.1 /
+  頭1.25倍 15.8 / 脚0.85倍 10.9、**素へ戻すと 0.000**（掛け算で溜まっていない）。
+
+**この件で学んだこと**
+- ⚠️ Babylon で「ボーンを動かしたのに描画が変わらない」ときは、**`getTransformMatrices`
+  を直接比べる**こと。ボーンの位置や境界箱を見ても、シェーダが見ている行列とは別物。
+- 検証の足場: GLB は **data URL** で渡せば Node でも読める（`"data:;base64," + b64`）。
+  `scene.render()` には NullEngine でもカメラが要る。

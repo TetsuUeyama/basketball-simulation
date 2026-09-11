@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v4";
+const BUILD = "v5";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -183,6 +183,13 @@ function applyBody(): void {
   setBone("Spine", thick, spineLen, thick);
   setBone("Hips", thick, 1, thick);
   setBone("Head", headSize, headSize, headSize);
+  // ⚠️ ここを呼ばないと**見た目が1ミリも変わらない**。
+  //    ボーンの位置や身長の数字は更新されるのに、シェーダへ送る行列だけ古いまま。
+//    skeleton.js の prepare() は「今フレーム既に呼ばれていたら何もしない」うえ、
+  //    リンクノードからボーンへ写す処理の後に `if (!this._isDirty) return;` があるため。
+  //    実測(probe-poly4、getTransformMatrices の最大差):
+  //      ノードへ書くだけ 0.0000 / + bone.markAsDirty() 0.0000 / + prepare(true) 46.98
+  skel?.prepare(true);
   info = infoText();
 }
 
@@ -384,6 +391,9 @@ load().catch((e: unknown) => {
 });
 
 engine.runRenderLoop(() => {
+  // ⚠️ 毎フレーム作り直す。ボーンを触った結果をシェーダへ確実に届けるため
+  //    （上の applyBody でも呼ぶが、髪や目の操作からも確実に反映させる）。
+  skel?.prepare(true);
   // ⚠️ 毎フレーム作り直す。スライダーの値ではなく**実際にノードへ入っている値**を
   //    出したいので、押した時だけの更新では足りない。
   infoEl.textContent = skel ? infoText() : info;
