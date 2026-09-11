@@ -9,7 +9,7 @@
 import {
   Engine, Scene, Color3, Color4, Vector3, ArcRotateCamera, HemisphericLight,
   DirectionalLight, MeshBuilder, StandardMaterial, Texture, DynamicTexture,
-  SceneLoader, TransformNode, Quaternion,
+  SceneLoader, TransformNode, Quaternion, Matrix,
   type AbstractMesh, type Skeleton, type Bone, type Mesh,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v6";
+const BUILD = "v8";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -197,10 +197,14 @@ function applyBody(): void {
 const HAIRS = ["Man_Hair_001", "Man_Hair_010", "Man_Hair_030", "Man_Hair_050",
                "Man_Hair_070", "Man_Hair_090", "Man_Hair_110", "Man_Hair_130"];
 const hairCache = new Map<string, AbstractMesh[]>();   // ファイル → 読み込んだ全メッシュ
-let hairNode: TransformNode | null = null;
+let hairNode: TransformNode | null = null;   // 骨のスケールを打ち消した後の入れ物
+let headNode: TransformNode | null = null;
+let boneScale = 1;
 let hairMesh: AbstractMesh | null = null;
 let hairFile = "hair_low.glb", hairPick = HAIRS[0];
 let hairScale = 1, hairUp = 0, hairFwd = 0;
+const HEAD_W = 0.19;   // 頭の幅の目安(m)。付けた後の実寸をここへ合わせる
+let hairFit = 1;
 
 async function loadHairFile(file: string): Promise<AbstractMesh[]> {
   const got = hairCache.get(file);
@@ -231,12 +235,20 @@ async function showHair(): Promise<void> {
   }
   m.setEnabled(true);
   hairMesh = m;
+  // ⚠️ 倍率は**付けた後の実寸**から出す。素材ごとに大きさが違ううえ、
+  //    親の行列も効くので、決め打ちだと合わない。
+  m.computeWorldMatrix(true);
+  m.refreshBoundingInfo({ applySkeleton: false });
+  const bb = m.getBoundingInfo().boundingBox;
+  const w = bb.maximumWorld.x - bb.minimumWorld.x;
+  hairFit = w > 1e-6 ? HEAD_W / w : 1;
+  placeHair();
   info = infoText();
 }
 function placeHair(): void {
   if (!hairMesh) return;
   hairMesh.position.set(0, hairUp, hairFwd);
-  hairMesh.scaling.setAll(hairScale);
+  hairMesh.scaling.setAll(hairScale * hairFit);
 }
 
 // ───────────────────────── 目と口 ─────────────────────────
@@ -244,48 +256,77 @@ function placeHair(): void {
 // 口は元モデルに**ジオメトリが無い**（顔テクスチャに描かれている）ので、
 // ここでは「口だけ板を貼る」案を実演する。現行のボクセル版 faceMarks と同じ考え方。
 let eyeRest: Vector3 | null = null;
+let eyeCenter = Vector3.Zero();   // 焼き込んだ時の目の中心(ワールド)。回転の中心
+let eyeBase = Vector3.Zero();     // 焼き込み後に素の見た目へ戻すための下駄
+const _rm = Matrix.Identity();
 let eyeX = 0, eyeY = 0, eyeZ = 0, eyePitch = 0, eyeYaw = 0;
 function applyEyes(): void {
-  if (!eyeRest) return;
+  if (!eyeRest || !headNode) return;
   // 目は白目とまつげでメッシュが分かれている。まとめて動かす。
+  // 頭ボーンのワールド位置を基準にするので、体型を変えても顔に付いてくる。
+  headNode.computeWorldMatrix(true);
+  const hp = headNode.getAbsolutePosition();
+  // 焼き込んだ時の頭の位置からの差分 ＋ スライダーぶん。
+  // ⚠️ 回転は**目の中心まわり**にする。頂点はワールド座標が焼き込まれているので、
+  //    素直に回すと原点まわりに振り回される。位置へ (c - R·c) を足して中心を移す。
+  const rot = Quaternion.RotationYawPitchRoll(eyeYaw, eyePitch, 0);
+  Matrix.FromQuaternionToRef(rot, _rm);
+  const rc = Vector3.TransformCoordinates(eyeCenter, _rm);
+  const dx = eyeBase.x + hp.x - eyeRest.x + eyeX + eyeCenter.x - rc.x;
+  const dy = eyeBase.y + hp.y - eyeRest.y + eyeY + eyeCenter.y - rc.y;
+  const dz = eyeBase.z + hp.z - eyeRest.z + eyeZ + eyeCenter.z - rc.z;
   for (const m of eyeParts) {
-    m.position.set(eyeRest.x + eyeX, eyeRest.y + eyeY, eyeRest.z + eyeZ);
-    m.rotationQuaternion = Quaternion.RotationYawPitchRoll(eyeYaw, eyePitch, 0);
+    m.position.set(dx, dy, dz);
+    m.rotationQuaternion = rot;
   }
 }
 let mouth: Mesh | null = null;
-let mouthY = 0.08, mouthZ = 0.085, mouthW = 0.045, mouthPitch = 0, mouthRoll = 0;
-function makeMouth(): void {
-  mouth = MeshBuilder.CreatePlane("mouth", { width: 1, height: 0.35 }, scene);
-  const t = new DynamicTexture("mouthTex", { width: 128, height: 48 }, scene, false);
-  const cx = t.getContext();
-  cx.clearRect(0, 0, 128, 48);
+let mouthTex: DynamicTexture | null = null;
+// 位置は頭の補正ノードから見た相対（メートル）。形は下の4つで決まる。
+let mouthY = 0.08, mouthZ = 0.085, mouthPitch = 0, mouthRoll = 0;
+let mouthW = 0.050, mouthH = 0.022, mouthCurve = 0, mouthOpen = 0.35;
+const MT_W = 192, MT_H = 96;
+/**
+ * 口の形を描き直す。⚠️ 元モデルに口のジオメトリは無い（顔テクスチャに描かれている）
+ *    ので、板に描いて顔へ貼る。現行のボクセル版 faceMarks と同じ考え方。
+ */
+function drawMouth(): void {
+  if (!mouthTex) return;
+  const cx = mouthTex.getContext();
+  cx.clearRect(0, 0, MT_W, MT_H);
+  const x0 = MT_W * 0.06, x1 = MT_W * 0.94, mid = MT_W / 2;
+  const yc = MT_H / 2;
+  const corner = yc - mouthCurve * MT_H * 0.30;   // 口角の上下（＋で笑い）
+  const half = mouthOpen * MT_H * 0.42;           // 開き
   cx.fillStyle = "#7a3c32";
-  // ⚠️ Babylon の ICanvasRenderingContext に ellipse は無い。円を潰して描く。
-  cx.save();
-  cx.translate(64, 24);
-  cx.scale(1, 0.25);
   cx.beginPath();
-  cx.arc(0, 0, 56, 0, Math.PI * 2);
+  cx.moveTo(x0, corner);
+  cx.quadraticCurveTo(mid, yc - half, x1, corner);   // 上唇の内側
+  cx.quadraticCurveTo(mid, yc + half, x0, corner);   // 下唇の内側
+  cx.closePath();
   cx.fill();
-  cx.restore();
-  t.update();
-  t.hasAlpha = true;
+  mouthTex.update();
+}
+function makeMouth(): void {
+  mouth = MeshBuilder.CreatePlane("mouth", { width: 1, height: 1 }, scene);
+  mouthTex = new DynamicTexture("mouthTex", { width: MT_W, height: MT_H }, scene, false);
+  mouthTex.hasAlpha = true;
   const mm = new StandardMaterial("mouthMat", scene);
-  mm.diffuseTexture = t;
-  mm.opacityTexture = t;
+  mm.diffuseTexture = mouthTex;
+  mm.opacityTexture = mouthTex;
   mm.specularColor = new Color3(0, 0, 0);
   mm.emissiveColor = new Color3(0.25, 0.25, 0.25);
+  mm.backFaceCulling = false;
   mouth.material = mm;
+  drawMouth();
   placeMouth();
 }
 function placeMouth(): void {
   if (!mouth) return;
   mouth.position.set(0, mouthY, mouthZ);
-  mouth.scaling.set(mouthW, mouthW, 1);
+  mouth.scaling.set(mouthW, mouthH, 1);
   mouth.rotationQuaternion = Quaternion.RotationYawPitchRoll(Math.PI, mouthPitch, mouthRoll);
 }
-
 function infoText(): string {
   const c = counts();
   const h = measuredHeight();
@@ -324,13 +365,66 @@ async function load(): Promise<void> {
   //    名前へ接尾辞を付ける。完全一致では引けない（実測でここが null だった）。
   eyeParts = bodyMeshes.filter((m) => m.name === "eyes" || m.name.startsWith("eyes_primitive"));
   eyesMesh = eyeParts[0] ?? null;
-  if (eyesMesh) eyeRest = eyesMesh.position.clone();
+  bodyMeshes = bodyMeshes.filter((m) => !eyeParts.includes(m));   // 身長の計測から外す
+  // ⚠️ スキン中のメッシュは**自分の位置を変えても動かない**（頂点は骨の行列だけで
+  //    決まる。実測で +0.05m 動かしてもワールドでは 0.000m だった）。
+  //    今の見た目を頂点へ焼き込み(applySkeleton)、スケルトンを外してから
+  //    頭の補正ノードの子にする。以降はふつうのメッシュとして動かせる。
+  if (eyeParts.length && skel && hairNode) {
+    for (const m of eyeParts) {
+      m.computeWorldMatrix(true);
+      m.refreshBoundingInfo({ applySkeleton: true });
+    }
+    const cy = eyeParts[0].getBoundingInfo().boundingBox.centerWorld.clone();
+    for (const m of eyeParts) {
+      (m as Mesh).applySkeleton(skel);   // 今の見た目を頂点へ焼き込む
+      m.skeleton = null;
+      // ⚠️ 焼き込んだ頂点は**ワールド座標**なので、親に付けてはいけない
+      //    （骨の 1/39.4 スケールが掛かって y が -11m まで飛んだ）。
+      //    親なしのまま、毎フレーム頭ボーンの位置へ合わせる。
+      m.parent = null;
+      m.position.setAll(0);
+      m.rotationQuaternion = Quaternion.Identity();
+      m.scaling.setAll(1);
+    }
+    // ⚠️ 焼き込んだ頂点がどの空間に入るかは推測しない。**一度測って差分で合わせる**。
+    //    （素直に頭ボーンの位置を足すと二重になって y が 1.69→3.91、
+    //     setPivotPoint を使うと 0.53m ずれた。どちらも実測で外れた）
+    eyeParts[0].computeWorldMatrix(true);
+    eyeParts[0].refreshBoundingInfo({ applySkeleton: false });
+    const got = eyeParts[0].getBoundingInfo().boundingBox.centerWorld;
+    eyeBase = new Vector3(cy.x - got.x, cy.y - got.y, cy.z - got.z);
+    // ⚠️ 焼き込んだ頂点は**素の見た目の位置そのもの**なので、位置は 0 が正解。
+    //    ここへ頭ボーンの絶対位置を足すと二重になる（実測で y が 1.69 → 3.91 になった）。
+    //    覚えるのは「焼き込んだ時の頭ボーンの位置」。以後はそこからの**差分**で動かす。
+    headNode?.computeWorldMatrix(true);
+    eyeRest = headNode ? headNode.getAbsolutePosition().clone() : Vector3.Zero();
+    // ⚠️ setPivotPoint は使わない（位置が 0.53m ずれた）。回転の中心は下の式で明示する。
+    eyeCenter = cy.clone();
+    applyEyes();
+  }
   // 髪を運ぶ入れ物を頭ボーンへ付ける（髪そのものはここの子にする）
-  // ⚠️ 髪も口も**頭ボーンへ**付ける。付けないと体型を変えた時に顔から離れる。
+  // ⚠️ 髪も口も目も**頭ボーンへ**付ける。付けないと体型を変えた時に顔から離れる。
+  // ⚠️ さらに、この骨の行列には **1/39.4 のスケール**が入っている
+  //    （0.0254 = インチ→メートル。FBX 由来のリグの単位がそのまま残っている）。
+    //  そのまま子にすると、付けたものが 39.4 分の1に縮み、位置の指定も 39.4 分の1に
+    //  なる（実測: 幅 0.190m の髪が 0.0048m に、+0.05m の移動が +0.001m に）。
+    //  打ち消す補正ノードを1枚挟んで、以降はメートルで書けるようにする。
   const head = bone("Head");
   if (head && bodyMeshes[0]) {
-    hairNode = new TransformNode("hairNode", scene);
-    hairNode.attachToBone(head, bodyMeshes[0]);
+    headNode = new TransformNode("headNode", scene);
+    headNode.attachToBone(head, bodyMeshes[0]);
+    headNode.computeWorldMatrix(true);
+    const sc = new Vector3();
+    const rq = new Quaternion();
+    const tp = new Vector3();
+    // ⚠️ decompose は3つとも渡すこと。scale だけ渡すと y,z が埋まらず、
+    //    平均を取ると 1/3 の値（実測 0.00847）になって補正が3倍ずれる。
+    headNode.getWorldMatrix().decompose(sc, rq, tp);
+    boneScale = sc.x || 1;
+    hairNode = new TransformNode("hairFix", scene);
+    hairNode.parent = headNode;
+    hairNode.scaling.setAll(1 / boneScale);
   }
   makeMouth();
   if (mouth && hairNode) mouth.parent = hairNode;
@@ -396,7 +490,10 @@ function buildUI(): void {
   section("口（板を貼る ※元モデルに口は無い）", false);
   range("上下", -0.06, 0.18, 0.002, mouthY, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthY = v; placeMouth(); });
   range("前後", 0.0, 0.16, 0.002, mouthZ, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthZ = v; placeMouth(); });
-  range("大きさ", 0.02, 0.09, 0.002, mouthW, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthW = v; placeMouth(); });
+  range("横幅", 0.02, 0.10, 0.002, mouthW, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthW = v; placeMouth(); });
+  range("縦幅", 0.004, 0.06, 0.002, mouthH, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthH = v; placeMouth(); });
+  range("口角", -1, 1, 0.05, mouthCurve, (v) => (v > 0.05 ? "笑い " : v < -0.05 ? "への字 " : "まっすぐ ") + v.toFixed(2), (v) => { mouthCurve = v; drawMouth(); });
+  range("開き", 0, 1, 0.02, mouthOpen, (v) => (v * 100).toFixed(0) + "%", (v) => { mouthOpen = v; drawMouth(); });
   range("傾き（縦）", -0.6, 0.6, 0.01, mouthPitch, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { mouthPitch = v; placeMouth(); });
   range("傾き（横）", -0.6, 0.6, 0.01, mouthRoll, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { mouthRoll = v; placeMouth(); });
   box = ui;
@@ -413,6 +510,7 @@ engine.runRenderLoop(() => {
   // ⚠️ 毎フレーム作り直す。ボーンを触った結果をシェーダへ確実に届けるため
   //    （上の applyBody でも呼ぶが、髪や目の操作からも確実に反映させる）。
   skel?.prepare(true);
+  applyEyes();   // 頭が動いたら目も付いていく
   // ⚠️ 毎フレーム作り直す。スライダーの値ではなく**実際にノードへ入っている値**を
   //    出したいので、押した時だけの更新では足りない。
   infoEl.textContent = skel ? infoText() : info;
