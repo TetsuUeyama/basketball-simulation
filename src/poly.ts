@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v10";
+const BUILD = "v11";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -202,7 +202,8 @@ let headNode: TransformNode | null = null;
 let boneScale = 1;
 let hairMesh: AbstractMesh | null = null;
 let hairFile = "hair_low.glb", hairPick = HAIRS[0];
-let hairScale = 1, hairUp = 0, hairFwd = 0;
+// 標準の位置。⚠️ 頭ボーンは後頭部寄りにあるので、そのままだと髪が下がって前へずれる。
+let hairScale = 1, hairUp = 0.10, hairFwd = 0.03;
 const HEAD_W = 0.19;   // 頭の幅の目安(m)。付けた後の実寸をここへ合わせる
 let hairFit = 1;
 
@@ -460,8 +461,8 @@ async function load(): Promise<void> {
 
 function buildUI(): void {
   const bf = select("素体");
-  for (const [v, l] of [["player_flat.glb", "のっぺらぼう 88,148三角形"],
-                        ["player_flat_low.glb", "のっぺらぼう＋間引き30% 26,443三角形"],
+  for (const [v, l] of [["player_flat.glb", "のっぺらぼう 78,613三角形（髪なし）"],
+                        ["player_flat_low.glb", "のっぺらぼう＋間引き30% 23,582三角形"],
                         ["player.glb", "元モデル（実写調）89,368三角形"]] as const) {
     const o = document.createElement("option"); o.value = v; o.textContent = l; bf.appendChild(o);
   }
@@ -489,8 +490,8 @@ function buildUI(): void {
   hs.value = HAIRS[0];
   hs.onchange = () => { hairPick = hs.value; void showHair(); };
   range("大きさ", 0.4, 2.0, 0.01, hairScale, (v) => v.toFixed(2) + "倍", (v) => { hairScale = v; placeHair(); });
-  range("上下", -0.15, 0.15, 0.005, hairUp, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairUp = v; placeHair(); });
-  range("前後", -0.15, 0.15, 0.005, hairFwd, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairFwd = v; placeHair(); });
+  range("上下", -0.05, 0.25, 0.005, hairUp, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairUp = v; placeHair(); });
+  range("前後", -0.12, 0.18, 0.005, hairFwd, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairFwd = v; placeHair(); });
   box = ui;
 
   section("目（元モデルのジオメトリ）", false);
