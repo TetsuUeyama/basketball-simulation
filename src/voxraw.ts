@@ -1426,7 +1426,11 @@ export function buildRawModelFrom(
     mesh.skeleton = skel;
     mesh.numBoneInfluencers = 4;
     mesh.alwaysSelectAsActiveMesh = true;
-    if (isBody) { bodyMesh = mesh; bodyCells = cells; }
+    // ⚠️ **遠景用(lod>1)のメッシュで上書きしてはいけない。** 上書きすると setJaw が
+    //    遠景用のほうを作り直し、実際に表示されるメッシュは一度も変わらない
+    //    （実測: setJaw 後 bodyMesh は 11,136 頂点になるのに、byPart.get("body") は
+    //     12,576 頂点のまま。あごの形を変えても見た目が変わらない原因）。
+    if (isBody && lod === 1) { bodyMesh = mesh; bodyCells = cells; }
     return mesh;
   };
 
