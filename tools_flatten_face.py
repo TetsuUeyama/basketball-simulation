@@ -9,6 +9,7 @@ FACE_IT, ARM_IT, CLAMP = int(A[0]), int(A[1]), float(A[2])
 BLEND = int(A[3]) if len(A) > 3 else 30      # 段差取りの回数
 OUT = A[4] if len(A) > 4 else ""
 DEC = float(A[5]) if len(A) > 5 else 0.0
+FLAT_SKIN = (len(A) > 6 and A[6] == "1")   # 1 なら腕・胴の肌も単色にする
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.fbx(filepath=r"C:/Users/user/Downloads/player-one/Spanish+footballer+FBX.FBX")
 mesh = next(o for o in bpy.data.objects if o.type == 'MESH')
@@ -145,7 +146,33 @@ def left_holes(vset):
 print(f"塞いだ穴 {np_} 個 / 段差取り {BLEND} 回 / 頭に残った穴の縁 {left_holes(head_v)} 本")
 print(f"  穴まわりの折れ目 中央 {c1m:.1f}°→{c2m:.1f}° / 95%点 {c1:.1f}°→{c2:.1f}°（{n1} 辺）")
 print(f"  顔の凹凸 {r0:.2f} → {rough(head_v):.2f}mm / 腕 {a0:.2f} → {rough(arm_v):.2f}mm")
+def flatten_materials(flat_skin):
+    """⚠️ のっぺらぼうの本体はここ。目・眉・口は **Face.jpg に描かれている**ので、
+       形をいくら均しても消えない。顔（と肌）のマテリアルから画像を外し、
+       髪と同じ「素の単色」にする。"""
+    import mathutils
+    SKIN = (0.80, 0.62, 0.50, 1.0)
+    targets = ("face",) + (("torso", "arms legs") if flat_skin else ())
+    done = []
+    for m in bpy.data.materials:
+        if m.name.lower() not in targets: continue
+        m.use_nodes = True
+        nt = m.node_tree
+        bsdf = next((n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if not bsdf: continue
+        # 画像へ繋がっている線を切って、単色に置き換える
+        for link in list(nt.links):
+            if link.to_node == bsdf and link.to_socket.name in ("Base Color", "Specular IOR Level"):
+                nt.links.remove(link)
+        bsdf.inputs["Base Color"].default_value = SKIN
+        if "Roughness" in bsdf.inputs: bsdf.inputs["Roughness"].default_value = 0.9
+        for n in [n for n in nt.nodes if n.type == 'TEX_IMAGE']:
+            nt.nodes.remove(n)
+        done.append(m.name)
+    print(f"  単色にしたマテリアル: {done}")
+
 if OUT:
+    flatten_materials(FLAT_SKIN)
     if DEC > 0:
         bpy.context.view_layer.objects.active = mesh
         d = mesh.modifiers.new("dec", 'DECIMATE'); d.ratio = DEC
