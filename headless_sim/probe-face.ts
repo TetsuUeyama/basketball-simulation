@@ -1,101 +1,71 @@
-// 顔に描いた目・口が、元モデルと同じ枡目で・肌の外に出ているかを確かめる。
-import "./stubs";
+// 今の顔がどうなっているかを、出力 GLB から直接測る。
+//  ・目と口のあたりに穴が残っているか
+//  ・顔の横顔の形（鼻の出っ張りが残っているか、なめらかか）
 import { readFileSync } from "node:fs";
-import { NullEngine, Scene } from "@babylonjs/core";
-const DIR = process.env.DIR ?? "public/vox/player_one";
-(globalThis as unknown as { fetch: unknown }).fetch = async (url: string) => {
-  const name = String(url).split("/").pop()!;
-  try {
-    const buf = readFileSync(`${DIR}/${name}`);
-    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-    return { ok: true, status: 200, json: async () => JSON.parse(buf.toString("utf8")), arrayBuffer: async () => ab };
-  } catch { return { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) }; }
-};
-const { buildRawModel } = await import("../src/voxraw");
-type JawShape = "normal" | "round" | "narrow";
-const engine = new NullEngine();
-for (const jaw of ["normal", "round", "narrow"] as JawShape[]) {
-  const scene = new Scene(engine);
-  const m = await buildRawModel(scene, "/vox/player_one", { jaw });
-  const fm = m.byPart.get("face");
-  if (!fm) { console.log(`${jaw}: ★ face（描いた目・口）が無い`); continue; }
-  const fp = fm.getVerticesData("position")!, fc = fm.getVerticesData("color")!;
-  const bp = m.byPart.get("body")!.getVerticesData("position")!;
-  // 立方体1個 = 24頂点。色ごとにマス数を数える
+type Acc = { bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string };
+function glb(p: string): { json: Record<string, unknown>; bin: Buffer } {
+  const b = readFileSync(p);
+  const jl = b.readUInt32LE(12);
+  const json = JSON.parse(b.subarray(20, 20 + jl).toString("utf8")) as Record<string, unknown>;
+  const o = 20 + jl;
+  return { json, bin: b.subarray(o + 8, o + 8 + b.readUInt32LE(o)) };
+}
+function read(j: Record<string, unknown>, bin: Buffer, i: number): number[] {
+  const acc = (j.accessors as Acc[])[i];
+  const bv = (j.bufferViews as { byteOffset?: number; byteStride?: number }[])[acc.bufferView!];
+  const base = (bv.byteOffset ?? 0) + (acc.byteOffset ?? 0);
+  const n = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[acc.componentType]!;
+  const comps = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[acc.type]!;
+  const stride = bv.byteStride ?? n * comps;
+  const out: number[] = [];
+  for (let k = 0; k < acc.count; k++)
+    for (let c = 0; c < comps; c++) {
+      const off = base + k * stride + c * n;
+      out.push(acc.componentType === 5126 ? bin.readFloatLE(off)
+        : acc.componentType === 5125 ? bin.readUInt32LE(off)
+        : acc.componentType === 5123 ? bin.readUInt16LE(off) : bin.readUInt8(off));
+    }
+  return out;
+}
+for (const file of process.argv.slice(2)) {
+  const { json, bin } = glb(file);
+  const meshes = json.meshes as { primitives: { indices?: number; attributes: Record<string, number> }[] }[];
+  const key = new Map<string, number>(); const pt: number[][] = [];
   const cnt = new Map<string, number>();
-  for (let q = 0; q < fp.length / 3; q += 24) {
-    const k = [0, 1, 2].map((c) => Math.round(fc[q * 4 + c] * 255)).join(",");
-    cnt.set(k, (cnt.get(k) ?? 0) + 1);
+  const id = (x: number, y: number, z: number): number => {
+    const k = `${Math.round(x*1e4)},${Math.round(y*1e4)},${Math.round(z*1e4)}`;
+    let v = key.get(k);
+    if (v === undefined) { v = key.size; key.set(k, v); pt.push([x, y, z]); }
+    return v;
+  };
+  for (const m of meshes) for (const p of m.primitives) {
+    if (p.indices === undefined) continue;
+    const idx = read(json, bin, p.indices), pos = read(json, bin, p.attributes.POSITION);
+    const w = new Int32Array(pos.length / 3);
+    for (let v = 0; v < pos.length / 3; v++) w[v] = id(pos[v*3], pos[v*3+1], pos[v*3+2]);
+    for (let t = 0; t < idx.length; t += 3)
+      for (let e = 0; e < 3; e++) {
+        const a = w[idx[t+e]], b = w[idx[t+(e+1)%3]];
+        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+        cnt.set(k, (cnt.get(k) ?? 0) + 1);
+      }
   }
-  const cell = (fp.length / 3) / 24;
-  // 肌より手前に出ているか（同じ x,高さ の body の最前と比べる）
-  const STEP = 0.0044;
-  const front = new Map<string, number>();
-  const K = (x: number, y: number): string => Math.round(x / STEP) + "," + Math.round(y / STEP);
-  for (let i = 0; i < bp.length / 3; i++) {
-    const k = K(bp[i * 3], bp[i * 3 + 1]);
-    front.set(k, Math.max(front.get(k) ?? -9, bp[i * 3 + 2]));
+  const openV: number[][] = [];
+  for (const [k, c] of cnt) if (c === 1) openV.push(pt[Number(k.split("_")[0])]);
+  console.log(`\n=== ${file.split("/").pop()} ===`);
+  const box = (nm: string, y0: number, y1: number): void => {
+    const n = openV.filter((p) => p[1] >= y0 && p[1] <= y1 && p[2] > 0).length;
+    console.log(`  ${nm}(y ${y0}〜${y1}・前面)の穴の辺 ${n} 本`);
+  };
+  box("目", 1.66, 1.72); box("口", 1.62, 1.67); box("頭ぜんぶ", 1.50, 1.90);
+  // 横顔: 中央付近の帯ごとに一番前へ出ている点
+  console.log("  横顔（中心 ±2cm の帯ごとの最前点 z）");
+  const rows: string[] = [];
+  for (let y = 1.56; y <= 1.80001; y += 0.02) {
+    const band = pt.filter((p) => Math.abs(p[0]) < 0.02 && p[1] >= y && p[1] < y + 0.02);
+    if (!band.length) continue;
+    const z = Math.max(...band.map((p) => p[2]));
+    rows.push(`${y.toFixed(2)}m:${(z*100).toFixed(1)}`);
   }
-  let ahead = 0, behind = 0, none = 0, worst = 9;
-  for (let i = 0; i < fp.length / 3; i++) {
-    const bz = front.get(K(fp[i * 3], fp[i * 3 + 1]));
-    if (bz === undefined) { none++; continue; }
-    const d = fp[i * 3 + 2] - bz;
-    if (d >= 0) ahead++; else { behind++; worst = Math.min(worst, d); }
-  }
-  let topY = -Infinity, minX = 9, maxX = -9, minY = 9, maxY = -9;
-  for (let i = 0; i < bp.length / 3; i++) topY = Math.max(topY, bp[i * 3 + 1]);
-  for (let i = 0; i < fp.length / 3; i++) {
-    minX = Math.min(minX, fp[i * 3]); maxX = Math.max(maxX, fp[i * 3]);
-    minY = Math.min(minY, fp[i * 3 + 1]); maxY = Math.max(maxY, fp[i * 3 + 1]);
-  }
-  console.log(`--- ${jaw}: ${cell} マス`);
-  for (const [k, n] of [...cnt].sort((a, b) => b[1] - a[1])) console.log(`    色 ${k}: ${n} マス`);
-  console.log(`    範囲 X ${minX.toFixed(3)}〜${maxX.toFixed(3)} / 頭頂から ${(topY - maxY).toFixed(3)}〜${(topY - minY).toFixed(3)}m`);
-  console.log(`    肌より手前 ${ahead} 頂点 / 埋没 ${behind} / 肌が無い ${none}`
-    + (behind ? ` / 最大埋没 ${(worst * 1000).toFixed(1)}mm` : ""));
-  // マスの裏面と肌の面の隙間（正なら浮いている）
-  const bodyS = 0.00874;
-  const fr = new Map<string, number>();
-  const K2 = (x: number, y: number): string => Math.round(x / bodyS) + "," + Math.round(y / bodyS);
-  for (let i = 0; i < bp.length / 3; i++) {
-    const k = K2(bp[i * 3], bp[i * 3 + 1]);
-    fr.set(k, Math.max(fr.get(k) ?? -9, bp[i * 3 + 2]));
-  }
-  let gapMax = -9, gapN = 0, gapSum = 0;
-  for (let q = 0; q < fp.length / 3; q += 24) {
-    let cx = 0, cy = 0, cz = 0;
-    for (let t = 0; t < 24; t++) { cx += fp[(q + t) * 3]; cy += fp[(q + t) * 3 + 1]; cz += fp[(q + t) * 3 + 2]; }
-    cx /= 24; cy /= 24; cz /= 24;
-    const bz = fr.get(K2(cx, cy));
-    if (bz === undefined) continue;
-    const gap = (cz - 0.0044 / 2) - bz;   // マスの裏面 - 肌の面
-    gapMax = Math.max(gapMax, gap); gapSum += gap; gapN++;
-    }
-  console.log();
-  // 顔の肌の色の階調（単色に均していないか）
-  const bc = m.byPart.get("body")!.getVerticesData("color")!;
-  const sh = new Map<string, number>();
-  for (let i = 0; i < bp.length / 3; i++) {
-    const x = bp[i * 3], y = bp[i * 3 + 1], z = bp[i * 3 + 2];
-    if (z < 0.05 || topY - y < 0.08 || topY - y > 0.20 || Math.abs(x) > 0.08) continue;
-    const k = [0, 1, 2].map((c) => Math.round(bc[i * 4 + c] * 255)).join(",");
-    sh.set(k, (sh.get(k) ?? 0) + 1);
-  }
-  const t3 = [...sh].sort((a2, b2) => b2[1] - a2[1]).slice(0, 3);
-  console.log(`    顔の肌の色 ${sh.size} 階調  上位: ${t3.map(([k, n]) => k + "(" + n + ")").join(" ")}`);
-  // 髪型の色の散り方（モデル本来の髪と比べる）
-  for (const hp of ["hair", "hairstyle_001", "hairstyle_005"]) {
-    const hm = m.byPart.get(hp);
-    if (!hm) continue;
-    const hc = hm.getVerticesData("color")!;
-    const hs = new Map<string, number>();
-    for (let i = 0; i < hc.length / 4; i++) {
-      const k = [0, 1, 2].map((c) => Math.round(hc[i * 4 + c] * 255)).join(",");
-      hs.set(k, (hs.get(k) ?? 0) + 1);
-    }
-    const t3 = [...hs].sort((a2, b2) => b2[1] - a2[1]).slice(0, 4);
-    console.log(`    髪の色 ${hp.padEnd(14)} ${hs.size} 階調  上位: ${t3.map(([k, n]) => k + "(" + n + ")").join(" ")}`);
-  }
-  scene.dispose();
+  console.log("    " + rows.join("  "));
 }
