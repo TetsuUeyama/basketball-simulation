@@ -22,9 +22,23 @@ bmesh.update_edit_mesh(body.data); bpy.ops.mesh.delete(type='FACE')
 bpy.ops.mesh.select_all(action='DESELECT')
 bm = bmesh.from_edit_mesh(body.data)
 mw = body.matrix_world
-for f in bm.faces: f.select = (mw @ f.calc_center_median()).z > 1.55
+# ⚠️ シャツの襟は 1.590m まで。1.55m で切ると襟の下（肩・胴）まで作り直してしまい、
+#    ユニフォームから体が浮く。襟より上（首の途中）で切ること。
+# ⚠️ 頭は Z_MAKE から作るが、体から消すのは Z_DEL から上だけ。
+#    間（首）は元のジオメトリを残し、頭の下端をその中へ潜り込ませる。
+#    体から Z_MAKE より上を全部消すと、首が頭の下端の細さになって段差ができる
+#    （実測: 1.60m の幅が 15.8cm → 10.8cm になっていた）。
+Z_MAKE, Z_DEL = 1.60, 1.63
+for f in bm.faces: f.select = (mw @ f.calc_center_median()).z > Z_MAKE
 bmesh.update_edit_mesh(body.data)
+bpy.ops.mesh.duplicate()
 bpy.ops.mesh.separate(type='SELECTED')
+# 体側は Z_DEL より上だけ消す（首は残す）
+bpy.ops.mesh.select_all(action='DESELECT')
+bm = bmesh.from_edit_mesh(body.data)
+for f in bm.faces: f.select = (mw @ f.calc_center_median()).z > Z_DEL
+bmesh.update_edit_mesh(body.data)
+bpy.ops.mesh.delete(type='FACE')
 bpy.ops.object.mode_set(mode='OBJECT')
 head = [o for o in bpy.data.objects if o.type == 'MESH' and o is not body][0]
 head.name = "headpart"
@@ -71,6 +85,13 @@ def interior(o, tag):
     n = sum(1 for k, y in faces if y > cells[k] + 0.005)
     print(f"  {tag}: 顔の面 {len(faces)} 枚 / 奥に隠れている面 {n} 枚")
     return n
+import mathutils
+def _bb(o):
+    co = [o.matrix_world @ v.co for v in o.data.vertices]
+    return (min(c.x for c in co), max(c.x for c in co),
+            min(c.y for c in co), max(c.y for c in co),
+            min(c.z for c in co), max(c.z for c in co))
+B0 = _bb(head)
 interior(head, "リメッシュ前"); slit(head, "リメッシュ前")
 # ⚠️ 切り出した頭は下（首）が開いた殻。開いたままリメッシュすると殻の裏面が残り、
 #    「奥に隠れた面」として数えられてしまう。先に首を塞いで中身のある形にする。
@@ -90,6 +111,29 @@ m = head.modifiers.new("re", 'REMESH')
 m.mode = 'VOXEL'; m.voxel_size = VOX / head.matrix_world.to_scale().x; m.adaptivity = 0.0
 bpy.ops.object.modifier_apply(modifier=m.name)
 print(f"  リメッシュ(ボクセル {VOX*1000:.0f}mm) → 三角形 {len(head.data.polygons)}")
+# ⚠️ リメッシュは角を丸めるので頭が縮む。元の寸法へ戻す（軸ごとに合わせる）。
+def bbox(o):
+    co = [o.matrix_world @ v.co for v in o.data.vertices]
+    return (min(c.x for c in co), max(c.x for c in co),
+            min(c.y for c in co), max(c.y for c in co),
+            min(c.z for c in co), max(c.z for c in co))
+b1 = bbox(head)
+sx = (B0[1]-B0[0]) / max(1e-6, b1[1]-b1[0])
+sy = (B0[3]-B0[2]) / max(1e-6, b1[3]-b1[2])
+sz = (B0[5]-B0[4]) / max(1e-6, b1[5]-b1[4])
+cx0, cy0 = (B0[0]+B0[1])/2, (B0[2]+B0[3])/2
+mwi = head.matrix_world.inverted()
+for v in head.data.vertices:
+    w = head.matrix_world @ v.co
+    v.co = mwi @ mathutils.Vector((
+        cx0 + (w.x - (b1[0]+b1[1])/2) * sx,
+        cy0 + (w.y - (b1[2]+b1[3])/2) * sy,
+        B0[4] + (w.z - b1[4]) * sz))      # 下端(切った高さ)は動かさない
+head.data.update()
+b2 = bbox(head)
+print(f"  寸法あわせ: 幅 {(b1[1]-b1[0])*100:.1f}→{(b2[1]-b2[0])*100:.1f}cm"
+      f" / 高さ {(b1[5]-b1[4])*100:.1f}→{(b2[5]-b2[4])*100:.1f}cm"
+      f" (元 {(B0[1]-B0[0])*100:.1f} / {(B0[5]-B0[4])*100:.1f}cm)")
 interior(head, "リメッシュ後"); slit(head, "リメッシュ後")
 # ⚠️ リメッシュで頂点ウェイトが消える。元のメッシュから最近傍で移す。
 for vg in body.vertex_groups:
@@ -116,6 +160,32 @@ if SMOOTH_IT > 0:
     bpy.context.view_layer.objects.active = head
     sm = head.modifiers.new("s", 'SMOOTH'); sm.factor = 1.0; sm.iterations = SMOOTH_IT
     bpy.ops.object.modifier_apply(modifier=sm.name)
+# 腕の細かい凹凸を均す。⚠️ 首から下の形は変えたくないので、腕だけに掛け、
+#    太さが変わっていないか測る（袖から出入りしないこと）。
+def arm_width():
+    mwb = body.matrix_world
+    xs = [(mwb @ v.co) for v in body.data.vertices]
+    band = [c for c in xs if 1.20 < c.z < 1.30 and c.x > 0.15]   # 右の上腕あたり
+    if not band: return 0.0
+    return (max(c.y for c in band) - min(c.y for c in band)) * 100
+ARM_IT = 14
+agi = [g.index for g in body.vertex_groups
+       if any(k in g.name for k in ("Arm", "ForeArm")) and "Shoulder" not in g.name]
+# ⚠️ 肩(1.45m より上)は外す。入れると肩の形が変わってユニフォームから浮く
+#    （実測: 1.55m の幅が 52.0cm → 45.2cm になっていた）。
+mwb0 = body.matrix_world
+av = [v.index for v in body.data.vertices
+      for g in v.groups if g.group in agi and g.weight > 0.5
+      and (mwb0 @ v.co).z < 1.45]
+if av and ARM_IT > 0:
+    w0 = arm_width()
+    vg = body.vertex_groups.new(name="flatArm"); vg.add(av, 1.0, 'REPLACE')
+    bpy.context.view_layer.objects.active = body
+    sm2 = body.modifiers.new("sa", 'SMOOTH'); sm2.factor = 1.0
+    sm2.iterations = ARM_IT; sm2.vertex_group = "flatArm"
+    bpy.ops.object.modifier_apply(modifier=sm2.name)
+    print(f"  腕を均す({ARM_IT}回): 上腕の太さ {w0:.2f} → {arm_width():.2f}cm")
+
 # 単色マテリアルを付ける
 mat = bpy.data.materials.new("skin"); mat.use_nodes = True
 bsdf = next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')

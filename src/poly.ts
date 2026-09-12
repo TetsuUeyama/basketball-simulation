@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v18";
+const BUILD = "v19";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -467,8 +467,8 @@ async function load(): Promise<void> {
 
 function buildUI(): void {
   const bf = select("素体");
-  for (const [v, l] of [["player_flat.glb", "のっぺらぼう 75,366三角形（頭をリメッシュ）"],
-                        ["player_flat_low.glb", "のっぺらぼう＋間引き 26,378三角形"],
+  for (const [v, l] of [["player_flat.glb", "のっぺらぼう 76,017三角形"],
+                        ["player_flat_low.glb", "のっぺらぼう＋間引き 26,600三角形"],
                         ["player.glb", "元モデル（実写調）89,368三角形"]] as const) {
     const o = document.createElement("option"); o.value = v; o.textContent = l; bf.appendChild(o);
   }
