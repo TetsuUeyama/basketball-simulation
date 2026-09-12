@@ -58,10 +58,18 @@ def crease(centres, r=0.028):
     if not out: return (0.0, 0.0, 0)
     return out[len(out)//2], out[int(len(out)*0.95)], len(out)
 
-def fill_and_blend(vset, blend):
+def fill_and_blend(_unused, blend):
+    """頭まわりの穴を**全部**塞ぐ。
+       ⚠️ 頂点グループ(Head の重み>0.5)で絞ってはいけない。穴の縁には顎や首寄りの
+          頂点が混ざるので取りこぼす（実測: 出力 GLB に頭の高さで 282 本残っていた）。
+          **ワールド座標の高さ**で拾う。首から下は Y_MIN より下なので巻き込まない。"""
+    Y_MIN = 1.45   # これより上を「頭」とみなす(m)
     bm = bmesh.new(); bm.from_mesh(mesh.data); bm.verts.ensure_lookup_table()
+    mw = mesh.matrix_world
+    def wy(v):
+        return (mw @ v.co).z
     edges = [e for e in bm.edges if len(e.link_faces) == 1
-             and all(v.index in vset for v in e.verts)]
+             and all(wy(v) > Y_MIN for v in e.verts)]
     rest = set(edges); loops = []
     while rest:
         e0 = rest.pop(); lp = [e0]; st = [e0]
@@ -71,47 +79,22 @@ def fill_and_blend(vset, blend):
                 for e2 in v.link_edges:
                     if e2 in rest: rest.discard(e2); lp.append(e2); st.append(e2)
         loops.append(lp)
-    co = [mesh.data.vertices[i].co for i in vset]
-    c = sum(co, Vector()) / len(co)
-    picked, centres = [], []
+    made = []; centres = []
     for lp in loops:
         vs = {v for e in lp for v in e.verts}
-        pts = [v.co for v in vs]
-        size = max((max(p[k] for p in pts) - min(p[k] for p in pts)) for k in range(3)) * S
-        if size < 0.30:
-            picked.append(lp); centres.append(sum(pts, Vector()) / len(pts))
-    made = []
-    for lp in picked:
-        made += bmesh.ops.holes_fill(bm, edges=lp, sides=200).get("faces", [])
+        centres.append(sum((v.co for v in vs), Vector()) / len(vs))
+        made += bmesh.ops.holes_fill(bm, edges=lp, sides=400).get("faces", [])
     if made:
-        bmesh.ops.triangulate(bm, faces=[f for f in made if f.is_valid and len(f.verts) > 3])
-        # ⚠️ 蓋は頂点が少なく平らなので、そのままだと縁に折れ目が残る。
-        #    細分してから、蓋と**その周りごと**動かして段差を均す。
+        good = [f for f in made if f.is_valid and len(f.verts) > 3]
+        if good: bmesh.ops.triangulate(bm, faces=good)
         cap_e = list({e for f in made if f.is_valid for e in f.edges})
-        if cap_e:
-            bmesh.ops.subdivide_edges(bm, edges=cap_e, cuts=2, use_grid_fill=True)
-        bm.verts.ensure_lookup_table()
-        # 段差取り: 蓋のまわり半径 r 内を、周囲を固定したまま Laplacian で均す
-        zone = [v for v in bm.verts
-                if any((v.co - ct).length * S < 0.030 for ct in centres)]
-        edgeset = {v.index for v in zone}
-        for _ in range(blend):
-            new = {}
-            for v in zone:
-                lk = [e.other_vert(v) for e in v.link_edges]
-                if not lk: continue
-                inner = sum(1 for o in lk if o.index in edgeset)
-                if inner == len(lk):        # 完全に内側 → よく動かす
-                    w = 1.0
-                elif inner == 0:            # 外側 → 動かさない
-                    continue
-                else:                        # 境目 → 半分
-                    w = 0.5
-                avg = sum((o.co for o in lk), Vector()) / len(lk)
-                new[v] = v.co.lerp(avg, w)
-            for v, p in new.items(): v.co = p
+        if cap_e: bmesh.ops.subdivide_edges(bm, edges=cap_e, cuts=2, use_grid_fill=True)
+    left = sum(1 for e in bm.edges if len(e.link_faces) == 1
+               and all(wy(v) > Y_MIN for v in e.verts))
     bm.to_mesh(mesh.data); bm.free(); mesh.data.update()
-    return len(picked), centres
+    print(f"  頭の穴: ループ {len(loops)} 個を塞いだ → 残り {left} 本")
+    return len(loops), centres
+
 r0, a0 = rough(head_v), rough(arm_v)
 np_, centres = fill_and_blend(head_v, BLEND)
 c1m, c1, n1 = crease(centres)
@@ -125,6 +108,9 @@ def smooth(vset, name, it):
     m = mesh.modifiers.new(name, 'SMOOTH'); m.factor = 1.0; m.iterations = it; m.vertex_group = name
     bpy.ops.object.modifier_apply(modifier=m.name)
 smooth(head_v, "fFace", FACE_IT); smooth(arm_v, "fArm", ARM_IT)
+# 顔を滑らかな面へ寄せる。
+# ⚠️ 「出っ張りを押し込む」だけでは足りない。まぶたや唇は**へこみ**なので、
+#    外へも引き出さないと溝が残る（＝隙間に見える）。楕円面へ両方向に寄せる。
 if CLAMP > 0:
     co = [mesh.data.vertices[i].co for i in head_v]
     c = sum(co, Vector()) / len(co)
@@ -132,11 +118,31 @@ if CLAMP > 0:
     ry = max(abs(v.y-c.y) for v in co) or 1e-6
     rz = max(abs(v.z-c.z) for v in co) or 1e-6
     ts = sorted((((v.x-c.x)/rx)**2 + ((v.y-c.y)/ry)**2 + ((v.z-c.z)/rz)**2)**0.5 for v in co)
-    fq = ts[int(len(ts)*0.88)]; rx, ry, rz = rx*fq, ry*fq, rz*fq
+    fq = ts[int(len(ts)*0.75)]
+    rx, ry, rz = rx*fq, ry*fq, rz*fq
+    mw = mesh.matrix_world
+    dev0, dev1 = [], []
     for i in head_v:
-        v = mesh.data.vertices[i]; d = v.co - c
+        v = mesh.data.vertices[i]
+        d = v.co - c
         t = ((d.x/rx)**2 + (d.y/ry)**2 + (d.z/rz)**2)**0.5
-        if t > 1.0: v.co = c + d * (1.0/t*CLAMP + (1-CLAMP))
+        if t < 1e-6: continue
+        w = mw @ v.co
+        # 顔（前面かつ目から口の高さ）は強く、それ以外は弱く寄せる
+        cw = mw @ c
+        # 前後: 顔の前面で1、後頭部で0。高さ: 目〜口の帯で1、そこから外れると0。
+        fw = max(0.0, min(1.0, (cw.y - w.y) / max(1e-6, ry * S * 0.8)))
+        hw = max(0.0, min(1.0, (w.z - 1.52) / 0.10)) * max(0.0, min(1.0, (1.80 - w.z) / 0.10))
+        g = fw * fw * (3 - 2 * fw) * (hw * hw * (3 - 2 * hw))   # なめらかな重み
+        k = CLAMP * (0.30 + 0.70 * g)
+        dev0.append(abs(t - 1.0))
+        v.co = c + d * (1.0 / t * k + (1 - k))
+        d2 = v.co - c
+        t2 = ((d2.x/rx)**2 + (d2.y/ry)**2 + (d2.z/rz)**2)**0.5
+        dev1.append(abs(t2 - 1.0))
+    import statistics as _st
+    print(f"  楕円面からのずれ 中央 {_st.median(dev0)*100:.1f}% → {_st.median(dev1)*100:.1f}%"
+          f" / 最大 {max(dev0)*100:.0f}% → {max(dev1)*100:.0f}%")
 c2m, c2, _ = crease(centres)
 def left_holes(vset):
     bm = bmesh.new(); bm.from_mesh(mesh.data)
