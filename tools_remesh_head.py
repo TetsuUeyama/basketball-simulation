@@ -92,6 +92,11 @@ def _bb(o):
             min(c.y for c in co), max(c.y for c in co),
             min(c.z for c in co), max(c.z for c in co))
 B0 = _bb(head)
+def _w_at(o, z, tol=0.01):
+    co = [o.matrix_world @ v.co for v in o.data.vertices if abs((o.matrix_world @ v.co).z - z) < tol]
+    return (max(c.x for c in co) - min(c.x for c in co)) if co else 0.0
+W0_SKULL = _w_at(head, 1.745)
+W_SEAM = _w_at(head, 1.63)      # 接合の高さでの元の太さ
 interior(head, "リメッシュ前"); slit(head, "リメッシュ前")
 # ⚠️ 切り出した頭は下（首）が開いた殻。開いたままリメッシュすると殻の裏面が残り、
 #    「奥に隠れた面」として数えられてしまう。先に首を塞いで中身のある形にする。
@@ -111,29 +116,46 @@ m = head.modifiers.new("re", 'REMESH')
 m.mode = 'VOXEL'; m.voxel_size = VOX / head.matrix_world.to_scale().x; m.adaptivity = 0.0
 bpy.ops.object.modifier_apply(modifier=m.name)
 print(f"  リメッシュ(ボクセル {VOX*1000:.0f}mm) → 三角形 {len(head.data.polygons)}")
-# ⚠️ リメッシュは角を丸めるので頭が縮む。元の寸法へ戻す（軸ごとに合わせる）。
-def bbox(o):
-    co = [o.matrix_world @ v.co for v in o.data.vertices]
-    return (min(c.x for c in co), max(c.x for c in co),
-            min(c.y for c in co), max(c.y for c in co),
-            min(c.z for c in co), max(c.z for c in co))
-b1 = bbox(head)
-sx = (B0[1]-B0[0]) / max(1e-6, b1[1]-b1[0])
-sy = (B0[3]-B0[2]) / max(1e-6, b1[3]-b1[2])
-sz = (B0[5]-B0[4]) / max(1e-6, b1[5]-b1[4])
-cx0, cy0 = (B0[0]+B0[1])/2, (B0[2]+B0[3])/2
+# ⚠️ **境界箱で合わせてはいけない**。境界箱は耳で決まるが、リメッシュは耳を丸めて
+#    縮める。その縮みを埋めようと全体を引き伸ばすと、頭蓋が太る
+#    （実測: 1.72〜1.78m が元より 0.9〜1.3cm 太くなっていた）。
+#    耳の無い高さ（頭蓋の上部）の幅で、一様に合わせる。
+def width_at(o, z, tol=0.01):
+    co = [o.matrix_world @ v.co for v in o.data.vertices if abs((o.matrix_world @ v.co).z - z) < tol]
+    return (max(c.x for c in co) - min(c.x for c in co)) if co else 0.0
+W_REF = 1.745   # 耳より上（頭蓋）
+w_before = W0_SKULL
+w_after = width_at(head, W_REF)
+k = (w_before / w_after) if w_after > 1e-6 else 1.0
+cen = sum((v.co for v in head.data.vertices), mathutils.Vector()) / len(head.data.vertices)
+zlo = min((head.matrix_world @ v.co).z for v in head.data.vertices)
 mwi = head.matrix_world.inverted()
 for v in head.data.vertices:
     w = head.matrix_world @ v.co
-    v.co = mwi @ mathutils.Vector((
-        cx0 + (w.x - (b1[0]+b1[1])/2) * sx,
-        cy0 + (w.y - (b1[2]+b1[3])/2) * sy,
-        B0[4] + (w.z - b1[4]) * sz))      # 下端(切った高さ)は動かさない
+    v.co = mwi @ mathutils.Vector((w.x * k, w.y * k, zlo + (w.z - zlo) * k))
 head.data.update()
-b2 = bbox(head)
-print(f"  寸法あわせ: 幅 {(b1[1]-b1[0])*100:.1f}→{(b2[1]-b2[0])*100:.1f}cm"
-      f" / 高さ {(b1[5]-b1[4])*100:.1f}→{(b2[5]-b2[4])*100:.1f}cm"
-      f" (元 {(B0[1]-B0[0])*100:.1f} / {(B0[5]-B0[4])*100:.1f}cm)")
+print(f"  頭蓋の幅で合わせる: {w_after*100:.1f} → {width_at(head, W_REF)*100:.1f}cm (元 {w_before*100:.1f}cm) 倍率 {k:.3f}")
+# ⚠️ 接合部の段差を消す。体側は Z_DEL まで元のジオメトリが残るので、
+#    新しい頭がそこで細いと 1.3cm の段差になる（実測: 1.62m 11.5cm → 1.64m 12.6cm、
+#    元は 13.9cm）。接合の高さで元の太さに合わせ、上へ向かって元に戻す。
+def _orig_w(z, tol=0.008):
+    co = [body.matrix_world @ v.co for v in body.data.vertices
+          if abs((body.matrix_world @ v.co).z - z) < tol]
+    return (max(c.x for c in co) - min(c.x for c in co)) if co else 0.0
+Z_SEAM, Z_FREE = Z_DEL, Z_DEL + 0.07
+w_need = W_SEAM                      # 接合の高さでの元の太さ（削る前に控えた値）
+w_now = width_at(head, Z_SEAM)
+if w_need > 1e-6 and w_now > 1e-6:
+    r = w_need / w_now
+    mwi2 = head.matrix_world.inverted()
+    for v in head.data.vertices:
+        w = head.matrix_world @ v.co
+        t = (w.z - Z_SEAM) / max(1e-6, Z_FREE - Z_SEAM)
+        t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+        e = 1.0 + (r - 1.0) * (1.0 - t * t * (3 - 2 * t))     # 接合で r、上で 1
+        v.co = mwi2 @ mathutils.Vector((w.x * e, w.y * e, w.z))
+    head.data.update()
+    print(f"  接合部を合わせる: {w_now*100:.1f} → {width_at(head, Z_SEAM)*100:.1f}cm (元 {w_need*100:.1f}cm)")
 interior(head, "リメッシュ後"); slit(head, "リメッシュ後")
 # ⚠️ リメッシュで頂点ウェイトが消える。元のメッシュから最近傍で移す。
 for vg in body.vertex_groups:
