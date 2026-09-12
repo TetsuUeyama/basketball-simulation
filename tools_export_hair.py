@@ -6,7 +6,9 @@ A = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OUTDIR = A[0]; RATIO = float(A[1]) if len(A) > 1 else 1.0; SUF = A[2] if len(A) > 2 else ""
 PICK = ["Man_Hair_001","Man_Hair_010","Man_Hair_030","Man_Hair_050",
         "Man_Hair_070","Man_Hair_090","Man_Hair_110","Man_Hair_130"]
-HEAD_W = 0.155   # 頭の幅の目安(m)。帯の幅の中央値をここへ合わせる
+# ⚠️ 実際の頭の幅に合わせること。ずれると髪だけ小さく/大きく見える。
+# のっぺらぼう素体の頭幅を実測したら 17.0cm だった（player_flat.glb, y>1.60 の x 幅）。
+HEAD_W = 0.170   # 頭の幅の目安(m)。帯の幅の中央値をここへ合わせる
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.fbx(filepath=r"C:/Users/user/Downloads/hair/Man_Hair_Collection_fbx/Man_Hair_Collection.fbx")
 keep = []

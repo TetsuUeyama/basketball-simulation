@@ -186,12 +186,16 @@ if av and ARM_IT > 0:
     bpy.ops.object.modifier_apply(modifier=sm2.name)
     print(f"  腕を均す({ARM_IT}回): 上腕の太さ {w0:.2f} → {arm_width():.2f}cm")
 
-# 単色マテリアルを付ける
-mat = bpy.data.materials.new("skin"); mat.use_nodes = True
-bsdf = next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
-bsdf.inputs["Base Color"].default_value = (0.80, 0.62, 0.50, 1.0)
-bsdf.inputs["Roughness"].default_value = 0.9
-head.data.materials.clear(); head.data.materials.append(mat)
+# ⚠️ 頭に**新しいマテリアルを作らない**。体の face と別マテリアルになると
+#    別プリミティブに分かれ、陰影も継ぎ目も変わって「顔だけ貼り付けた」ように見える。
+#    体が既に持っている face マテリアルをそのまま使う。
+face_mat = next((m for m in bpy.data.materials if m.name.lower() == "face"), None)
+head.data.materials.clear()
+if face_mat: head.data.materials.append(face_mat)
+# 面を滑らかに（リメッシュ直後は角ばって見える）
+bpy.context.view_layer.objects.active = head
+bpy.ops.object.shade_smooth()
+
 # 体側も肌を単色に
 for mm in bpy.data.materials:
     if mm.name.lower() in ("torso", "arms legs", "face"):
