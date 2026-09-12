@@ -116,46 +116,46 @@ m = head.modifiers.new("re", 'REMESH')
 m.mode = 'VOXEL'; m.voxel_size = VOX / head.matrix_world.to_scale().x; m.adaptivity = 0.0
 bpy.ops.object.modifier_apply(modifier=m.name)
 print(f"  リメッシュ(ボクセル {VOX*1000:.0f}mm) → 三角形 {len(head.data.polygons)}")
-# ⚠️ **境界箱で合わせてはいけない**。境界箱は耳で決まるが、リメッシュは耳を丸めて
-#    縮める。その縮みを埋めようと全体を引き伸ばすと、頭蓋が太る
-#    （実測: 1.72〜1.78m が元より 0.9〜1.3cm 太くなっていた）。
-#    耳の無い高さ（頭蓋の上部）の幅で、一様に合わせる。
+# 大きさ合わせ。
+# ⚠️ 幅で合わせてはいけない。境界箱の幅は**耳**で決まるが、リメッシュは耳を丸めて
+#    縮めるので、それを埋めようとすると頭蓋が太る（実測 +1.3cm）。
+#    固定の高さで幅を測る方式も、縦に縮むと測る場所がずれて二重に効く（実測 -4.3cm）。
+#    **接合部から頭頂までの高さ**で一様に合わせる。これはずれない。
+H0 = B0[5] - Z_DEL                     # 元の頭の高さ（接合部〜頭頂）
+h_now = max((head.matrix_world @ v.co).z for v in head.data.vertices) - Z_DEL
+# ⚠️ 狙いは 0.95（ユーザーがページで確認した値）。ただし後工程（接合部の均し）で
+#    縮むので逆算する。実測: 0.950→比0.918 / 0.983→比0.972。内挿して 0.970。
+HEAD_SCALE = 0.970
+k = (H0 * HEAD_SCALE) / h_now if h_now > 1e-6 else 1.0
+zlo2 = min((head.matrix_world @ v.co).z for v in head.data.vertices)
+mwi3 = head.matrix_world.inverted()
+for v in head.data.vertices:
+    w = head.matrix_world @ v.co
+    v.co = mwi3 @ mathutils.Vector((w.x * k, w.y * k, zlo2 + (w.z - zlo2) * k))
+head.data.update()
+h_new = max((head.matrix_world @ v.co).z for v in head.data.vertices) - Z_DEL
+print(f"  高さで合わせる: {h_now*100:.1f} → {h_new*100:.1f}cm (元 {H0*100:.1f}cm × {HEAD_SCALE}) 倍率 {k:.3f}")
+
 def width_at(o, z, tol=0.01):
     co = [o.matrix_world @ v.co for v in o.data.vertices if abs((o.matrix_world @ v.co).z - z) < tol]
     return (max(c.x for c in co) - min(c.x for c in co)) if co else 0.0
-W_REF = 1.745   # 耳より上（頭蓋）
-w_before = W0_SKULL
-w_after = width_at(head, W_REF)
-k = (w_before / w_after) if w_after > 1e-6 else 1.0
-cen = sum((v.co for v in head.data.vertices), mathutils.Vector()) / len(head.data.vertices)
-zlo = min((head.matrix_world @ v.co).z for v in head.data.vertices)
-mwi = head.matrix_world.inverted()
-for v in head.data.vertices:
-    w = head.matrix_world @ v.co
-    v.co = mwi @ mathutils.Vector((w.x * k, w.y * k, zlo + (w.z - zlo) * k))
-head.data.update()
-print(f"  頭蓋の幅で合わせる: {w_after*100:.1f} → {width_at(head, W_REF)*100:.1f}cm (元 {w_before*100:.1f}cm) 倍率 {k:.3f}")
-# ⚠️ 接合部の段差を消す。体側は Z_DEL まで元のジオメトリが残るので、
-#    新しい頭がそこで細いと 1.3cm の段差になる（実測: 1.62m 11.5cm → 1.64m 12.6cm、
-#    元は 13.9cm）。接合の高さで元の太さに合わせ、上へ向かって元に戻す。
-def _orig_w(z, tol=0.008):
-    co = [body.matrix_world @ v.co for v in body.data.vertices
-          if abs((body.matrix_world @ v.co).z - z) < tol]
-    return (max(c.x for c in co) - min(c.x for c in co)) if co else 0.0
-Z_SEAM, Z_FREE = Z_DEL, Z_DEL + 0.07
-w_need = W_SEAM                      # 接合の高さでの元の太さ（削る前に控えた値）
-w_now = width_at(head, Z_SEAM)
-if w_need > 1e-6 and w_now > 1e-6:
-    r = w_need / w_now
-    mwi2 = head.matrix_world.inverted()
+
+# ⚠️ 橋渡しの前に、頭の下端を**体の開口の太さ**へ合わせる。合わせないと漏斗のように
+#    すぼまって、繋いだ所に段差が出る（実測: 1.635m に 1.91cm の段差）。
+#    合わせる量は接合部でだけ効かせ、7cm 上では元の形へ戻す。
+w_open = W_SEAM                     # 体の開口（削る前に控えた元の太さ）
+w_head = width_at(head, Z_DEL)
+if w_open > 1e-6 and w_head > 1e-6:
+    r = w_open / w_head
+    mwi4 = head.matrix_world.inverted()
     for v in head.data.vertices:
         w = head.matrix_world @ v.co
-        t = (w.z - Z_SEAM) / max(1e-6, Z_FREE - Z_SEAM)
+        t = (w.z - Z_DEL) / 0.07
         t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-        e = 1.0 + (r - 1.0) * (1.0 - t * t * (3 - 2 * t))     # 接合で r、上で 1
-        v.co = mwi2 @ mathutils.Vector((w.x * e, w.y * e, w.z))
+        e = 1.0 + (r - 1.0) * (1.0 - t * t * (3 - 2 * t))
+        v.co = mwi4 @ mathutils.Vector((w.x * e, w.y * e, w.z))
     head.data.update()
-    print(f"  接合部を合わせる: {w_now*100:.1f} → {width_at(head, Z_SEAM)*100:.1f}cm (元 {w_need*100:.1f}cm)")
+    print(f"  下端を開口に合わせる: {w_head*100:.1f} → {width_at(head, Z_DEL)*100:.1f}cm (開口 {w_open*100:.1f}cm)")
 interior(head, "リメッシュ後"); slit(head, "リメッシュ後")
 # ⚠️ リメッシュで頂点ウェイトが消える。元のメッシュから最近傍で移す。
 for vg in body.vertex_groups:
@@ -229,11 +229,42 @@ for mm in bpy.data.materials:
             if lk.to_node == b2 and lk.to_socket.name == "Base Color": nt.links.remove(lk)
         b2.inputs["Base Color"].default_value = (0.80, 0.62, 0.50, 1.0)
         for n in [n for n in nt.nodes if n.type == 'TEX_IMAGE']: nt.nodes.remove(n)
+# ⚠️ 頭を「閉じた塊」として体に重ねると、継ぎ目が見えて**つぎはぎ**になる。
+#    頭の下側を接合の高さで切り落とし、体側の縁と**橋渡し(bridge)して一枚に繋ぐ**。
+bmh = bmesh.new(); bmh.from_mesh(head.data)
+mwh = head.matrix_world
+cut = [f for f in bmh.faces if (mwh @ f.calc_center_median()).z < Z_DEL]
+bmesh.ops.delete(bmh, geom=cut, context='FACES')
+bmh.to_mesh(head.data); bmh.free(); head.data.update()
 # 合体
 bpy.ops.object.select_all(action='DESELECT')
 head.select_set(True); body.select_set(True)
 bpy.context.view_layer.objects.active = body
 bpy.ops.object.join()
+# 二つの縁を橋渡しして一枚にする
+bmj = bmesh.new(); bmj.from_mesh(body.data)
+mwj = body.matrix_world
+ring = [e for e in bmj.edges if len(e.link_faces) == 1
+        and all(Z_DEL - 0.05 < (mwj @ v.co).z < Z_DEL + 0.05 for v in e.verts)]
+if ring:
+    try:
+        bmesh.ops.bridge_loops(bmj, edges=ring)
+        print(f"  橋渡し: 縁 {len(ring)} 本を繋いだ")
+    except Exception as ex:
+        print(f"  橋渡しできなかった: {ex}")
+left = sum(1 for e in bmj.edges if len(e.link_faces) == 1
+           and all(Z_DEL - 0.05 < (mwj @ v.co).z < Z_DEL + 0.05 for v in e.verts))
+print(f"  繋いだ後に残る縁 {left} 本")
+bmj.to_mesh(body.data); bmj.free(); body.data.update()
+# 継ぎ目の帯だけ均して段差を消す
+seam_v = [v.index for v in body.data.vertices
+          if Z_DEL - 0.05 < (mwj @ v.co).z < Z_DEL + 0.09]
+if seam_v:
+    vgs = body.vertex_groups.new(name="seam"); vgs.add(seam_v, 1.0, 'REPLACE')
+    bpy.context.view_layer.objects.active = body
+    sm3 = body.modifiers.new("ss", 'SMOOTH'); sm3.factor = 1.0
+    sm3.iterations = 30; sm3.vertex_group = "seam"   # ⚠️ 6 回では橋渡しの輪が残る
+    bpy.ops.object.modifier_apply(modifier=sm3.name)
 body.name = "bodyAll"
 if DEC > 0:
     bpy.context.view_layer.objects.active = body
