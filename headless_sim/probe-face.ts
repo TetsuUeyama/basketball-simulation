@@ -58,14 +58,32 @@ for (const file of process.argv.slice(2)) {
     console.log(`  ${nm}(y ${y0}〜${y1}・前面)の穴の辺 ${n} 本`);
   };
   box("目", 1.66, 1.72); box("口", 1.62, 1.67); box("頭ぜんぶ", 1.50, 1.90);
-  // 横顔: 中央付近の帯ごとに一番前へ出ている点
-  console.log("  横顔（中心 ±2cm の帯ごとの最前点 z）");
-  const rows: string[] = [];
-  for (let y = 1.56; y <= 1.80001; y += 0.02) {
-    const band = pt.filter((p) => Math.abs(p[0]) < 0.02 && p[1] >= y && p[1] < y + 0.02);
-    if (!band.length) continue;
-    const z = Math.max(...band.map((p) => p[2]));
-    rows.push(`${y.toFixed(2)}m:${(z*100).toFixed(1)}`);
+  // ⚠️ 中心の帯だけ見てはいけない。目は左右 3〜4cm にあるので、
+  //    中心だけだと鼻すじを測っているだけで目のくぼみを見逃す（実際に見逃した）。
+  //    顔全体を格子で見て、まわりより引っ込んでいる所を探す。
+  const GX = 15, GZ = 13;   // x: -7〜+7cm, z: 1.57〜1.75m
+  const depth: number[][] = Array.from({ length: GZ }, () => new Array<number>(GX).fill(NaN));
+  for (const p of pt) {
+    if (p[2] <= 0) continue;
+    const ix = Math.round((p[0] + 0.07) / 0.01);
+    const iz = Math.round((p[1] - 1.57) / 0.015);
+    if (ix < 0 || ix >= GX || iz < 0 || iz >= GZ) continue;
+    if (!(depth[iz][ix] > p[2])) depth[iz][ix] = p[2];
   }
-  console.log("    " + rows.join("  "));
+  console.log("  顔の深さ(cm) 左右 -7cm〜+7cm / 下から上へ");
+  for (let iz = 0; iz < GZ; iz++) {
+    const row = depth[iz].map((v) => isNaN(v) ? "  - " : (v * 100).toFixed(1).padStart(4)).join("");
+    console.log(`   ${(1.57 + iz * 0.015).toFixed(3)}m ${row}`);
+  }
+  // まわりより引っ込んでいる量（くぼみ）
+  let worst = 0, wx = 0, wz = 0;
+  for (let iz = 1; iz < GZ - 1; iz++) for (let ix = 1; ix < GX - 1; ix++) {
+    const c = depth[iz][ix];
+    const n = [depth[iz-1][ix], depth[iz+1][ix], depth[iz][ix-1], depth[iz][ix+1]];
+    if (isNaN(c) || n.some(isNaN)) continue;
+    const d = (n.reduce((a2, b2) => a2 + b2, 0) / 4) - c;
+    if (d > worst) { worst = d; wx = -7 + ix; wz = 1.57 + iz * 0.015; }
+  }
+  console.log(`  まわりより一番引っ込んでいる所 ${(worst * 1000).toFixed(1)}mm (x ${wx}cm, y ${wz.toFixed(3)}m)`);
+
 }

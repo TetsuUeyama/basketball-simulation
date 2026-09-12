@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v16";
+const BUILD = "v17";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -287,6 +287,9 @@ let mouthTex: DynamicTexture | null = null;
 // 位置は頭の補正ノードから見た相対（メートル）。形は下の4つで決まる。
 let mouthY = 0.08, mouthZ = 0.085, mouthPitch = 0, mouthRoll = 0;
 let mouthW = 0.050, mouthH = 0.022, mouthCurve = 0, mouthOpen = 0.35;
+// ⚠️ 既定は**出さない**。のっぺらぼうの顔に暗い楕円を乗せると「口が開いている」ように
+//    しか見えない（実際にそう報告された）。見たい時だけ出す。
+let mouthOn = false;
 const MT_W = 192, MT_H = 96;
 /**
  * 口の形を描き直す。⚠️ 元モデルに口のジオメトリは無い（顔テクスチャに描かれている）
@@ -325,6 +328,7 @@ function makeMouth(): void {
 }
 function placeMouth(): void {
   if (!mouth) return;
+  mouth.setEnabled(mouthOn);
   mouth.position.set(0, mouthY, mouthZ);
   mouth.scaling.set(mouthW, mouthH, 1);
   mouth.rotationQuaternion = Quaternion.RotationYawPitchRoll(Math.PI, mouthPitch, mouthRoll);
@@ -505,6 +509,16 @@ function buildUI(): void {
   box = ui;
 
   section("口（板を貼る ※元モデルに口は無い）", false);
+  {
+    const r = row("表示");
+    const b = document.createElement("button");
+    b.textContent = mouthOn ? "■ 消す" : "▶ 出す";
+    Object.assign(b.style, { background: "rgba(40,46,60,0.95)", color: "#fff",
+      border: "1px solid rgba(255,255,255,0.22)", borderRadius: "8px",
+      padding: "4px 8px", fontSize: "12px", cursor: "pointer" } as Partial<CSSStyleDeclaration>);
+    b.onclick = () => { mouthOn = !mouthOn; b.textContent = mouthOn ? "■ 消す" : "▶ 出す"; placeMouth(); };
+    r.appendChild(b);
+  }
   range("上下", -0.06, 0.18, 0.002, mouthY, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthY = v; placeMouth(); });
   range("前後", 0.0, 0.16, 0.002, mouthZ, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthZ = v; placeMouth(); });
   range("横幅", 0.02, 0.10, 0.002, mouthW, (v) => (v * 100).toFixed(1) + "cm", (v) => { mouthW = v; placeMouth(); });
