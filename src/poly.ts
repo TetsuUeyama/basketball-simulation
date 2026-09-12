@@ -109,7 +109,7 @@ Object.assign(infoEl.style, { fontSize: "11px", opacity: "0.85", whiteSpace: "pr
 //    エラーが画面に出ないまま「何も起きない」ように見える。
 ui.appendChild(infoEl);
 /** どの版が動いているかの目印。キャッシュかコードかを一発で見分けるため。 */
-const BUILD = "v11";
+const BUILD = "v13";
 
 // ───────────────────────── 読み込み ─────────────────────────
 let skel: Skeleton | null = null;
@@ -203,7 +203,10 @@ let boneScale = 1;
 let hairMesh: AbstractMesh | null = null;
 let hairFile = "hair_low.glb", hairPick = HAIRS[0];
 // 標準の位置。⚠️ 頭ボーンは後頭部寄りにあるので、そのままだと髪が下がって前へずれる。
+// ⚠️ 上下の既定は読み込み時に「頭ボーン→頭頂」の実測値(crownGap)を入れる。
+//    基準点が頭頂なので、そこへ置けば髪が頭に乗る。
 let hairScale = 1, hairUp = 0.10, hairFwd = 0.03;
+let hairUpSlider: HTMLInputElement | null = null;
 const HEAD_W = 0.19;   // 頭の幅の目安(m)。付けた後の実寸をここへ合わせる
 let hairFit = 1;
 
@@ -236,13 +239,11 @@ async function showHair(): Promise<void> {
   }
   m.setEnabled(true);
   hairMesh = m;
-  // ⚠️ 倍率は**付けた後の実寸**から出す。素材ごとに大きさが違ううえ、
-  //    親の行列も効くので、決め打ちだと合わない。
-  m.computeWorldMatrix(true);
-  m.refreshBoundingInfo({ applySkeleton: false });
-  const bb = m.getBoundingInfo().boundingBox;
-  const w = bb.maximumWorld.x - bb.minimumWorld.x;
-  hairFit = w > 1e-6 ? HEAD_W / w : 1;
+  // ⚠️ 基準点は書き出し時に「上から20%の帯の中心(x,y)・上端(z)」で**全髪型そろえて**
+  //    ある（tools_export_hair.py）。倍率も共通の1つを焼き込み済みなので、
+  //    ここで髪型ごとに measure して合わせ直してはいけない（大きさの差が消える）。
+  //    実測: 8種すべて上端が +0.0000m、幅は 0.171〜0.250m（髪型本来の差）。
+  hairFit = 1;
   placeHair();
   info = infoText();
 }
@@ -328,6 +329,39 @@ function placeMouth(): void {
   mouth.scaling.set(mouthW, mouthH, 1);
   mouth.rotationQuaternion = Quaternion.RotationYawPitchRoll(Math.PI, mouthPitch, mouthRoll);
 }
+// ───────────────────────── お面（顔の作り直し） ─────────────────────────
+// ⚠️ 元モデルの顔は写真テクスチャ＋細かい凹凸で、均しても「のっぺらぼう」にはならない。
+//    作り直すのではなく、**単純な曲面を被せる**（お面）。材質は髪と同じ素の
+//    StandardMaterial（テクスチャなし・光沢なし）にして質感を揃える。
+let mask: Mesh | null = null;
+let maskOn = true;
+let maskW = 0.155, maskH = 0.215, maskD = 0.105;   // 幅・高さ・奥行(m)
+let maskY = 0.03, maskZ = 0.005;                   // 頭ボーンから見た位置(m)
+let maskArc = 0.55, maskSlice = 0.80;              // 横の回り込み / 縦の切り取り
+function makeMask(): void {
+  mask?.dispose();
+  // 球の一部を切り出して曲面にする。arc=横の回り込み、slice=縦の切り取り。
+  mask = MeshBuilder.CreateSphere("mask", {
+    diameter: 1, segments: 24, arc: maskArc, slice: maskSlice,
+  }, scene);
+  const mm = new StandardMaterial("maskMat", scene);
+  mm.diffuseColor = new Color3(0.80, 0.62, 0.50);   // 肌色。テクスチャは貼らない
+  mm.specularColor = new Color3(0, 0, 0);           // 髪と同じく光沢なし
+  mm.backFaceCulling = false;
+  mask.material = mm;
+  if (hairNode) mask.parent = hairNode;
+  placeMask();
+}
+function placeMask(): void {
+  if (!mask) return;
+  mask.scaling.set(maskW, maskH, maskD);
+  mask.position.set(0, maskY, maskZ);
+  // 切り出した面が正面を向くように回す。⚠️ arc は +X から始まるので半分戻す。
+  mask.rotationQuaternion = Quaternion.RotationYawPitchRoll(
+    Math.PI * (0.5 - maskArc), 0, 0);
+  mask.setEnabled(maskOn);
+}
+
 function infoText(): string {
   const c = counts();
   const h = measuredHeight();
@@ -432,6 +466,7 @@ async function load(): Promise<void> {
     hairNode.parent = headNode;
     hairNode.scaling.setAll(1 / boneScale);
   }
+  makeMask();
   makeMouth();
   if (mouth && hairNode) mouth.parent = hairNode;
   placeMouth();
@@ -451,6 +486,7 @@ async function load(): Promise<void> {
       lo = Math.min(lo, bb.minimumWorld.y); hi = Math.max(hi, bb.maximumWorld.y);
     }
     crownGap = hi - boneY("Head");
+    hairUp = crownGap;   // 髪の基準点(頭頂)を頭のてっぺんへ
     soleGap = Math.min(boneY("LeftFoot"), boneY("RightFoot")) - lo;
   }
   const names = skel ? skel.bones.map((b) => b.name) : [];
@@ -490,8 +526,28 @@ function buildUI(): void {
   hs.value = HAIRS[0];
   hs.onchange = () => { hairPick = hs.value; void showHair(); };
   range("大きさ", 0.4, 2.0, 0.01, hairScale, (v) => v.toFixed(2) + "倍", (v) => { hairScale = v; placeHair(); });
-  range("上下", -0.05, 0.25, 0.005, hairUp, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairUp = v; placeHair(); });
+  hairUpSlider = range("上下", -0.05, 0.30, 0.005, hairUp, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairUp = v; placeHair(); });
   range("前後", -0.12, 0.18, 0.005, hairFwd, (v) => (v * 100).toFixed(1) + "cm", (v) => { hairFwd = v; placeHair(); });
+  box = ui;
+
+  section("お面（顔を被せる）", true);
+  {
+    const r = row("表示");
+    const b = document.createElement("button");
+    b.textContent = maskOn ? "■ 消す" : "▶ 出す";
+    Object.assign(b.style, { background: "rgba(40,46,60,0.95)", color: "#fff",
+      border: "1px solid rgba(255,255,255,0.22)", borderRadius: "8px",
+      padding: "4px 8px", fontSize: "12px", cursor: "pointer" } as Partial<CSSStyleDeclaration>);
+    b.onclick = () => { maskOn = !maskOn; b.textContent = maskOn ? "■ 消す" : "▶ 出す"; placeMask(); };
+    r.appendChild(b);
+  }
+  range("幅", 0.08, 0.26, 0.002, maskW, (v) => (v * 100).toFixed(1) + "cm", (v) => { maskW = v; placeMask(); });
+  range("高さ", 0.10, 0.34, 0.002, maskH, (v) => (v * 100).toFixed(1) + "cm", (v) => { maskH = v; placeMask(); });
+  range("奥行", 0.04, 0.22, 0.002, maskD, (v) => (v * 100).toFixed(1) + "cm", (v) => { maskD = v; placeMask(); });
+  range("上下", -0.10, 0.20, 0.002, maskY, (v) => (v * 100).toFixed(1) + "cm", (v) => { maskY = v; placeMask(); });
+  range("前後", -0.08, 0.12, 0.002, maskZ, (v) => (v * 100).toFixed(1) + "cm", (v) => { maskZ = v; placeMask(); });
+  range("横の回り込み", 0.25, 1.0, 0.01, maskArc, (v) => (v * 100).toFixed(0) + "%", (v) => { maskArc = v; makeMask(); });
+  range("縦の切り取り", 0.3, 1.0, 0.01, maskSlice, (v) => (v * 100).toFixed(0) + "%", (v) => { maskSlice = v; makeMask(); });
   box = ui;
 
   section("目（元モデルのジオメトリ）", false);
@@ -513,6 +569,7 @@ function buildUI(): void {
   range("傾き（横）", -0.6, 0.6, 0.01, mouthRoll, (v) => (v * 180 / Math.PI).toFixed(0) + "°", (v) => { mouthRoll = v; placeMouth(); });
   box = ui;
 
+  if (hairUpSlider) hairUpSlider.value = String(hairUp);
   void showHair();
 }
 
