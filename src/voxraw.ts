@@ -193,9 +193,9 @@ const JAW_PROFILE: Record<Exclude<JawShape, "normal">, {
   shorten: number;
 }> = {
   // 丸顔: 横を穏やかに落とし、底を丸め、いちばん短くする
-  round: { width: (t) => 1 - 0.31 * Math.pow(t, 1.4), depth: (t) => 1 - 0.28 * t * t * t, shorten: 0.022 },
+  round: { width: (t) => 1 - 0.34 * Math.pow(t, 1.0), depth: (t) => 1 - 0.55 * t * t, shorten: 0.055 },
   // 細あご: 横を強く落として V ライン。短縮は控えめ
-  narrow: { width: (t) => 1 - 0.50 * Math.pow(t, 1.1), depth: (t) => 1 - 0.34 * t * t * t, shorten: 0.015 },
+  narrow: { width: (t) => 1 - 0.85 * Math.pow(t, 0.8), depth: (t) => 1 - 0.30 * t * t, shorten: 0.012 },
 };
 
 /**
