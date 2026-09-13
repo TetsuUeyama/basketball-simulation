@@ -14,6 +14,7 @@ import {
   Skeleton, Bone, Matrix,
 } from "@babylonjs/core";
 import { buildRig, type RigHandle } from "@objcts/player/rig";
+import type { FaceLook } from "../../voxraw";
 import type { RestPose } from "@objcts/player/restPose";
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
 import {
@@ -393,6 +394,8 @@ export interface VoxelBodyOptions {
   hairNo: number;       // 髪型No（hair.json の元番号 1..140 / 0 = 髪なし）
   kit: VoxelKit;
   jerseyText: string;   // 背番号（審判は "R"）
+  /** 顔（あご・目・口）。生ボクセルの素体だけが使う。無ければ既定の顔。 */
+  face?: FaceLook;
 }
 
 export function buildVoxelBody(scene: Scene, parent: TransformNode, o: VoxelBodyOptions): VoxelBody {

@@ -5,6 +5,7 @@ import { ROSTER } from "../roster";
 import { playerLook } from "../objects/player/player-look";
 import { clamp } from "../util";
 import { UI, colorOf, POP_STATS, BTN_BG, NEUTRAL_GRAY, ELLIPSIS } from "./ui";
+import { handSummary } from "../poker/effects";
 
 declare module "./ui" {
   interface UI {
@@ -16,6 +17,7 @@ declare module "./ui" {
     makeFaceIcon(player: import("../objects/player/player").Player, posText: string): HTMLDivElement;
     updateIconRoles(game: Game): void;
     drawFace(canvas: HTMLCanvasElement, player: import("../objects/player/player").Player): void;
+    updateHandPills(game: Game): void;
     refreshPlayerBars(game: Game): void;
     updateIconStamina(game: Game): void;
     updateStatPops(game: Game): void;
@@ -95,6 +97,16 @@ UI.prototype.buildPlayerBars = function(): void {
         this.iconTabs[t].push(b);
         tabs.appendChild(b);
       });
+      // 役の札（タブの横）。ポーカーが確定したチームだけ出す（updateHandPill が中身を入れる）。
+      const pill = document.createElement("div");
+      Object.assign(pill.style, {
+        display: "none", alignItems: "center", gap: "5px", pointerEvents: "auto",
+        background: "rgba(20,24,34,0.9)", border: "1px solid " + colorOf(t),
+        borderRadius: "6px", padding: "2px 7px", fontSize: "10px", fontWeight: "800",
+        whiteSpace: "nowrap", color: "#fff",
+      } as Partial<CSSStyleDeclaration>);
+      this.handPills[t] = pill;
+      if (t === 0) tabs.appendChild(pill); else tabs.insertBefore(pill, tabs.firstChild);
 
       const row = document.createElement("div");
       Object.assign(row.style, { display: "flex", gap: "6px", touchAction: "pan-x" } as Partial<CSSStyleDeclaration>);
@@ -147,6 +159,33 @@ UI.prototype.makeFaceIcon = function(player: import("../objects/player/player").
     Object.assign(canvas.style, { width: "42px", height: "42px", display: "block" } as Partial<CSSStyleDeclaration>);
     this.drawFace(canvas, player);
     face.appendChild(canvas);
+
+    // ポーカーで能力が動いた選手は顔の縁を光らせて一目で分かるようにする。
+    // ⚠️ 強化(+)だけでなく妨害(-)も出す。相手に削られたことも同じ場所で分かるように。
+    // ⚠️ 役の効果はチーム全員に乗るので、ここで数えると全員光って目印にならない。
+    //    個人に置かれた札（捨て札）ぶんだけを見る。チーム全体の強化は役の札で出す。
+    const bonus = this.game?.poker?.bonusOf(player.team, player.idx, "discard") ?? 0;
+    if (bonus !== 0) {
+      const up = bonus > 0;
+      const col = up ? "255,206,92" : "255,110,110";
+      const ring = (a: number, blur: number, spread: number): string =>
+        "0 0 0 1px rgba(" + col + "," + a + "), 0 0 " + blur + "px " + spread + "px rgba(" + col + "," + a + ")";
+      face.style.border = "2px solid rgb(" + col + ")";
+      face.style.boxShadow = ring(0.55, 10, 2);
+      face.animate(
+        [{ boxShadow: ring(0.35, 6, 1) }, { boxShadow: ring(0.8, 14, 4) }, { boxShadow: ring(0.35, 6, 1) }],
+        { duration: 2200, iterations: Infinity, easing: "ease-in-out" },
+      );
+      // 動いた量のバッジ（顔の左下）
+      const tag = document.createElement("div");
+      tag.textContent = (up ? "+" : "") + bonus;
+      Object.assign(tag.style, {
+        position: "absolute", left: "2px", top: "32px", height: "13px", lineHeight: "13px",
+        padding: "0 3px", fontSize: "9px", fontWeight: "800", borderRadius: "4px",
+        color: "#10131a", background: "rgb(" + col + ")", zIndex: "2",
+      } as Partial<CSSStyleDeclaration>);
+      wrap.appendChild(tag);
+    }
 
     wrap.appendChild(face);
 
@@ -206,6 +245,35 @@ UI.prototype.makeFaceIcon = function(player: import("../objects/player/player").
     wrap.appendChild(rolePill);
     this.iconRole.set(player, rolePill);
     return wrap;
+};
+
+  /**
+   * コート/ベンチの横に、確定した役とチーム強化の中身を出す。
+   * ⚠️ 出すのは**確定したあと**だけ（`rank` が入るのは確定の瞬間）。未確定の手を覗ける
+   *    ようにすると、ホームが持つ「公開のタイミングを決める権利」が意味を失う。
+   */
+UI.prototype.updateHandPills = function(game: Game): void {
+    const m = game.poker;
+    for (let t = 0; t < 2; t++) {
+      const pill = this.handPills[t];
+      if (!pill) continue;
+      const rank = m?.teams[t].rank ?? null;
+      if (!rank) { pill.style.display = "none"; pill.dataset.k = ""; continue; }
+      const key = rank.name + "|" + handSummary(rank);
+      pill.style.display = "flex";
+      if (pill.dataset.k === key) continue;      // 変化なし → DOM への書き込みを飛ばす
+      pill.dataset.k = key;
+      pill.replaceChildren();
+      const name = document.createElement("span");
+      name.textContent = rank.name;
+      Object.assign(name.style, { color: colorOf(t) } as Partial<CSSStyleDeclaration>);
+      const eff = document.createElement("span");
+      eff.textContent = handSummary(rank);
+      Object.assign(eff.style, {
+        fontSize: "9px", fontWeight: "700", color: "rgb(120,225,140)",
+      } as Partial<CSSStyleDeclaration>);
+      pill.append(name, eff);
+    }
 };
 
   // 毎フレーム: 攻撃中はオフェンスロール（チームカラー）、守備中は守備ロールを表示する。
@@ -336,7 +404,10 @@ UI.prototype.refreshPlayerBars = function(game: Game): void {
       const key = `${this.showBench[t] ? "B" : "C"}:`
         + list.map((p) => {
           const d = ROSTER[t]?.[p.idx];
-          return `${p.idx}:${p.name}:${p.slot}:${d?.evalRole ?? ""}:${d?.defRole ?? ""}:${d?.choiceRank ?? ""}`;
+          // ⚠️ ポーカーの増減もキーに入れる。入れないと、クォーター間で強化が乗っても
+          //    アイコンが作り直されず、光が付かない／古い値のままになる。
+          const pk = this.game?.poker?.bonusOf(t, p.idx, "discard") ?? 0;
+          return `${p.idx}:${p.name}:${p.slot}:${d?.evalRole ?? ""}:${d?.defRole ?? ""}:${d?.choiceRank ?? ""}:${pk}`;
         }).join(",");
       if (key === this.iconKey[t]) continue;
       this.iconKey[t] = key;

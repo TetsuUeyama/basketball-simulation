@@ -39,7 +39,7 @@ export function makeDefFromDb(p: DbPlayer): PlayerDef {
     abilities: ABILITY_META.filter((_, b) => mask & (1 << b)).map((m) => m.key),
     hand: hand === "L" ? "L" : "R",
     future: { stability: extras[0] ?? 0, offhandAcc: extras[1] ?? 0, offhandFreq: extras[2] ?? 0 },
-    look: look ? resolveLook(look) : playerLook(name),   // DBのlook番号→見た目（無ければ名前フォールバック）
+    look: look ? resolveLook(look, name) : playerLook(name),   // DBのlook番号→見た目（無ければ名前フォールバック）
   };
 }
 

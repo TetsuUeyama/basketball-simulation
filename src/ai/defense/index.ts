@@ -82,7 +82,7 @@ export function runDefenseDuringDeadish(game: Game, dt: number, offTeam = game.p
     const mw = walk(man);
     const mx = mw ? mw.tx : man.pos.x, mz = mw ? mw.tz : man.pos.z;
     // アウトレット/スローインはビッグが自陣へ全力で戻る場面
-    if (!mw && getBackOnDefense(game, dt, d, man)) continue;
+    if (!mw && getBackOnDefense(game, dt, d, man, offTeam)) continue;
     // 非脅威(アーク付近の非シューター)はアーク内(リムから約5m)まで下がってゾーンを守る。
     // ペイント/得点圏の脅威か本物のシューターのみ 1.5m でタイトに付く。
     const mRim = Math.hypot(mx - protect.x, mz - protect.z);

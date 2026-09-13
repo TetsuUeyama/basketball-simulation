@@ -39,6 +39,7 @@ export class InboundSystem {
     const tp = g.teamPlayers(team);
     const taker = nearestOf(tp, (p) => Math.abs(p.pos.z - baselineZ))!;
     taker.pos.set(rand(-2, 2), 0, sign * (COURT.halfL + OOB_OUTSET)); // エンドライン後方
+    taker.oobGraceT = 20;   // 投げ終わるまで外に居てよい。⚠️ 引き戻すとワープになる
     g.handler = taker;
     g.ballMode = "inbound";
     this.t = 2.4;   // ゴール後、インバウンダーが持って投げ入れるまでの時間
@@ -114,6 +115,7 @@ export class InboundSystem {
     const g = this.game;
     const taker = this.oobWalker ?? g.teamPlayers(this.oobTeam)[0];
     taker.pos.set(this.oobSpot.x, 0, this.oobSpot.z);
+    taker.oobGraceT = 20;   // ⚠️ 投げ終わるまで引き戻さない（ワープ防止）
     g.handler = taker;
     g.lastTouch = taker;
     g.possession = this.oobTeam;

@@ -172,10 +172,19 @@ export class PokerMatch {
     this.applied = [];
   }
 
-  /** その選手がポーカーで受けた強化の合計（HUD 表示用）。 */
-  bonusOf(team: number, idx: number): number {
+  /**
+   * その選手がポーカーで受けた増減の合計（HUD 表示用）。
+   * `source` を指定するとその種類だけ数える。
+   * ⚠️ 役(hand)の効果は**チーム13人全員**に乗るので、合計で見ると全員が光ってしまい
+   *    目印にならない（実測: 26人中 23.0人）。個人の強化を見せたいときは "discard" を指定する。
+   */
+  bonusOf(team: number, idx: number, source?: AppliedDelta["source"]): number {
     let sum = 0;
-    for (const d of this.applied) if (d.team === team && d.idx === idx) sum += d.amount;
+    for (const d of this.applied) {
+      if (d.team !== team || d.idx !== idx) continue;
+      if (source && d.source !== source) continue;
+      sum += d.amount;
+    }
     return sum;
   }
 }

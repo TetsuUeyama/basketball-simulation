@@ -81,9 +81,18 @@ export function rimFinishOutcome(
   // ジャンプ+ヘッドで叩き込めるか、バランスで体を割ってダンクできるか
   const athletic = rate(h.attr.jump) * 0.5 + rate(h.attr.dunk) * 0.3 + rate(h.attr.balance) * 0.2;
   const lane = dDef > 1.1 || (rate(h.attr.balance) > 0.65 && dDef > 0.6);
+  // ダンクを選ぶこと自体は運動能力で決まる（跳べるなら跳ぶ）。
   const dunk = lane && chance(0.06 + athletic * 0.7);
-  // ダンクはヘッド、レイアップはS精度、S威力が接触を突いてフィニッシュ
-  let p = dunk ? 0.82 + rate(h.attr.dunk) * 0.15 : 0.5 + rate(h.attr.midAcc) * 0.35;
+  // 役割分担:
+  //   ・**素の決定力 = シュート精度**（ダンクでもレイアップでも）。フリーなら決まるもの。
+  //     ⚠️ 以前のダンクは 0.82 + ダンク能力×0.15 で**シュート精度を一切見なかった**。
+  //        跳べない精度型がダンクを選ぶと精度が結果に出ない（実測: 運動能力 55〜70 の
+  //        選手でも 50% がダンクを選んでいた）。
+  //     ⚠️ フリーのレイアップは 0.5 + 精度×0.35 では上手い選手でも 85% 止まりで、
+  //        「フリーなのに外す」絵になっていた。
+  //   ・**ダンク能力 = 競られても決め切る強さ**。下の接触の罰をここで減らす（ダンカーの優位性）。
+  //   ダンクは構えが要らないぶん素の決定力が少し高く、精度の効きは小さい。
+  let p = (dunk ? 0.78 : 0.62) + rate(h.attr.midAcc) * (dunk ? 0.20 : 0.33);
   // 逆サイドのレイアップは逆手フィニッシュ — 逆手精度(2..8)で綺麗に、片手選手は落とす（ダンクは両手で対象外）
   if (!dunk && h.driveSide === -h.strongSide()) {
     p -= (1 - h.offhandAcc / 8) * 0.1;
@@ -92,7 +101,11 @@ export function rimFinishOutcome(
   // コンテストの質は位置＋体格で決まる（リム保護ビッグは壁、スイッチしたガードは邪魔にならない）。
   const near = ctx.nearestDef;
   const contestQ = near ? clamp(1 + rimProtect(near, h), 0.5, 1.6) : 1;
-  p -= clamp(1.1 - dDef, 0, 1.0) * 0.42 * (1 - strong * 0.7) * contestQ;
+  // ⚠️ ここがダンカーの優位性。接触されても・手が伸びてきても決め切る強さは
+  //    **ダンク能力 + S威力**。ダンクを選んだかではなく、その能力そのもので効かせる
+  //    （精度型はフリーなら決めるが、競られると落ちる。ダンカーは競られても落ちない）。
+  const through = rate(h.attr.dunk) * 0.6 + strong * 0.4;
+  p -= clamp(1.1 - dDef, 0, 1.0) * 0.42 * (1 - through * 0.78) * contestQ;
   // マークを突いてフィニッシュ — 守備が付いている時だけ効き、密着度でスケール（75が中立）。
   const mark = clamp((1.5 - dDef) / 1.5, 0, 1);   // 0 オープン .. 1 密着
   p += (rate(h.attr.offense) - 0.75) * 1.6 * mark;

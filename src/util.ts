@@ -19,7 +19,23 @@ export function dist2DTo(a: Vector3, x: number, z: number): number {
 }
 
 /** `cur` を `(tx,tz)` へ、XZ平面上で最大 `maxStep` だけ動かす。cur を変更する。 */
+// ⚠️ 一時的な調査用。原因が分かったら消す。どのコードがどこへ動かしたかを記録する。
+type MoveLog = { tx: number; tz: number; step: number; site: string };
+export const MOVE_LOG = new Map<Vector3, MoveLog[]>();
+/** site:true のときだけ呼び出し元を取る（スタック取得は重い。目標だけなら false）。 */
+export const MOVE_TRACE = { on: false, site: true };
 export function moveToward2D(cur: Vector3, tx: number, tz: number, maxStep: number): void {
+  if (MOVE_TRACE.on) {
+    // ⚠️ スタック取得は重い。呼び出し元が要らない計測では site:false にすること。
+    let site = "";
+    if (MOVE_TRACE.site) {
+      const st = (new Error().stack ?? "").split("\n")[2] ?? "";
+      site = (/[\w.-]+\.(ts|mjs):\d+/.exec(st) ?? ["?"])[0];
+    }
+    let a = MOVE_LOG.get(cur);
+    if (!a) { a = []; MOVE_LOG.set(cur, a); }
+    a.push({ tx, tz, step: maxStep, site });
+  }
   const dx = tx - cur.x;
   const dz = tz - cur.z;
   const d = Math.hypot(dx, dz);

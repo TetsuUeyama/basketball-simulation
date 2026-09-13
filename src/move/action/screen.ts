@@ -5,6 +5,7 @@ import { rate, clamp, chance, rand, dist2D, moveToward2D } from "../../util";
 import { bestOpenSpot } from "../../ai/offense/offball/spots";
 import { resolveScreenCoverage } from "../reaction/screen";
 import type { Game } from "../../game";
+import { arcCap } from "../../ai/offense/reads";
 
 // チーム内でスクリーン中の人数
 export function countScreening(game: Game, team: number): number {
@@ -83,7 +84,10 @@ export function endScreen(game: Game, p: Player, connected: boolean): void {
   if (canPop && chance(0.6)) {
     const dir = -game.attackSign(p.team);              // ミッドコート方向
     const px = clamp(p.pos.x + p.screenSide * 1.5, -6.5, 6.5);
-    p.offTarget.set(px, 0, rim.z + dir * 7.2);          // 3Pレンジへ
+    // ⚠️ アークの外へは出さない。px が広いと rim.z+7.2 では リムから 9.7m になり、
+    //    3Pラインの 3m 外で立ち止まることになる（オフェンスの基準線は 3Pライン）。
+    const pop = arcCap(game, p.team, px, rim.z + dir * 7.2);
+    p.offTarget.set(pop.x, 0, pop.z);
     p.openRollT = 2.0;                                  // ポップアウト移動中もフィード対象
   } else {
     p.offTarget.set(rim.x + rand(-0.6, 0.6), 0, rim.z - Math.sign(rim.z) * 0.4);   // リムへロール

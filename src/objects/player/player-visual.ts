@@ -45,6 +45,7 @@ Player.prototype.ensureVoxel = function(): void {
         skin: this.look.skin,
         hair: this.look.hair,
         hairNo: this.look.hairNo,
+        face: this.look.face,
         kit: { top: u.top, bottom: u.bottom, shoes: u.shoes },
         jerseyText: this.jerseyText,
       });

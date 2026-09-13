@@ -95,6 +95,11 @@ Player.prototype.tickCooldown = function(dt: number): void {
   if (this.landT > 0) this.landT = Math.max(0, this.landT - dt);
   if (this.rootT > 0) this.rootT = Math.max(0, this.rootT - dt);
   if (this.shakeOpenT > 0) this.shakeOpenT = Math.max(0, this.shakeOpenT - dt);
+  if (this.oobGraceT > 0) this.oobGraceT = Math.max(0, this.oobGraceT - dt);
+  if (this.transitT > 0) this.transitT = Math.max(0, this.transitT - dt);
+  if (this.frontedT > 0) this.frontedT = Math.max(0, this.frontedT - dt);
+  if (this.denyT > 0) this.denyT = Math.max(0, this.denyT - dt);
+  if (this.backdoorT > 0) this.backdoorT = Math.max(0, this.backdoorT - dt);
   if (this.shakeT > 0) this.shakeT = Math.max(0, this.shakeT - dt);
   if (this.quickT > 0) this.quickT = Math.max(0, this.quickT - dt);
   if (this.baitT > 0) this.baitT = Math.max(0, this.baitT - dt);
@@ -168,6 +173,7 @@ Player.prototype.tickMotion = function(dt: number, resting: boolean): void {
   if (dt > 0) {
     const moved = Math.hypot(this.pos.x - this.prevX, this.pos.z - this.prevZ);
     this.curSpd = Math.min(moved / dt, 12);
+    this.stillT = this.curSpd < 0.4 ? this.stillT + dt : 0;
     this.velX = (this.pos.x - this.prevX) / dt;
     this.velZ = (this.pos.z - this.prevZ) / dt;
     // 動き直し: 動きながらの急な方向転換はプラント&再プッシュの一拍を要する

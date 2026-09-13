@@ -2,7 +2,7 @@
 // 逃がし所、パス先候補、レーンの開き。ここから他のオフェンスモジュールを import しない。
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../objects/player/player";
-import { COURT, INBOUNDS_INSET, MAX_PASS } from "../../config";
+import { COURT, INBOUNDS_INSET, MAX_PASS, THREE_DIST } from "../../config";
 import { clamp, dist2D, dirTo2D, segPerp } from "../../util";
 import { laneVetoed, passRisk } from "../../move/reaction/pass-risk";
 import type { Game } from "../../game";
@@ -42,6 +42,25 @@ export function trapReliever(game: Game, team: number): Player | null {
 
 // 救済役がフラッシュする先: 2人のトラッパーから離れた側のオープンな床。
 // 中央寄りに寄せ、フロントコート/インバウンズ内に保つ。
+/**
+ * 攻撃の立ち位置を**3Pライン付近まで**に収める。
+ * ⚠️ オフェンスの基準線は 3Pライン。ここより遠くに立っても攻撃の役に立たないので、
+ *    どんな都合（スペーシング/釣り出し/ポップ）でもこの外側へは置かない。
+ *    ⚠️ 基準はハーフウェイではなく**リムからの距離**。ハーフウェイを基準にすると、
+ *    攻めるゴールが遠い側のスポットだけが外へ流れて配置が崩れる。
+ * 戻り値はリム方向へ引き戻した点。
+ */
+export function arcCap(
+  game: Game, team: number, x: number, z: number, max = THREE_DIST + 0.6,
+): { x: number; z: number } {
+  const rim = game.attackFloor(team);
+  const dx = x - rim.x, dz = z - rim.z;
+  const d = Math.hypot(dx, dz);
+  if (d <= max || d < 1e-4) return { x, z };
+  const k = max / d;
+  return { x: rim.x + dx * k, z: rim.z + dz * k };
+}
+
 export function trapReliefSpot(game: Game, h: Player): Vector3 {
   const opps = game.teamPlayers(1 - h.team)
     .map((d) => ({ d, dd: dist2D(d.pos, h.pos) }))

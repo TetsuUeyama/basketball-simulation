@@ -39,8 +39,15 @@ export function denySmother(game: Game, h: Player, dDef: number): boolean {
 
 // トランジション — まず戻る: 上に残っていた守備者が担当より先に自陣へ全力で戻る。ビッグはリム最優先。
 // このフレームの移動を処理したら true。
-export function getBackOnDefense(game: Game, dt: number, d: Player, man: Player): boolean {
-  const s = game.attackSign(game.possession);  // 守備の自陣: z*s > 0
+export function getBackOnDefense(
+  game: Game, dt: number, d: Player, man: Player, offTeam = game.possession,
+): boolean {
+  // ⚠️ 攻撃側は**呼び出し元から受け取る**こと。game.possession を直に見てはいけない。
+  //    交代中(ballMode "subs")は possession がまだ切り替わっておらず、呼び出し元だけが
+  //    次に攻めるチーム(game.subOffense)を知っている。ここで possession を見ると、
+  //    「自陣へ戻る」目標だけが逆向きになり、マークの目標と1フレームおきに入れ替わって
+  //    選手がセンター付近でその場足踏みになる（実測: 目標 z が +6.0 と -6.9 で毎フレーム交代）。
+  const s = game.attackSign(offTeam);          // 守備の自陣: z*s > 0
   const upCourt = d.pos.z * s < 0.5;           // まだハーフを越えていない
   const manBack = man.pos.z * s < 0.5;         // …担当も
   // 取り残された: (a) ボールが自分より自陣リム寄り＝抜かれてボールの後ろに取り残された、または
@@ -50,6 +57,7 @@ export function getBackOnDefense(game: Game, dt: number, d: Player, man: Player)
   const offMan = dist2D(d.pos, man.pos) > 5;
   const stranded = upCourt && (behindBall || offMan);   // バックコート側に取り残された時だけ(ハーフコートの通常守備では発火しない)
   if (game.isBig(d) && (upCourt || manBack || stranded)) {
+    d.transitT = 0.2;   // 戻っている間は守備の構えをやめて全力疾走の向きで走る
     const depth = d.role === "C" ? 1.6 : 3.0;
     const tz = s * (RIM.z - depth);
     const gb = game.steerAround(d, 0, tz);   // 体を避けて全力で戻る
@@ -58,6 +66,7 @@ export function getBackOnDefense(game: Game, dt: number, d: Player, man: Player)
     return true;
   }
   if (upCourt || stranded) {
+    d.transitT = 0.2;
     const gb = game.steerAround(d, man.pos.x * 0.4, s * (RIM.z - 7));
     moveToward2D(d.pos, gb.x, gb.z, d.accelToward(dt, gb.x, gb.z, 1.12) * dt);
     game.clampCourt(d.pos);

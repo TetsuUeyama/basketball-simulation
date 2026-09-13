@@ -50,6 +50,8 @@ import { benchSeat, seatOnBench, updateBenchCheer } from "./core/bench";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "./roster";
 import { TACTICS, AbilityKey } from "./attributes";
 import type { PokerMatch } from "./poker/state";
+import { updateAttention, attnFactor } from "./ai/attention";
+import { LOOSE_BLIND } from "./config";
 
 export type BallMode = "held" | "charge" | "pass" | "shot" | "loose" | "inbound" | "tipoff" | "freethrow" | "pause" | "subs" | "finale";
 
@@ -337,22 +339,35 @@ export class Game {
     // ⚠️ 中を空けるための配置。実測でペイント内に守備が平均 1.60 人居座り、ゴール下の
     //    試投が 6.4 本/試合しか出ていなかった。外の4人をさらに広げ、内は**1人だけ**に
     //    して、ゴール下へ入れる道を作る。もう1人のビッグはショートコーナーへ出す。
+    // ⚠️ ペリメーターの4人は**3Pライン(6.75m)のすぐ上**に置く。以前はリムから
+    //    7.4〜8.1m＝ラインの 0.65〜1.37m 外側に立っており、「アークに近づかない」絵になっていた。
+    // ⚠️ コーナーは x=±7.3 だった。コートのクランプは ±7.0 なので**届かないスポット**で、
+    //    サイドラインに張り付いたまま押し続ける原因でもあった（実測: 8試合で 87回・最長 12.5秒）。
     return [
-      // ペリメーターのスポットはアークの外側に張る。コート幅を目一杯使う。
-      new Vector3(0, 0, hz + dir * 7.6),     // トップ
-      new Vector3(-6.4, 0, hz + dir * 5.0),  // 左ウイング
-      new Vector3(6.4, 0, hz + dir * 5.0),   // 右ウイング
-      // ディープコーナー: ベースライン近くのコーナースリー（サイドライン際）
-      new Vector3(-7.3, 0, hz + dir * 1.2),  // 左コーナー
-      new Vector3(7.3, 0, hz + dir * 1.2),   // 右コーナー
+      new Vector3(0, 0, hz + dir * 7.0),     // トップ（リムから 7.0m）
+      new Vector3(-5.6, 0, hz + dir * 4.2),  // 左ウイング（7.0m）
+      new Vector3(5.6, 0, hz + dir * 4.2),   // 右ウイング（7.0m）
+      // ディープコーナー: ベースライン近くのコーナースリー（サイドラインの内側に収める）
+      new Vector3(-6.85, 0, hz + dir * 1.15),  // 左コーナー（6.95m）
+      new Vector3(6.85, 0, hz + dir * 1.15),   // 右コーナー（6.95m）
       // 中は1人だけ。もう1人はショートコーナーへ出してヘルプを引き出す。
       new Vector3(-2.6, 0, hz + dir * 1.3),  // 左ローブロック（ダンカースポット）
       new Vector3(6.2, 0, hz + dir * 0.9),   // 右ショートコーナー（中を空ける）
     ];
   }
 
+  /**
+   * コートの外へ出ないように収める。
+   * ⚠️ **わざとライン外に立たせた選手（スローインの投げ手など）をここで引き戻さない**。
+   *    引き戻すと 1フレームで 80cm 飛ぶ（実測: z 14.30 → 13.50）。ワープになる。
+   *    `oobGraceT` の間は素通しし、猶予が切れる頃には AI の目標（コート内）へ
+   *    自分の足で戻っているようにする。
+   */
   clampCourt(p: Vector3): void {
     if (this.saveBy && p === this.saveBy.pos) return;   // セーブ中はライン外へ出てよい
+    for (const q of this.players) {
+      if (q.pos === p) { if (q.oobGraceT > 0) return; break; }
+    }
     const mw = COURT.halfW - COURT.margin;
     const ml = COURT.halfL - COURT.margin;
     p.x = clamp(p.x, -mw, mw);
@@ -546,6 +561,7 @@ export class Game {
       }
       // スローイン役(ウイング)はセンターラインのアウトオブバウンズに立つ
       offense[2].pos.set(-(COURT.halfW + OOB_OUTSET), 0, 0); // センターライン、左サイドライン
+      offense[2].oobGraceT = 20;   // 投げ終わるまでライン外に居てよい（throwIn が 1.2 に縮める）
     }
     const taker = offense[2];
     this.handler = taker;
@@ -679,6 +695,9 @@ export class Game {
       p.tickMotion(dt, resting);   // 実速度を計測、疲労のドレイン/回復
       p.updateLegs(dt);            // 計測速度から歩き/走りの脚サイクル
     }
+    // 注目（誰を見ているか）を決める。⚠️ AI が動いたあと＝位置が確定したあとに呼ぶ。
+    //    見た目（顔の向き）と、見ていないものへの反応の鈍りの両方がこれを見る。
+    updateAttention(this, dt);
     // ベンチは座って回復し、ボールを見る（歓声中/交代歩行中を除く）
     if (this.ballMode !== "finale") {   // フィナーレが全員をフロア外で管理する
       for (let t = 0; t < 2; t++) {
@@ -915,7 +934,13 @@ export class Game {
     //    動き出す頃にはボールがリムの高さから立ちリーチの下まで落ちきっていて、
     //    「跳んで確保する」場面が構造的に起きない（実測: 4試合 22 回のリバウンドで踏み切り 3 回）。
     const antic = this.looseIsRebound ? 0.3 : 1;
-    for (const p of this.players) p.looseReactT = reactionLag(p) * antic;
+    // ⚠️ 見ていなかった方向でこぼれた球には気づくのが遅れる（注目システム）。
+    //    ボールを見ていれば等倍、背中側で 1.33 倍の遅れ。⚠️ 1.8 倍にすると 50-50 の球を
+    //    見ていない側が取り切れず、8試合で得点が 17.1 → 13.4 まで落ちた（強すぎ）。
+    for (const p of this.players) {
+      const seen = attnFactor(p, this.ball.pos.x, this.ball.pos.z);
+      p.looseReactT = reactionLag(p) * antic * (1 + (1 - seen) * LOOSE_BLIND);
+    }
   }
 
   // ミス後、ボールはリムに跳ねてライブになる(updateLoose 参照)。
@@ -1038,6 +1063,9 @@ export class Game {
 
   // スローイン役が受け手へボールを入れる。捕球でプレーがライブになる。
   throwIn(inb: Player): void {
+    // ⚠️ 投げ終わったら自分の足でコートへ入る。ここで位置を戻すとワープになる
+    //    （実測: x -7.8 → -7.0 の 80cm 飛び）。猶予の間はクランプを素通しさせる。
+    inb.oobGraceT = 1.2;
     const r = this.inbound.receiver ?? this.inbound.pickReceiver(inb);
     const from = inb.chestFront(BALL_HOLD);      // 体の中からでなく手元(胸の前)から放つ
     this.passFrom.set(from.x, 1.3, from.z);

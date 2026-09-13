@@ -7,7 +7,14 @@ import { RIM, THREE_DIST, PALM_HITBOX, SHOT_SET_Y, SHOT_GATHER_Y, BUZZER_WINDOW 
 import { rate, clamp, dist2D, moveToward2D, chance, rand } from "../../util";
 import { shotWindupFor, defHands, leapHeight } from "../../eval";
 import { jumpShotMakeProbability, rimFinishOutcome } from "../reaction/shot-outcome";
-import { bestBlocker, evadeBlockProbability } from "../reaction/contest-block";
+import { bestBlocker, evadeBlockProbability, behindFoulChance } from "../reaction/contest-block";
+
+/**
+ * tryBlock の結果。
+ *  clean=完全に叩き落とした（スワット）/ foul=背後から手が出て腕を叩いた
+ *  どちらでもない＝手は当たったがコースを乱しただけ（外れてリバウンドになる）。
+ */
+export type BlockHit = { def: Player; foul: boolean; clean: boolean };
 import { shootingFoulChance } from "../reaction/foul";
 import { endQuarter } from "../../core/gameflow";
 import { swishNet, flashScore, flashBall } from "../../core/visuals";
@@ -341,9 +348,15 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
     // ミドル/ゴール下のジャンプシュートも、レイアップ/ダンク同様に S技術 で
     // ブロックをかわして打てる（3Pは対象外）。
     const blocker = tryBlock(game, h, false, !isThree);
-    if (blocker) { swatShot(game, h, blocker); return; }
-    grazeShot(game, h);   // かすり: 手が触れれば軌道が乱れて外れる(スワットには至らない部分接触)
-    if (tryShootingFoul(game, h, dDef, false)) return;
+    // 完全に叩き落とせた時だけスワット。届いただけの手はコースを乱す(外れてリバウンドへ)。
+    if (blocker?.clean) { swatShot(game, h, blocker.def); return; }
+    // 背後のファウル: 決まっていれば AND-1(下へ進む)、外れていればフリースローへ。
+    if (blocker?.foul && tryShootingFoul(game, h, dDef, false, { force: true, by: blocker.def })) return;
+    if (blocker) disturbShot(game, h, blocker.def, false);
+    else {
+      grazeShot(game, h);   // かすり: 手が触れれば軌道が乱れて外れる(部分接触)
+      if (tryShootingFoul(game, h, dDef, false)) return;
+    }
 
     // リリースは頭上やや前（利き手を前へ伸ばして放つ）。⚠️ 高さは**今ボールがある所**から。
     // 溜めが完了していれば既に頭上(SHOT_RELEASE_Y)まで上がっている。急ぎ撃ちで上げ切って
@@ -395,8 +408,12 @@ export function finishAtRim(game: Game, h: Player, dDef: number): void {
     game.lastTouch = h;   // シューターが最後に触れた(エアボールで外へ → 相手ボール)
     game.evadedFinish = false;
     const blocker = tryBlock(game, h, true);
-    if (blocker) { swatShot(game, h, blocker); return; }
-    if (tryShootingFoul(game, h, dDef, true)) return;
+    // 完全に叩き落とせた時だけスワット。届いただけの手はコースを乱す(リムに嫌われて外れる)。
+    if (blocker?.clean) { swatShot(game, h, blocker.def); return; }
+    // 背後のファウル: 決まっていれば AND-1(下へ進む)、外れていればフリースローへ。
+    if (blocker?.foul && tryShootingFoul(game, h, dDef, true, { force: true, by: blocker.def })) return;
+    if (blocker) disturbShot(game, h, blocker.def, true);
+    else if (tryShootingFoul(game, h, dDef, true)) return;
 
     // リリース高さ。確保したボールがまだ手元へ収まっていない(空中/pickup中)プットバックは
     // 今ボールがある高さから運ぶ — 掴んだ球を踏み切り高さへ落とさない。
@@ -468,11 +485,11 @@ export function contestJump(game: Game, shooter: Player): void {
   // 守判断 で挑まれる。跳ぶのは最も止められるショットブロッカー。
   // evadeOK: シューターが S技術 でブロックをかわせるか(ダブルクラッチ)。
   // フィニッシュとアーク内のジャンプショットは可能、3Pは不可。
-export function tryBlock(game: Game, shooter: Player, isFinish: boolean, evadeOK = isFinish): Player | null {
+export function tryBlock(game: Game, shooter: Player, isFinish: boolean, evadeOK = isFinish): BlockHit | null {
     // ブロック確率の算出は効果層(resolution/contest-block)へ分離。ここでは最も
     // 止められる守備者と確率を受け取り、抽選と状態変更(evade/jump/shotMade)を行う。
     const cand = bestBlocker(game.teamPlayers(1 - shooter.team), shooter, isFinish,
-      game.shotWindup, PALM_HITBOX);
+      game.shotWindup, PALM_HITBOX, game.attackFloor(shooter.team));
     if (!cand || !chance(cand.p)) return null;
     const best = cand.def;
     // イベイド（ダブルクラッチ）: フィニッシュ限定 — 伸びてきたブロックの手を
@@ -495,14 +512,20 @@ export function tryBlock(game: Game, shooter: Player, isFinish: boolean, evadeOK
         return null;
       }
     }
-    return best;
+    // 背後から伸びた手はボールより先に腕に当たる — クリーンなブロックでなくファウル。
+    return {
+      def: best,
+      clean: chance(cand.clean),
+      foul: chance(behindFoulChance(best, cand.behind)),
+    };
   }
 
   // かすり: フルブロック(スワット)には至らないが、伸ばした手がシュートに触れる部分接触。触れると
   // 軌道が乱れて外れる(当たり具合=ずれ幅はランダム)。ブロックより起こりやすく、跳んで手を出して
   // いれば更に触れやすい。3P/ミドル共通。releaseShot が tryBlock の後に呼ぶ。
 export function grazeShot(game: Game, h: Player): void {
-    const cand = bestBlocker(game.teamPlayers(1 - h.team), h, false, game.shotWindup, PALM_HITBOX);
+    const cand = bestBlocker(game.teamPlayers(1 - h.team), h, false, game.shotWindup,
+      PALM_HITBOX, game.attackFloor(h.team));
     if (!cand) return;
     // ブロック(スワット)より起きやすいが、ブロック判定に続けて掛かるので過剰にならない程度に。
     const pGraze = clamp(cand.p * 1.0 + (cand.def.airborne ? 0.06 : 0.02), 0, 0.5);
@@ -510,6 +533,17 @@ export function grazeShot(game: Game, h: Player): void {
       game.shotMade = false;                 // かすったら外れる
       game.shotGraze = 0.5 + rand(0, 1.0);   // 当たり具合(軌道のずれ幅)。aimShotTarget が消費
     }
+  }
+
+  // 完全には叩けなかった手 — ボールに触れてシュートコースを乱す。
+  // ⚠️ ブロック(スワット)との違い: 所有は移らず、ボールはリムへ飛んで外れる＝リバウンドになる。
+  //    実際のバスケットでも「跳んで手を出した」の大半はブロックでなくこれ。
+export function disturbShot(game: Game, h: Player, d: Player, isFinish: boolean): void {
+    game.shotMade = false;
+    // ジャンパーは軌道をずらす(aimShotTarget が消費)。リム下は shotTarget がリム固定なので
+    // 触らない — ずらすと次のジャンパーへ持ち越してしまう。
+    if (!isFinish) game.shotGraze = 0.5 + rand(0, 1.0);
+    if (!d.airborne) game.contestLeap(d, h.pos, 0.9, 0.55);
   }
 
   // シュートがはたかれる: ブロッカーが跳び、ボールはリムでルーズになる。
@@ -563,10 +597,12 @@ export function swatShot(game: Game, shooter: Player, blocker: Player): void {
 
   // シュートはファウルされたか？ コンテストされたレイアップほど接触が起きやすい。
   // その場合、シューターをラインへ送る(シュートが決まっていれば AND-1)。
-export function tryShootingFoul(game: Game, h: Player, dDef: number, layup: boolean): boolean {
+export function tryShootingFoul(game: Game, h: Player, dDef: number, layup: boolean,
+  opts?: { force?: boolean; by?: Player },   // force=抽選せず必ずファウル / by=接触した守備者
+): boolean {
     // ファウル確率は効果層(resolution/foul)へ分離。od は下の突き飛ばし演出でも使う。
-    const od = game.onBallDefender(h);
-    if (!chance(shootingFoulChance(h, dDef, layup, od))) return false;
+    const od = opts?.by ?? game.onBallDefender(h);
+    if (!opts?.force && !chance(shootingFoulChance(h, dDef, layup, od))) return false;
 
     if (game.shotMade) {
       // AND-1: バスケットが決まる必要があるので打ち切らない。シュートを飛ばして沈め、

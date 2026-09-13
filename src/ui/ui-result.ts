@@ -187,7 +187,7 @@ UI.prototype.statsTable = function(game: Game, team: number): HTMLDivElement {
 UI.prototype.teamCompare = function(game: Game): HTMLDivElement {
     type S = import("../objects/player/stats").Stats;
     const total = (t: number): S => {
-      const a = { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, tov: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0, ftm: 0, fta: 0, min: 0 };
+      const a = { pts: 0, reb: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, tov: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0, ftm: 0, fta: 0, min: 0 };
       for (const pl of game.allPlayers(t)) for (const k in a) (a as any)[k] += (pl.stats as any)[k];
       return a;
     };
@@ -198,6 +198,8 @@ UI.prototype.teamCompare = function(game: Game): HTMLDivElement {
       { label: "FG", a: `${t0.fgm}/${t0.fga}${pct(t0.fgm, t0.fga)}`, b: `${t1.fgm}/${t1.fga}${pct(t1.fgm, t1.fga)}` },
       { label: "3P", a: `${t0.tpm}/${t0.tpa}${pct(t0.tpm, t0.tpa)}`, b: `${t1.tpm}/${t1.tpa}${pct(t1.tpm, t1.tpa)}` },
       { label: "FT", a: `${t0.ftm}/${t0.fta}${pct(t0.ftm, t0.fta)}`, b: `${t1.ftm}/${t1.fta}${pct(t1.ftm, t1.fta)}` },
+      { label: "OREB", a: `${t0.oreb}`, b: `${t1.oreb}` },
+      { label: "DREB", a: `${t0.dreb}`, b: `${t1.dreb}` },
       { label: "REB", a: `${t0.reb}`, b: `${t1.reb}` },
       { label: "AST", a: `${t0.ast}`, b: `${t1.ast}` },
       { label: "STL", a: `${t0.stl}`, b: `${t1.stl}` },

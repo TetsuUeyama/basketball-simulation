@@ -243,6 +243,14 @@ export function updateFacing(game: Game, dt: number): void {
         }
       }
       let aim: { x: number; z: number } = (p === game.handler || p === game.shooter) ? game.attackFloor(p.team) : b;
+      // ⚠️ 自陣へ全力で戻っている間は、胸もボールではなく**走る向き**へ向ける。
+      //    胸がボールを向いたままだと pickClip が後ろ歩き(backdash/sidestep)を選び、
+      //    中腰のままジリジリ戻る絵になる（遅く見える原因は速度ではなく向き）。
+      //    頭は注目システムのまま＝首だけボールを見ながら全力で走る。
+      if (p.transitT > 0 && !p.airborne) {
+        const sp0 = Math.hypot(p.velX, p.velZ);
+        if (sp0 > 0.6) aim = { x: p.pos.x + p.velX, z: p.pos.z + p.velZ };
+      }
       // 背負い(ポストアップ): 胸をリムと反対へ向ける=背中をリムへ。既存のバックペダル処理で
       // 脚も背中向きのままリムへ押し込む。狙いをリムの反対点に置き換えるだけで成立する。
       if (p === game.handler && p.postT > 0) {
@@ -276,8 +284,10 @@ export function updateFacing(game: Game, dt: number): void {
       //    焼き込んである。ここで胸をひねると二重に回るので何もしない。
       p.faceSmooth(lx, lz, turnRate * dt);                       // 下半身（脚／腰）
       p.twistToward(aim.x, aim.z, dt, undefined, turnRate * 1.25); // 上半身（胸）、少し速め
-      // 頭は注視対象（ボール、または攻めるリム）を胸の動きに重ねて追う
-      p.lookToward(aim.x, aim.z, dt, turnRate * 1.6);
+      // 頭は**注目システムが決めた対象**を追う（ボール/リム/自分のマーク）。
+      // ⚠️ 胸は aim（プレーの方向）、頭は gaze。両者が違うから「体は走りながら
+      //    首だけマークを見る」が出る。ここを aim に戻すと注目システムが見えなくなる。
+      p.lookToward(p.gazeX, p.gazeZ, dt, turnRate * 1.6);
     }
   }
 

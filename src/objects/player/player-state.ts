@@ -17,7 +17,7 @@ declare module "./player" {
 /** この選手のボックススコアとコンディションをゼロにする（試合開始）。 */
 Player.prototype.resetStats = function(): void {
   const s = this.stats;
-  s.pts = s.reb = s.ast = s.stl = s.blk = s.tov = s.fgm = s.fga = s.min = 0;
+  s.pts = s.reb = s.oreb = s.dreb = s.ast = s.stl = s.blk = s.tov = s.fgm = s.fga = s.min = 0;
   s.tpm = s.tpa = s.ftm = s.fta = 0;
   this.fatigue = 0;
   this.curSpd = 0;
@@ -43,7 +43,10 @@ Player.prototype.resetPose = function(): void {
   this.postT = 0;
   this.keepShieldT = 0; this.lean = 0;
   this.cutting = false; this.screening = false; this.benchClapT = 0;
-  this.shakeOpenT = 0; this.shakeT = 0;
+  this.shakeOpenT = 0; this.shakeT = 0; this.shakeCurve = 0;
+  this.trackOn = false;
+  this.oobGraceT = 0; this.transitT = 0; this.stillT = 0;
+  this.frontedT = 0; this.denyT = 0; this.backdoorT = 0; this.gazeSwitchT = 0;
   this.shootLoad = 0; this.shootLoadTarget = 0;   // シュート溜めの前傾/沈み込み
   this.gatherDeep = false;
   this.frontRunT = 0;                              // スローイン後の前進

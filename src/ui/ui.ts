@@ -82,6 +82,7 @@ export class UI {
   camHint!: HTMLDivElement;       // 「drag: orbit」ヒント — 左側で ☰ と同じ高さに保つ
   board!: HTMLDivElement;         // 中央寄せのスコアボード（その幅が ☰ の位置を決める）
   iconPanels: HTMLDivElement[] = []; // 2チームの顔アイコンパネル
+  handPills: HTMLDivElement[] = []; // ポーカーの役（コート/ベンチの横に出す）
   layoutMode = "";                // "desktop" | "phone" — リサイズ時に再計算
 
   phase: Phase = "pregame";
@@ -597,6 +598,8 @@ export class UI {
     { label: "FG", w: 48, get: (s) => `${s.fgm}/${s.fga}` },
     { label: "3P", w: 44, get: (s) => `${s.tpm}/${s.tpa}` },
     { label: "FT", w: 44, get: (s) => `${s.ftm}/${s.fta}` },
+    { label: "OR", w: 28, get: (s) => String(s.oreb) },
+    { label: "DR", w: 28, get: (s) => String(s.dreb) },
     { label: "REB", w: 34, get: (s) => String(s.reb) },
     { label: "AST", w: 34, get: (s) => String(s.ast) },
     { label: "STL", w: 34, get: (s) => String(s.stl) },
@@ -641,6 +644,7 @@ export class UI {
       this.refreshPlayerBars(game);
       this.updateIconStamina(game);
       this.updateIconRoles(game);
+      this.updateHandPills(game);
       this.updateStatPops(game);
     }
     this.scoreA.textContent = String(game.score[0]);

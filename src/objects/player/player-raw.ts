@@ -17,7 +17,8 @@ import {
 import type { StandardBoneName } from "@objcts/player/standardSkeleton";
 import type { RigHandle } from "@objcts/player/rig";
 import {
-  buildRawModelFrom, buildRawRig, preloadRawSource, type RawModel, type RawSource,
+  DEFAULT_FACE, buildRawModelFrom, buildRawRig, preloadRawSource,
+  type RawModel, type RawSource,
 } from "../../voxraw";
 import type { RGB } from "../../config";
 import type { BoneMap, VoxelBody, VoxelBodyOptions } from "./player-voxel";
@@ -399,6 +400,10 @@ export function buildRawVoxelBody(
   const pe = proto(scene, thickBucket(o.height, weightKg));
   if (!pe) return null;
   const pr = pe.model;
+  // ⚠️ 顔（あご・目・口）は選手ごと。あごが同じ選手は本体メッシュを共有し、
+  //    目・口の組み合わせごとに顔メッシュを作り置きする（voxraw の variant）。
+  const face = o.face ?? DEFAULT_FACE;
+  const fv = pr.variant(face);
 
   const root = new TransformNode(`rawvox_${o.name}`, scene);
   root.parent = parent;
@@ -477,6 +482,15 @@ export function buildRawVoxelBody(
   };
   for (const [part, src] of pr.byPart) {
     if (part.startsWith("hairstyle_")) continue;   // 髪型は下で選んだものだけ
+    // ⚠️ 元モデルの `hair` は**髪型を載せる基準点を測るためだけ**の部位。描くと髪型と
+    //    二重に生え、髪型No 0（髪なし）でも元の髪が残る。
+    //    （実測: hair は 28.1×30.0×31.9cm で、髪型001 の 30.0×37.5×33.8cm と同規模。
+    //      下端 z も 1.541 と髪型001 の 1.569 より低く、髪型の下から はみ出す。）
+    if (part === "hair") continue;
+    if (part.includes("@")) continue;          // あご別に作った髪型の控え
+    // 本体と顔は選手ごとの作り分けを使う
+    if (part === "body") { attach(part, fv.body); continue; }
+    if (part === "face") { if (fv.face) attach(part, fv.face); continue; }
     attach(part, src);
   }
 
@@ -509,14 +523,12 @@ export function buildRawVoxelBody(
     if (!name) return;
     let store = HAIR_PROTO.get(scene);
     if (!store) { store = new Map(); HAIR_PROTO.set(scene, store); }
-    let job = store.get(name);
+    // ⚠️ 髭のある髪型はあごの形に合わせて変形するので、**あごごとに別の控え**が要る。
+    const key = name + "@" + face.jaw;
+    let job = store.get(key);
     if (!job) {
-      job = pr.loadHair(name).then(() => {
-        const src2 = pr.byPart.get(name) ?? null;
-        src2?.setEnabled(false);         // 見本は描かない
-        return src2;
-      });
-      store.set(name, job);
+      job = pr.loadHair(name, face.jaw).then((m) => { m?.setEnabled(false); return m; });
+      store.set(key, job);
     }
     void job.then((src2) => {
       if (!src2 || hairWant !== name || root.isDisposed()) return;

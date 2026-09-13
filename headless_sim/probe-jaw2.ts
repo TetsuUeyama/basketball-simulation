@@ -42,11 +42,14 @@ function jawW(meshes: Mesh[], d: number): number {
   return (hi - lo) * 100;
 }
 for (const shape of ["normal", "round", "narrow"] as const) {
+  // ⚠️ 選手のあごは**選手自身の face**で決まる（見本の setJaw では変わらない）。
+  //    見本の setJaw は見本のメッシュだけを変える。両方を見て、食い違わないか確かめる。
   proto.setJaw(shape);
   const root = new TransformNode("p_" + shape, scene);
   const b = buildRawVoxelBody(scene, root, {
     name: "t_" + shape, balance: 50, height: H, weight: W,
     skin: LOOK.skin, hair: LOOK.hair, hairNo: 1, kit: KIT, jerseyText: "8",
+    face: { jaw: shape, eye: "up", eyeX: 0, eyeY: 0, mouth: "wide" },
   })!;
   // ⚠️ body（肌）だけで測る。シャツを入れると 0.22m の位置が襟＝肩幅になり、
   //    あごを測っているつもりで 18.8cm という別物を見ていた。

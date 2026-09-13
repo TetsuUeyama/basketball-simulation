@@ -5,6 +5,11 @@
 // - lookIndicesFromName / playerLook: DB未登録の選手（初期ダミー等）向けに、名前
 //   ハッシュから番号を導くフォールバック。playerdb への番号焼き込み生成にも使う。
 
+import {
+  DEFAULT_FACE, EYE_SHAPES, MOUTH_SHAPES,
+  type FaceLook, type JawShape,
+} from "../../voxraw";
+
 // 見た目の番号4つ組: [肌index, 髪色index, 髪型index(2Dアイコン用), 髪型No(3D用)]
 export type LookIdx = [number, number, number, number];
 
@@ -17,6 +22,8 @@ export type PlayerLook = {
   skinHex: string; hairHex: string;
   skin: { r: number; g: number; b: number }; hair: { r: number; g: number; b: number };
   style: number; hairNo: number;
+  /** 3Dの顔（あごの形・目の形と位置・口の形）。 */
+  face: FaceLook;
 };
 
 // ロスタースロットごとの手続き的な顔の見た目 — HUDの顔アイコン（2Dキャンバス）と
@@ -29,11 +36,48 @@ function hexRGB(h: string): { r: number; g: number; b: number } {
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
 }
 
-/** 見た目の番号4つ組 → 色/髪型（PlayerLook）。playerdb 由来の見た目はこの経路。 */
-export function resolveLook(idx: LookIdx): PlayerLook {
+// 顔のバリエーション。⚠️ 髪や肌と**同じハッシュの同じビット**を使わないこと。
+//    同じビットから採ると、髪型が同じ選手は顔も同じになって見分けが付かない。
+const JAW_LIST: JawShape[] = ["normal", "round", "narrow"];
+/** 目の位置の散らし方。形によっては升目からはみ出すが、貼るときに自動で抑える。 */
+const EYE_POS: [number, number][] = [
+  [0, 0], [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1],
+];
+
+/**
+ * 名前から3Dの顔を決める。名前が同じなら常に同じ顔（チームや並び順に依らない）。
+ * ⚠️ 名前が空（DB外のダミー等）のときは既定の顔にする。名前ハッシュが同じ値に
+ *    潰れて、全員同じ顔になるため。
+ */
+export function faceFromName(name: string): FaceLook {
+  const ov = FACE_OVERRIDE[name];
+  if (!name) return { ...DEFAULT_FACE };
+  const h = hashName(name + "#face");        // 髪・肌とは別の種
+  const pos = EYE_POS[(h >>> 11) % EYE_POS.length];
+  return {
+    jaw: JAW_LIST[h % JAW_LIST.length],
+    eye: EYE_SHAPES[(h >>> 4) % EYE_SHAPES.length],
+    eyeX: pos[0], eyeY: pos[1],
+    mouth: MOUTH_SHAPES[(h >>> 17) % MOUTH_SHAPES.length],
+    ...ov,
+  };
+}
+
+/** 選手ごとの顔のオーバーライド。名は playerdb と完全一致させること。 */
+const FACE_OVERRIDE: Record<string, Partial<FaceLook>> = {
+};
+
+/**
+ * 見た目の番号4つ組 → 色/髪型（PlayerLook）。playerdb 由来の見た目はこの経路。
+ * 顔は番号に入っていないので**名前から**決める（名前が無ければ既定の顔）。
+ */
+export function resolveLook(idx: LookIdx, name = ""): PlayerLook {
   const skinHex = SKIN_HEX[idx[0]] ?? SKIN_HEX[0];
   const hairHex = HAIR_HEX[idx[1]] ?? HAIR_HEX[0];
-  return { skinHex, hairHex, skin: hexRGB(skinHex), hair: hexRGB(hairHex), style: idx[2], hairNo: idx[3] };
+  return {
+    skinHex, hairHex, skin: hexRGB(skinHex), hair: hexRGB(hairHex),
+    style: idx[2], hairNo: idx[3], face: faceFromName(name),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -136,5 +180,5 @@ export function lookIndicesFromName(name: string): LookIdx {
 
 /** DB未登録の選手（初期ダミー等）向けフォールバック: 名前から見た目を導く。 */
 export function playerLook(name: string): PlayerLook {
-  return resolveLook(lookIndicesFromName(name));
+  return resolveLook(lookIndicesFromName(name), name);
 }

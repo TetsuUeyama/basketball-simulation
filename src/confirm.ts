@@ -18,7 +18,8 @@ import { catchBall, catchLabel } from "./animation/action/catch";
 // ⚠️ スティールは**試合と同じ関数・同じ定数**を使う。ここでいじった値がそのまま試合に出る。
 import { PUNCH } from "./animation/action/reach";
 import { STEAL, stepLunge, lungeWant } from "./ai/defense/vs-onball";
-import type { JawShape, RawModel } from "./voxraw";
+import { setMarkDebug } from "./voxraw";
+import type { EyeShape, MouthShape, JawShape, FaceLook, RawModel } from "./voxraw";
 // ⚠️ Player の各メソッドは副作用インポートで prototype に生える。1つでも欠けると
 //    sync() の途中で undefined を呼んで落ちる。ゲーム本体と同じ顔ぶれを読む。
 import "./objects/player/player-state";
@@ -311,22 +312,91 @@ const hairSel = select();
 hairSel.onchange = () => { showHair(Number(hairSel.value)); };
 row("髪型").appendChild(hairSel);
 
+
+/**
+ * 顔の指定を**その選手の look** へ書き込んで作り直す。
+ * ⚠️ 以前は voxraw のグローバル設定を書き替えていたが、顔は選手ごとの持ち物になったので
+ *    ここで選手の look を直に変える。試合で出るものと同じ経路。
+ */
+function setFace(patch: Partial<FaceLook>): void {
+  if (!player) return;
+  player.look.face = { ...player.look.face, ...patch };
+  player.rebuildVoxel();
+  if (hairNo) showHair(hairNo);
+  info = infoText();
+}
+
 const jawSel = select();
 for (const [v, label] of [["normal", "標準（モデルそのまま）"], ["round", "丸顔"], ["narrow", "細あご"]] as const) {
   const o = document.createElement("option");
   o.value = v; o.textContent = label;
   jawSel.appendChild(o);
 }
-jawSel.onchange = () => {
-  if (!proto || !player) return;
-  proto.setJaw(jawSel.value as JawShape);
-  // ⚠️ 選手のメッシュは見本のジオメトリを共有しているが、張り直すと別の実体に
-  //    なって繋がりが切れる。作り直して拾い直す。
-  player.rebuildVoxel();
-  if (hairNo) showHair(hairNo);
-  info = infoText();
-};
+jawSel.onchange = () => { setFace({ jaw: jawSel.value as JawShape }); };
 row("顔（あご）").appendChild(jawSel);
+
+// 目・口としてどのボクセルを指定しているかを見るための色分け。
+// ⚠️ 見た目の確認用。試合の色はこのチェックを外した状態。
+const markChk = document.createElement("input");
+markChk.type = "checkbox";
+markChk.onchange = () => {
+  setMarkDebug(markChk.checked);
+  setFace({});                 // 作り置きを作り直させる（setMarkDebug が世代を進める）
+};
+row("目口を色分け").appendChild(markChk);
+
+// 白目の半円の向き（上に曲線 / 下に曲線）。
+const eyeSel = select();
+for (const [v, label] of [
+  ["up", "半円・曲線が上（黒目2×2）"], ["down", "半円・曲線が下（黒目2×2）"],
+  ["rect", "長方形・四隅なし（黒目2×2）"],
+  ["upS", "半円・曲線が上（黒目1）"], ["downS", "半円・曲線が下（黒目1）"],
+  ["rectS", "長方形・四隅なし（黒目1）"],
+  ["inner", "内寄り（白2×2 / 虹彩4×2 / 白6×2）"],
+  ["tall", "縦長（縦6×横4・内側が虹彩）"],
+  ["innerO1", "内寄り・虹彩を外へ1"], ["innerO2", "内寄り・虹彩を外へ2"],
+  ["innerO4", "内寄り・虹彩を外へ4"], ["innerO6", "内寄り・虹彩を外へ6（端）"],
+] as const) {
+  const o2 = document.createElement("option");
+  o2.value = v; o2.textContent = label;
+  eyeSel.appendChild(o2);
+}
+eyeSel.onchange = () => { setFace({ eye: eyeSel.value as EyeShape }); };
+row("目の形").appendChild(eyeSel);
+
+// 口の形。
+const mouthSel = select();
+for (const [v, label] of [
+  ["wide", "太い横線"], ["line", "細い横一文字"], ["small", "小さい口"],
+  ["smile", "口角が上がる"], ["frown", "口角が下がる"], ["open", "開いた口"],
+] as const) {
+  const o3 = document.createElement("option");
+  o3.value = v; o3.textContent = label;
+  mouthSel.appendChild(o3);
+}
+mouthSel.onchange = () => { setFace({ mouth: mouthSel.value as MouthShape }); };
+row("口の形").appendChild(mouthSel);
+
+// 目の位置（升目の中でのずらし）。⚠️ x は**外向きが正**。左右の目は中心線から同じ位置に出る。
+let eyeX = 0, eyeY = 0;
+const posSel = (label: string, get: () => number, set: (v: number) => void): HTMLSelectElement => {
+  const sel = select();
+  for (let v = -2; v <= 2; v++) {
+    const o2 = document.createElement("option");
+    o2.value = String(v);
+    o2.textContent = v === 0 ? "0（中央）" : (v > 0 ? "+" : "") + v;
+    if (v === get()) o2.selected = true;
+    sel.appendChild(o2);
+  }
+  sel.onchange = () => {
+    set(Number(sel.value));
+    setFace({ eyeX, eyeY });
+  };
+  row(label).appendChild(sel);
+  return sel;
+};
+const eyeXSel = posSel("目の位置 外↔内", () => eyeX, (v) => { eyeX = v; });
+const eyeYSel = posSel("目の位置 上↔下", () => eyeY, (v) => { eyeY = v; });
 
 const hRow = row("身長");
 const hSlider = document.createElement("input");
@@ -419,6 +489,14 @@ async function load(): Promise<void> {
     }
     hairNo = p.look.hairNo;
   }
+  // 顔の選択肢を、いま見ている選手の顔に合わせる（DB が配った顔がそのまま出る）。
+  const f = p.look.face;
+  jawSel.value = f.jaw;
+  eyeSel.value = f.eye;
+  mouthSel.value = f.mouth;
+  eyeX = f.eyeX; eyeY = f.eyeY;
+  eyeXSel.value = String(f.eyeX);
+  eyeYSel.value = String(f.eyeY);
   camera.setTarget(new Vector3(0, p.height * 0.55, 0));
   camera.radius = p.height * 1.6;
   info = infoText();

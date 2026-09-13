@@ -252,106 +252,516 @@ function closeSeams(
 }
 
 /**
- * 顔（目・口）を**描いて**顔の表面に貼る。元モデル（function-lab の buildParts.mjs
- * `splitFace`）と同じ作り:
- *   目 … 白目 3×2 マス、黒目は上段の中央1マス。左右対称に2つ。
- *   口 … 横一文字。元は 2*HW マス（HW = 頭の幅/8 ≒ 2）×厚さ1段。
- * ⚠️ ボクセルは body の**縦横半分**（body 8.74mm に対し 4.37mm）。上の枡目もそのぶん倍に
- *    なるので、白目 6×4・黒目 2×2・口 8×2 で作る。
+ * 顔（目・口）を**描いて**顔の表面に貼る。
+ *   パレット … 目 3列×2段、口 3列×1段のボクセルを、顔の凹凸に関係なく1つの平面へ
+ *               揃える。⚠️ パレットは**本体(body)のボクセルそのもの**として作る。
+ *               別メッシュで肌色を塗ると、選手ごとの肌の染め方（normalizeTint）に
+ *               乗らず、顔に色の違う継ぎ当てが出る。
+ *   絵     … そのパレットの上に、**縦横 1/4 サイズ**のボクセル（4.69mm）で目・口を描く。
  * ⚠️ 元データから目・口の面は取れない。実測すると顔の前面の色は肌色 70〜75 階調だけで
  *    唇も眉も残らず、眼球メッシュは瞼の内側（肌より 26mm 奥）にある。だから描くしかない。
  */
-const MARK_HALF = 0.5;              // body に対するボクセル比（縦横半分）
 /** 白目・黒目・唇の色（元モデルは白目=182の灰 / 黒目=2の黒）。 */
-const MARK_COLOR = { white: [182, 182, 182], black: [2, 2, 2], lip: [120, 60, 50] };
-/** 枡目の数（半分のボクセルでの数）。元モデルの倍。 */
-// ⚠️ マスの実寸 = body のボクセル × MARK_HALF。ボクセルを粗くしたらマス数を
-//    そのぶん減らさないと、顔に対して目・口だけが倍の大きさになる。
-//    resolution 110(body 9.38mm) では 6×4/2/8×2 だった。55(18.75mm) はその半分。
-//    実測(probe-facefit): 減らす前は 64マス中 38〜44マスが顔から外れていた。
-const MARK_GRID = { eyeW: 3, eyeH: 2, pupil: 1, mouthW: 4, mouthH: 1 };
+const MARK_COLOR = {
+  white: [182, 182, 182], iris: [92, 56, 32], black: [2, 2, 2], lip: [120, 60, 50],
+};
+/** 確認用の色。パレットの範囲そのものを塗りつぶして見せる。 */
+const MARK_DEBUG_COLOR = { eye: [0, 190, 255], mouth: [50, 255, 60] };
+let markDebug = false;
 /**
- * 顔の中での位置（頭頂からの距離 m / 中心からの左右 m）。
+ * 作り直しの合図。確認用の色を切り替えると顔の絵が変わるので、作り置き（variant の
+ * キャッシュ）を作り直させるために数を進める。
+ */
+let markEpoch = 0;
+/** パレットの範囲を確認用の色で塗りつぶす。切り替えたら顔を貼り直すこと。 */
+export function setMarkDebug(on: boolean): void { markDebug = on; markEpoch++; }
+/**
+ * パレットの升目の数（body のボクセル数）。目は 3列×2段、口は 3列×1段。
+ * ⚠️ 実寸 = body のボクセル。ボクセルを粗くしたらマス数をそのぶん減らさないと、
+ *    顔に対して目・口だけが倍の大きさになる。
+ *    実測(probe-facefit): 減らす前は 64マス中 38〜44マスが顔から外れていた。
+ */
+const MARK_GRID = { eyeW: 3, eyeH: 2, mouthW: 3, mouthH: 1 };
+/** パレット1マスを縦横これで割った大きさで絵を描く。 */
+const ART_DIV = 4;
+/**
+ * 目の絵。パレット 3列×2段 を ART_DIV で割った **12列×8段**。
+ * #=白目 / o=虹彩 / @=黒目 / .=描かない。
+ * 左右対称に書くこと（反対の目は列を反転して貼る）。
+ *
+ * 黒目は 2×2 とその周り1マスの虹彩（合わせて 4×4）、または 1マスとその周り1マスの
+ * 虹彩（合わせて 3×3）の2通り。
+ * ⚠️ 黒目1マスの形は**幅を奇数(7マス)**にすること。12×8 の升目は偶数幅なので、
+ *    幅8マスのままだと 3×3 の虹彩が半マスずれ、片目の中で左右非対称になる。
+ * ⚠️ 12×8 の升目より小さく描いて余白を残す。その余白のぶんだけ位置をずらせる
+ *    （`setEyeOffset`。絵からはみ出す量は自動で抑える）。
+ */
+/**
+ * 半円・曲線が上（平らな辺が下）。幅8マス・高さ5マス。
+ * 段ごとの幅は 先端から 4,6,8,8,8。⚠️ **先端の1段は白目**にすること。
+ * ここを虹彩で埋めると（高さ4マスにすると）目の短い辺の白目が消えて、
+ * 黒目の塊にしか見えなくなる。
+ */
+const EYE_ART_UP = [
+  "............",
+  "............",
+  "....####....",
+  "...#oooo#...",
+  "..##o@@o##..",
+  "..##o@@o##..",
+  "..##oooo##..",
+  "............",
+];
+/** 半円・曲線が下（平らな辺が上）。上下を反転したもの。 */
+const EYE_ART_DOWN = [
+  "............",
+  "..##oooo##..",
+  "..##o@@o##..",
+  "..##o@@o##..",
+  "...#oooo#...",
+  "....####....",
+  "............",
+  "............",
+];
+/** 四隅を落とした長方形。幅8マス・高さ4マス（段ごとの幅 6,8,8,6）。 */
+const EYE_ART_RECT = [
+  "............",
+  "............",
+  "...#oooo#...",
+  "..##o@@o##..",
+  "..##o@@o##..",
+  "...#oooo#...",
+  "............",
+  "............",
+];
+/**
+ * 黒目1マス版の半円・曲線が上。幅7マス・高さ4マス（段ごとの幅 先端から 3,5,7,7）。
+ * 虹彩は 3×3、その真ん中1マスが黒目。先端の1段は白目。
+ */
+const EYE_ART_UP_S = [
+  "............",
+  "............",
+  "....###.....",
+  "...#ooo#....",
+  "..##o@o##...",
+  "..##ooo##...",
+  "............",
+  "............",
+];
+/** 黒目1マス版の半円・曲線が下。上下を反転したもの。 */
+const EYE_ART_DOWN_S = [
+  "............",
+  "............",
+  "..##ooo##...",
+  "..##o@o##...",
+  "...#ooo#....",
+  "....###.....",
+  "............",
+  "............",
+];
+/** 黒目1マス版の長方形（四隅なし）。幅7マス・高さ3マス（段ごとの幅 5,7,5）。 */
+const EYE_ART_RECT_S = [
+  "............",
+  "............",
+  "............",
+  "...#ooo#....",
+  "..##o@o##...",
+  "...#ooo#....",
+  "............",
+  "............",
+];
+/**
+ * 内寄り。内側（鼻側）の上に 白2列×2段、その下に 虹彩4列×2段、
+ * 虹彩の横（外側）に 白6列×2段。全体で 幅10マス・高さ4マス。
+ * ⚠️ **絵の左が内側（鼻側）**。絵の列0は、どちらの目でも顔の中心に近い側へ貼られる
+ *    （反対の目は列を反転して貼るため）。だから両目とも内側に寄る。
+ * ⚠️ 黒目の指定が無いので**黒目は置いていない**（虹彩だけ）。
+ */
+const EYE_ART_INNER = [
+  "............",
+  "............",
+  ".##.........",
+  ".##.........",
+  ".oooo######.",
+  ".oooo######.",
+  "............",
+  "............",
+];
+/**
+ * 縦長。**縦6マス×横4マス**。内側（鼻側）の2列は 上2段が白・その下4段が虹彩、
+ * 外側の2列は6段とも白。
+ * ⚠️ 上の `EYE_ART_INNER` と積み木は同じだが、こちらは縦横が逆（縦6×横4）。
+ *    どちらも残す。
+ * ⚠️ **絵の左が内側（鼻側）**。反対の目は列を反転して貼るので、両目とも内側に虹彩が寄る。
+ * ⚠️ 黒目の指定が無いので黒目は置いていない（虹彩だけ）。
+ */
+const EYE_ART_TALL = [
+  "............",
+  "....####....",
+  "....####....",
+  "....oo##....",
+  "....oo##....",
+  "....oo##....",
+  "....oo##....",
+  "............",
+];
+/**
+ * 「内寄り」の虹彩だけを外側へずらしたもの。白の 2列×2段は内側の上に置いたまま。
+ * 虹彩が動いたあとは白で埋めるので、外枠（幅10マス・高さ4マス）と総数24マスは変わらない。
+ * ⚠️ 絵の左が内側。だから**右へずらすほど外側**を見ている顔になる。
+ */
+/** 外へ1マス。 */
+const EYE_ART_INNER_O1 = [
+  "............",
+  "............",
+  ".##.........",
+  ".##.........",
+  ".#oooo#####.",
+  ".#oooo#####.",
+  "............",
+  "............",
+];
+/** 外へ2マス。 */
+const EYE_ART_INNER_O2 = [
+  "............",
+  "............",
+  ".##.........",
+  ".##.........",
+  ".##oooo####.",
+  ".##oooo####.",
+  "............",
+  "............",
+];
+/** 外へ4マス。虹彩が横の帯のまん中あたりに来る。 */
+const EYE_ART_INNER_O4 = [
+  "............",
+  "............",
+  ".##.........",
+  ".##.........",
+  ".####oooo##.",
+  ".####oooo##.",
+  "............",
+  "............",
+];
+/** 外へ6マス。虹彩が外側の端にぴったり付く。 */
+const EYE_ART_INNER_O6 = [
+  "............",
+  "............",
+  ".##.........",
+  ".##.........",
+  ".######oooo.",
+  ".######oooo.",
+  "............",
+  "............",
+];
+/** 目の形。末尾の S は黒目1マス版、O+数字は内寄りの虹彩を外へずらした量。 */
+export type EyeShape =
+  "up" | "down" | "rect" | "upS" | "downS" | "rectS" | "inner" | "tall"
+  | "innerO1" | "innerO2" | "innerO4" | "innerO6";
+const EYE_ARTS: Record<EyeShape, string[]> = {
+  up: EYE_ART_UP, down: EYE_ART_DOWN, rect: EYE_ART_RECT,
+  upS: EYE_ART_UP_S, downS: EYE_ART_DOWN_S, rectS: EYE_ART_RECT_S,
+  inner: EYE_ART_INNER, tall: EYE_ART_TALL,
+  innerO1: EYE_ART_INNER_O1, innerO2: EYE_ART_INNER_O2,
+  innerO4: EYE_ART_INNER_O4, innerO6: EYE_ART_INNER_O6,
+};
+/** 目の形の一覧（選手ごとに配るとき用）。 */
+export const EYE_SHAPES = Object.keys(EYE_ARTS) as EyeShape[];
+/**
+ * 目の絵を升目の中でずらす量（絵のボクセル数）。x は**外向きが正**、y は上が正。
+ * ⚠️ 反対の目は絵の列を反転して貼るので、同じ値を渡せば**中心線から左右同じ位置**に出る。
+ *    世界座標の x で足すと、左右で逆方向にずれる。
+ */
+export const EYE_OFF_MAX = 3;
+/** 目の位置を使える範囲に収める。 */
+export function clampEyeOffset(v: number): number {
+  return Math.max(-EYE_OFF_MAX, Math.min(EYE_OFF_MAX, Math.round(v)));
+}
+/**
+ * 口の絵。パレット 3列×1段 を割った 12列×4段。#=唇。
+ * ⚠️ 左右対称に書くこと。口は反転して貼らないので、ここが非対称だとそのまま出る。
+ */
+/** 太い横線（上段が長く、下段が短い）。 */
+const MOUTH_ART_WIDE = [
+  "............",
+  ".##########.",
+  "..########..",
+  "............",
+];
+/** 細い横一文字。 */
+const MOUTH_ART_LINE = [
+  "............",
+  "............",
+  ".##########.",
+  "............",
+];
+/** 小さい口。 */
+const MOUTH_ART_SMALL = [
+  "............",
+  "............",
+  "...######...",
+  "............",
+];
+/** 口角が上がる。両端だけ1段上。 */
+const MOUTH_ART_SMILE = [
+  "............",
+  ".##......##.",
+  "..########..",
+  "............",
+];
+/** 口角が下がる。両端だけ1段下。 */
+const MOUTH_ART_FROWN = [
+  "............",
+  "..########..",
+  ".##......##.",
+  "............",
+];
+/** 開いた口。 */
+const MOUTH_ART_OPEN = [
+  "............",
+  "...######...",
+  "...######...",
+  "............",
+];
+/** 口の形。 */
+export type MouthShape = "wide" | "line" | "small" | "smile" | "frown" | "open";
+const MOUTH_ARTS: Record<MouthShape, string[]> = {
+  wide: MOUTH_ART_WIDE, line: MOUTH_ART_LINE, small: MOUTH_ART_SMALL,
+  smile: MOUTH_ART_SMILE, frown: MOUTH_ART_FROWN, open: MOUTH_ART_OPEN,
+};
+/** 口の形の一覧（選手ごとに配るとき用）。 */
+export const MOUTH_SHAPES = Object.keys(MOUTH_ARTS) as MouthShape[];
+
+/**
+ * 選手1人ぶんの顔の指定。⚠️ あご(jaw)は**本体メッシュの形が変わる**ので、見本の
+ * 使い回しはあごごとに分かれる。目・口は顔のメッシュだけなので選手ごとに作ってよい。
+ */
+export type FaceLook = {
+  jaw: JawShape; eye: EyeShape; eyeX: number; eyeY: number; mouth: MouthShape;
+};
+/** 顔の指定が無いときの見た目。 */
+export const DEFAULT_FACE: FaceLook = {
+  jaw: "normal", eye: "up", eyeX: 0, eyeY: 0, mouth: "wide",
+};
+/** 作り置きの見分け用の鍵。 */
+export const faceKey = (f: FaceLook): string =>
+  f.jaw + "|" + f.eye + "|" + f.eyeX + "|" + f.eyeY + "|" + f.mouth;
+/**
+ * 顔の中での位置（頭頂からの距離 m / 中心からの左右 m）。深さは**上の段の中心**。
+ * ⚠️ 段はボクセル格子に乗せるので、実際の位置は最大 半ボクセル(9.4mm) ずれる。
+ *    実測（この値で組んだ結果、頭の一番上のボクセル中心からの距離）:
+ *    目の上段 9.4cm・下段 11.3cm（範囲 8.4〜12.2cm）、口 16.9cm（範囲 15.9〜17.8cm）。
  * 実測（player_one / 頭頂Z 1.800、Face.jpg を顔のポリゴンへサンプルして得た値）:
  *   目・眉 頭頂から 0.088〜0.117m、X -0.039〜+0.046
  *   口     頭頂から 0.146〜0.175m、X -0.025〜+0.022
  */
-const MARK_POS = { eyeDepth: 0.102, eyeX: 0.032, mouthDepth: 0.172 };
+const MARK_POS = {
+  eyeDepth: 0.102, eyeX: 0.032, mouthDepth: 0.172,
+  // ここから下はボクセル何個ぶんずらすか（正で 奥／下）。
+  eyeBack: 1,                        // 目を1列 奥へ
+  // 口は「1列 奥」から2列 手前へ戻した指示なので -1（＝1列 手前）。
+  mouthBack: -1, mouthDown: 2,       // 口を1列 手前・2列 下へ
+};
 
-/** 顔に描く1マス。Blender 座標の中心と色。 */
-type Mark = { x: number; y: number; z: number; col: number[] };
+/** パレットにする body のボクセル（格子の番号）。 */
+type PalCell = { ix: number; iy: number; iz: number };
+/** 絵の1マス。Blender 座標の中心と寸法（sx/sz は横、dy は奥行き）と色。 */
+type Mark = { x: number; y: number; z: number; sx: number; sz: number; dy: number; col: number[] };
+/** 顔の作りかた: パレットにする body のセルと、その上に描く絵。 */
+type FaceParts = { pal: PalCell[]; art: Mark[] };
 
 /**
- * 顔の表面に目と口のマス目を並べる。`cells` は body のボクセル（Blender 格子）。
- * 戻り値は「半分の大きさの立方体」の中心と色。
+ * 目と口のパレットの位置と、その上に描く絵を決める。`cells` は body のボクセル
+ * （Blender 格子・**パレットを作る前**のもの）。
  */
-function faceMarks(cells: Cell[], O: number[], S: number): Mark[] {
-  const H = S * MARK_HALF;
-  let topZ = -Infinity;
-  for (const c of cells) topZ = Math.max(topZ, O[2] + (c.c[2] + 0.5) * S);
+function faceMarks(cells: Cell[], O: number[], S: number, f: FaceLook): FaceParts {
+  let topIz = -Infinity;
+  for (const c of cells) topIz = Math.max(topIz, c.c[2]);
 
-  // 顔の前面（Blender では -Y が前）。(x, z) ごとに一番前の面の位置を持つ。
+  // 顔の前面（Blender では -Y が前）。列 (ix, iz) ごとに一番前のセル番号。
   // ⚠️ 升目は Math.round(x/S) ではなく**セル番号**で引くこと。格子の原点は S の倍数では
   //    ないので、丸めだと升目がずれて隣のセルを見る。実測で 64 マス中 14 マスが
   //    肌より 9.8mm 奥（＝完全に埋没）に置かれていた。
   const front = new Map<number, number>();
-  const cellX = (x: number): number => Math.floor((x - O[0]) / S);
-  const cellZ = (z: number): number => Math.floor((z - O[2]) / S);
   const key = (ix: number, iz: number): number => (ix + 512) * 2048 + (iz + 512);
   for (const c of cells) {
-    const x = O[0] + (c.c[0] + 0.5) * S, y = O[1] + (c.c[1] + 0.5) * S, z = O[2] + (c.c[2] + 0.5) * S;
-    if (topZ - z > 0.24 || Math.abs(x) > 0.12) continue;
+    if (topIz - c.c[2] > 13 || Math.abs(O[0] + (c.c[0] + 0.5) * S) > 0.12) continue;
     const k = key(c.c[0], c.c[2]);
     const cur = front.get(k);
-    if (cur === undefined || y < cur) front.set(k, y);
+    if (cur === undefined || c.c[1] < cur) front.set(k, c.c[1]);
   }
+
+  const pal: PalCell[] = [], art: Mark[] = [];
   /**
-   * (x, z) の肌の表面 Y。
-   * ⚠️ 周り1マスの中で一番手前を採ると、顔の曲面では実際の面より前に出て**浮く**。
-   *    まずその位置ちょうどを見て、そこに肌が無いときだけ周りへ広げる。
+   * 1つの枡目（パレット＋絵）を作る。ixs / izs はセル番号の並び（列・段）。
+   * ⚠️ 面は枡目ぜんぶで1つ。1マスずつ肌の面に合わせると顔の丸みで前後にギザギザになる。
+   *    基準は枡目の中で一番前の列で、そこから back 列だけ奥へ引く。
    */
-  const surfaceY = (x: number, z: number): number | null => {
-    const ix = cellX(x), iz = cellZ(z);
-    const hit = front.get(key(ix, iz));
-    if (hit !== undefined) return hit - S / 2;   // ボクセル中心 → 前面
-    // ⚠️ ここで周囲の**一番手前**を採ると、肌の無い場所で前へ出過ぎて浮く（実測5マス）。
-    //    一番奥を採る。少し食い込む側に倒れるだけで、浮きは出ない。
-    let best: number | null = null;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const v = front.get(key(ix + dx, iz + dz));
-        if (v !== undefined && (best === null || v > best)) best = v;
+  const block = (ixs: number[], izs: number[], back: number, artRows: string[],
+    flip: boolean, off: { x: number; y: number },
+    color: (ch: string) => number[] | null): void => {
+    let iyMin = Infinity;
+    for (const ix of ixs) {
+      for (const iz of izs) {
+        const f = front.get(key(ix, iz));
+        if (f !== undefined) iyMin = Math.min(iyMin, f);
       }
     }
-    return best === null ? null : best - S / 2;
-  };
+    if (!Number.isFinite(iyMin)) return;
+    const plane = iyMin + back;                     // パレットの面のセル番号
+    for (const ix of ixs) for (const iz of izs) pal.push({ ix, iy: plane, iz });
 
-  const out: Mark[] = [];
-  /** 左上を (cx, cz) 中心とする w×h の枡目を顔に貼る。 */
-  const block = (cx: number, cz: number, w: number, h: number,
-    color: (col: number, row: number) => number[]): void => {
-    for (let col = 0; col < w; col++) {
-      for (let row = 0; row < h; row++) {
-        const x = cx + (col - (w - 1) / 2) * H;
-        const z = cz - (row - (h - 1) / 2) * H;
-        const sy = surfaceY(x, z);
-        if (sy === null) continue;
-        // ⚠️ 面のちょうど外側に置くと隙間ができて浮いて見える。1/4マスだけ肌へ食い込ませる。
-        out.push({ x, y: sy - H * 0.25, z, col: color(col, row) });
+    // --- 絵 ---
+    const q = S / ART_DIV;                          // 絵のボクセル寸法
+    const cols = ixs.length * ART_DIV, rows = izs.length * ART_DIV;
+    if (artRows.length !== rows || artRows.some((r) => r.length !== cols)) {
+      // ⚠️ 絵の升目とパレットの大きさが合っていない。黙って歪ませない。
+      throw new Error("顔の絵の升目が合わない: "
+        + artRows.length + "x" + (artRows[0]?.length ?? 0) + " != " + rows + "x" + cols);
+    }
+    // ⚠️ ずらしすぎて絵が升目からはみ出さないように、**描いてある範囲**で抑える。
+    //    形によって高さが違う（半円は5段、長方形は4段）ので、上下に動ける量も形で変わる。
+    let r0 = rows, r1 = -1, c0 = cols, c1 = -1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (artRows[r][c] === ".") continue;
+        r0 = Math.min(r0, r); r1 = Math.max(r1, r);
+        c0 = Math.min(c0, c); c1 = Math.max(c1, c);
+      }
+    }
+    const offX = Math.max(-c0, Math.min(cols - 1 - c1, off.x));
+    const offY = Math.max(r1 - (rows - 1), Math.min(r0, off.y));
+    const xLeft = O[0] + Math.min(...ixs) * S;
+    const zTop = O[2] + (Math.max(...izs) + 1) * S;
+    const yFront = O[1] + plane * S;                // パレットの前面（-Y が前）
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        // ⚠️ ずらす量は**絵の升目の側**で引くこと。反転（反対の目）を掛けたあとの列番号から
+        //    引くので、左右の目が中心線から同じ位置に出る。世界の x で足すと逆方向にずれる。
+        const sc = (flip ? cols - 1 - c : c) - offX;
+        const sr = r + offY;                     // y は上が正（行番号は小さいほど上）
+        if (sr < 0 || sr >= rows || sc < 0 || sc >= cols) continue;
+        const col = color(artRows[sr][sc]);
+        if (!col) continue;
+        art.push({
+          x: xLeft + (c + 0.5) * q,
+          y: yFront - q / 2,                        // パレットの上に載せる
+          z: zTop - (r + 0.5) * q,
+          sx: q, sz: q, dy: q,
+          col,
+        });
       }
     }
   };
 
-  const eyeZ = topZ - MARK_POS.eyeDepth;
-  const { eyeW, eyeH, pupil, mouthW, mouthH } = MARK_GRID;
-  const p0 = Math.floor((eyeW - pupil) / 2);       // 黒目は上段の中央
-  for (const sx of [-1, 1]) {
-    block(sx * MARK_POS.eyeX, eyeZ, eyeW, eyeH,
-      (col, row) => (row < pupil && col >= p0 && col < p0 + pupil
-        ? MARK_COLOR.black : MARK_COLOR.white));
+  const { eyeW, eyeH, mouthW, mouthH } = MARK_GRID;
+  const cellX = (x: number): number => Math.floor((x - O[0]) / S);
+  const cellZ = (z: number): number => Math.floor((z - O[2]) / S);
+  const topZ = O[2] + (topIz + 0.5) * S;
+  const icx = cellX(0);                                  // 顔の中心の列
+  const seq = (from: number, n: number): number[] =>
+    Array.from({ length: n }, (_, i) => from + i);
+  // 目は中心列から左右対称。⚠️ 列番号で折り返すこと。x を ±eyeX にして丸めると
+  //    格子の原点が S の倍数でないぶん左右で 1列ずれる。
+  //    内側の列は中心列と重ならないように最低1列あける（鼻すじ）。
+  const inner = Math.max(1, Math.round(MARK_POS.eyeX / S - (eyeW - 1) / 2));
+  const izEye = cellZ(topZ - MARK_POS.eyeDepth);
+  const eyeRows = seq(izEye - (eyeH - 1), eyeH);
+  const art0 = EYE_ARTS[f.eye] ?? EYE_ART_UP;
+  const eyeArt = markDebug ? art0.map((r) => "#".repeat(r.length)) : art0;
+  const eyeCol = (ch: string): number[] | null =>
+    (ch === "." ? null
+      : markDebug ? MARK_DEBUG_COLOR.eye
+        : ch === "@" ? MARK_COLOR.black
+          : ch === "o" ? MARK_COLOR.iris : MARK_COLOR.white);
+  const off = { x: f.eyeX, y: f.eyeY };
+  block(seq(icx + inner, eyeW), eyeRows, MARK_POS.eyeBack, eyeArt, false, off, eyeCol);
+  block(seq(icx - inner - (eyeW - 1), eyeW), eyeRows, MARK_POS.eyeBack, eyeArt, true, off, eyeCol);
+  // 口は中心列をまたいで横一列。
+  const izMouth = cellZ(topZ - MARK_POS.mouthDepth) - MARK_POS.mouthDown;
+  const mouth0 = MOUTH_ARTS[f.mouth] ?? MOUTH_ART_WIDE;
+  const mouthArt = markDebug ? mouth0.map((r) => "#".repeat(r.length)) : mouth0;
+  block(seq(icx - Math.floor(mouthW / 2), mouthW), seq(izMouth - (mouthH - 1), mouthH),
+    MARK_POS.mouthBack, mouthArt, false, { x: 0, y: 0 },
+    (ch) => (ch !== "#" ? null : markDebug ? MARK_DEBUG_COLOR.mouth : MARK_COLOR.lip));
+  return { pal, art };
+}
+
+/**
+ * パレットの升目を body のボクセルとして整える。
+ *   1. パレットの面より**前にある肌を落とす**（絵が最前面になるように）。
+ *   2. 面から奥の肌まで**隙間なくボクセルを足す**（色とウェイトは奥の肌から借りる）。
+ * ⚠️ 落とす前の cells で位置を決めること。落とした後の面で決め直すと、作り直すたびに
+ *    目が1列ずつ奥へ下がっていく。
+ * ⚠️ 遠景用(lod>1)では絵を描かないので、これを掛けてはいけない（窪みだけが残る）。
+ */
+function fitPalette(cells: Cell[], pal: PalCell[], O: number[], S: number): Cell[] {
+  if (!pal.length) return cells;
+  const key = (ix: number, iz: number): number => (ix + 512) * 2048 + (iz + 512);
+  const plane = new Map<number, number>();          // 列 → パレットの面のセル番号
+  for (const p of pal) {
+    const k = key(p.ix, p.iz);
+    const cur = plane.get(k);
+    if (cur === undefined || p.iy < cur) plane.set(k, p.iy);
   }
-  block(0, topZ - MARK_POS.mouthDepth, mouthW, mouthH, () => MARK_COLOR.lip);
+  // 列ごとに「面より奥で一番手前の肌」。足すボクセルの色とウェイトはここから借りる。
+  const behind = new Map<number, Cell>();
+  for (const c of cells) {
+    const k = key(c.c[0], c.c[2]);
+    const pl = plane.get(k);
+    if (pl === undefined || c.c[1] < pl) continue;
+    const cur = behind.get(k);
+    if (!cur || c.c[1] < cur.c[1]) behind.set(k, c);
+  }
+  const out = cells.filter((c) => {
+    const pl = plane.get(key(c.c[0], c.c[2]));
+    return pl === undefined || c.c[1] >= pl;
+  });
+  for (const [k, pl] of plane) {
+    const src = behind.get(k);
+    if (!src) continue;
+    for (let iy = pl; iy < src.c[1]; iy++) {
+      out.push({ c: [src.c[0], iy, src.c[2]], col: src.col, wi: src.wi });
+    }
+  }
   return out;
+}
+
+/**
+ * 顔の暗いボクセルを肌色にならす。
+ * 元モデルは目のまわりの陰と鼻の下・口のまわりの色がボクセルに焼き込まれていて、
+ * 描いた目・口より目立って顔が汚れて見える（実測 probe-facecol: 頭の前を向いた面 692枚の
+ * うち 22枚が明るさの中央値の8割より暗い。目の高さ 12.2cm に5枚、鼻の下 14.1cm に7枚、
+ * 口のまわり 19.7〜21.6cm に6枚。色は 92,60,52 や 140,76,68 など）。
+ * ⚠️ 選手ごとの肌色は normalizeTint が**明るさ**として乗せるので、暗い色を残すと
+ *    どの肌色の選手でもそこだけ黒ずむ。
+ * ⚠️ パレットを作る前に掛けること。パレットは奥の肌から色を借りるので、後から掛けると
+ *    借りた先の暗い色がそのまま目のまわりに残る。
+ */
+const FACE_FLAT = {
+  depth: 0.26,      // 頭頂からこの深さまでを顔として見る（m）
+  lo: 0.88,         // 明るさの中央値のこの割合より暗い色を置き換える
+};
+function flattenFaceSkin(cells: Cell[], O: number[], S: number): Cell[] {
+  let topZ = -Infinity;
+  for (const c of cells) topZ = Math.max(topZ, O[2] + (c.c[2] + 0.5) * S);
+  const lum = (col: number[]): number => 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2];
+  const head = (c: Cell): boolean => topZ - (O[2] + (c.c[2] + 0.5) * S) <= FACE_FLAT.depth;
+  const ls: number[] = [];
+  for (const c of cells) if (head(c)) ls.push(lum(c.col));
+  if (ls.length < 20) return cells;
+  ls.sort((a, b) => a - b);
+  const mid = ls[Math.floor(ls.length / 2)];
+  const cut = mid * FACE_FLAT.lo;
+  // 肌色 = 暗いものを除いた顔の色の中央値（チャンネルごと）。平均だと暗い色に引かれる。
+  const ch: number[][] = [[], [], []];
+  for (const c of cells) {
+    if (!head(c) || lum(c.col) < cut) continue;
+    for (let i = 0; i < 3; i++) ch[i].push(c.col[i]);
+  }
+  if (!ch[0].length) return cells;
+  const skin = ch.map((a) => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; });
+  return cells.map((c) => (head(c) && lum(c.col) < cut ? { c: c.c, col: skin, wi: c.wi } : c));
 }
 
 /**
@@ -735,6 +1145,13 @@ export interface RawModel {
   /**
   /** あごの形を変える（顔のバリエーション）。body のメッシュだけ張り直す。 */
   setJaw(shape: JawShape): void;
+  /** 目・口を貼り直す（確認用の色を切り替えたとき用）。 */
+  rebuildMarks(): void;
+  /**
+   * 選手1人ぶんの本体メッシュと顔メッシュを出す。あごが同じ選手は本体を共有し、
+   * 目・口の組み合わせごとに顔メッシュを作り置きする。
+   */
+  variant(f: FaceLook): { body: Mesh; face: Mesh | null };
   /** モデル自身の身長(cm)。足元（全部位の最下端）から頭頂（body の最上端）まで。 */
   modelHeightCm: number;
   /** 身長を変える。ボクセルは作り直さず、表示のときに伸縮する。 */
@@ -755,8 +1172,8 @@ export interface RawModel {
   applyTo(root: TransformNode, rig: RigHandle, heightCm: number): void;
   /** 使える髪型の名前（データにあるもの全部）。メッシュはまだ作っていない。 */
   hairNames: string[];
-  /** 髪型を1つ読み込んでメッシュにする。読み終えると byPart から取れる。 */
-  loadHair(name: string): Promise<boolean>;
+  /** 髪型を1つ、指定のあご向けに読み込んでメッシュにする。 */
+  loadHair(name: string, jaw?: JawShape): Promise<Mesh | null>;
   height: number;
   perBone: Map<string, number>;
 }
@@ -1355,6 +1772,17 @@ export function buildRawModelFrom(
       cells = closeSeams(cells, 2, grid.grid_origin, S, (x, y, z) =>
         z > bodyTopZ - 0.30 && Math.abs(x) < 0.12 && Math.abs(y) < 0.12);
     }
+    // 顔に焼かれた陰（目のまわり・鼻の下）を肌色へならす。⚠️ パレットより先に掛けること。
+    if (isBody) cells = flattenFaceSkin(cells, grid.grid_origin, S);
+    // 目・口のパレットを body のボクセルとして整える（面を平らにし、前の肌を落とす）。
+    // ⚠️ 遠景用(lod>1)では絵を描かないので掛けてはいけない。窪みだけが残る。
+    let pristine = cells;
+    if (isBody && lod === 1) {
+      pristine = cells;
+      // ⚠️ パレットの位置は絵の内容に依らない（升目の範囲は固定）ので、ここは既定の顔でよい。
+      const pal = faceMarks(cells, grid.grid_origin, S, DEFAULT_FACE).pal;
+      cells = fitPalette(cells, pal, grid.grid_origin, S);
+    }
     // 遠景用に粗くする（ボクセルを lod 個ぶんの塊にまとめる）
     if (lod > 1) cells = downsample(cells, lod);
     const SS = S * lod;                       // まとめたあとのボクセル寸法
@@ -1430,7 +1858,9 @@ export function buildRawModelFrom(
     //    遠景用のほうを作り直し、実際に表示されるメッシュは一度も変わらない
     //    （実測: setJaw 後 bodyMesh は 11,136 頂点になるのに、byPart.get("body") は
     //     12,576 頂点のまま。あごの形を変えても見た目が変わらない原因）。
-    if (isBody && lod === 1) { bodyMesh = mesh; bodyCells = cells; }
+    // ⚠️ bodyCells は**削る前**を持つこと。削った後を渡すと buildMarks が測る面が
+    //    1列奥になり、貼り直すたびに目・口が奥へ沈む。
+    if (isBody && lod === 1) { bodyMesh = mesh; bodyCells = pristine; }
     return mesh;
   };
 
@@ -1447,13 +1877,16 @@ export function buildRawModelFrom(
 
 
 
-  /** 顔に描いた目・口を、半分の大きさの立方体のメッシュにする。 */
-  let markMesh: Mesh | null = null;
-  const buildMarks = (): void => {
+  /**
+   * 顔に描いた目・口を、1/4サイズの立方体のメッシュにする。
+   * ⚠️ **選手ごとに別のメッシュ**。目・口の形は選手ごとに違うので使い回せない。
+   *    1人ぶん 46〜86 個の立方体（1,104〜2,064 頂点）なので、26人ぶん作っても軽い。
+   */
+  const buildFace = (cells: Cell[], f: FaceLook, reuse?: Mesh): Mesh | null => {
     const L = loaded.find((x) => x.part.prefix === "body");
-    if (!L || !bodyCells.length) return;
-    const S = L.grid.voxel_size, H = S * MARK_HALF, O = L.grid.grid_origin;
-    const list = faceMarks(bodyCells, O, S);
+    if (!L || !cells.length) return null;
+    const S = L.grid.voxel_size, O = L.grid.grid_origin;
+    const list = faceMarks(cells, O, S, f).art;
     const head = index.get("Head") ?? index.get("Hips") ?? 0;
     const pos: number[] = [], nrm: number[] = [], col: number[] = [];
     const mIdx: number[] = [], mWgt: number[] = [], idx: number[] = [];
@@ -1461,7 +1894,7 @@ export function buildRawModelFrom(
       for (const f of FACES) {
         const b = pos.length / 3;
         for (const q of f.q) {
-          const [px, py, pz] = toBabylon(mk.x + q[0] * H, mk.y + q[1] * H, mk.z + q[2] * H);
+          const [px, py, pz] = toBabylon(mk.x + q[0] * mk.sx, mk.y + q[1] * mk.dy, mk.z + q[2] * mk.sz);
           pos.push(px, py, pz);
           const [nx, ny, nz] = toBabylon(f.n[0], f.n[1], f.n[2]);
           nrm.push(nx, ny, nz);
@@ -1475,16 +1908,19 @@ export function buildRawModelFrom(
     const vd = new VertexData();
     vd.positions = pos; vd.normals = nrm; vd.colors = col; vd.indices = idx;
     vd.matricesIndices = mIdx; vd.matricesWeights = mWgt;
-    const mesh = markMesh ?? new Mesh("raw_face", scene);
+    const mesh = reuse ?? new Mesh("raw_face", scene);
     vd.applyToMesh(mesh, true);
     mesh.material = mat;
     mesh.parent = root;
     mesh.skeleton = skel;
     mesh.numBoneInfluencers = 4;
     mesh.alwaysSelectAsActiveMesh = true;
-    if (!markMesh) { markMesh = mesh; meshes.push(mesh); byPart.set("face", mesh); }
+    return mesh;
   };
-  buildMarks();
+  /** 既定の顔。確認ページやテストが byPart から取れるように1つだけ持っておく。 */
+  const markMesh = buildFace(bodyCells, DEFAULT_FACE);
+  if (markMesh) { meshes.push(markMesh); byPart.set("face", markMesh); }
+  const buildMarks = (): void => { if (markMesh) buildFace(bodyCells, DEFAULT_FACE, markMesh); };
 
   /**
    * 髪型を1つ読み込んでメッシュにする（既に読んであれば何もしない）。
@@ -1492,16 +1928,35 @@ export function buildRawModelFrom(
    *    読んだものも同じ変形が掛かる（buildPart の中で jawFit を見る）。
    */
   const hairLoaded = new Map<string, Loaded>();
-  const loadHair = async (name: string): Promise<boolean> => {
-    if (!name || hairLoaded.has(name)) return hairLoaded.has(name);
-    const part = hairParts.find((x) => x.prefix === name);
-    if (!part) return false;
-    const L = await loadPart(part);
-    hairLoaded.set(name, L);
-    loaded.push(L);                 // あごを変えたとき張り直せるように
+  /**
+   * 髪型を1つ読み込んでメッシュにする。
+   * ⚠️ 髭のある髪型は**あごの形に合わせて変形**するので、あごごとに別のメッシュが要る。
+   *    あごを指定しないと見本自身のあごで作る。
+   */
+  const loadHair = async (name: string, hairJaw?: JawShape): Promise<Mesh | null> => {
+    if (!name) return null;
+    const j = hairJaw ?? jaw;
+    const key = name + "@" + j;
+    const hit = byPart.get(key);
+    if (hit) return hit;
+    let L = hairLoaded.get(name);
+    if (!L) {
+      const part = hairParts.find((x) => x.prefix === name);
+      if (!part) return null;
+      L = await loadPart(part);
+      hairLoaded.set(name, L);
+      loaded.push(L);               // あごを変えたとき張り直せるように
+    }
+    const keep = jaw;
+    jaw = j;
     const mesh = buildPart(L);
-    if (mesh) { meshes.push(mesh); byPart.set(name, mesh); }
-    return true;
+    jaw = keep;
+    if (!mesh) return null;
+    mesh.setEnabled(false);
+    meshes.push(mesh);
+    byPart.set(key, mesh);
+    if (j === jaw) byPart.set(name, mesh);    // 見本自身のあごぶんは名前でも引ける
+    return mesh;
   };
 
   // --- 遠景用の粗いメッシュ -------------------------------------------------
@@ -1521,9 +1976,14 @@ export function buildRawModelFrom(
     return m;
   };
 
-  /** あごの形を変える。body のメッシュだけを張り直す。 */
+  /**
+   * 見本自身のあごの形を変える。body のメッシュだけを張り直す。
+   * ⚠️ 選手の顔は `variant` が作るので、試合ではこれを呼ばない（確認ページも呼ばない）。
+   *    見本のメッシュを作り替えるため、作り分けの控えが古くなる。ここで作り直させる。
+   */
   const setJaw = (shape: JawShape): void => {
     if (shape === jaw) return;
+    const prev = jaw;
     jaw = shape;
     const L = loaded.find((x) => x.part.prefix === "body");
     if (!L || !bodyMesh) return;
@@ -1536,11 +1996,59 @@ export function buildRawModelFrom(
     buildMarks();                     // 顔の表面が動いたので目・口も貼り直す
     // 髭のある髪型はあごの形に追従するので、読んであるものは張り直す
     for (const [name, HL] of hairLoaded) buildPart(HL, byPart.get(name));
+    // ⚠️ 見本のメッシュ（bodyMesh / markMesh）を作り替えたので、それを指していた控えを捨てる。
+    //    実体は選手が使っているかもしれないので dispose はしない。
+    const old = bodyByJaw.get(prev);
+    if (old && old.mesh === bodyMesh) bodyByJaw.delete(prev);
+    bodyByJaw.set(shape, { mesh: bodyMesh, cells: bodyCells });
+    for (const [k, m] of [...faceByKey]) if (m === markMesh) faceByKey.delete(k);
+    if (markMesh) faceByKey.set(faceKey({ ...DEFAULT_FACE, jaw: shape }) + "|" + markEpoch, markMesh);
+  };
+
+  // --- 選手ごとの作り分け -------------------------------------------------
+  // ⚠️ あごを変えると**本体メッシュの頂点数が変わる**ので、選手ごとに使い回せるのは
+  //    「同じあご」の中だけ。あごごとに1本だけ作って、同じあごの選手で共有する。
+  //    目・口はそれより細かく分かれるが、1人ぶん 1〜2千頂点なので組み合わせごとに作る。
+  const bodyByJaw = new Map<JawShape, { mesh: Mesh; cells: Cell[] }>();
+  const faceByKey = new Map<string, Mesh>();
+  if (bodyMesh) bodyByJaw.set(jaw, { mesh: bodyMesh, cells: bodyCells });
+  if (markMesh) faceByKey.set(faceKey(DEFAULT_FACE) + "|" + markEpoch, markMesh);
+  const variant = (f: FaceLook): { body: Mesh; face: Mesh | null } => {
+    const L = loaded.find((x) => x.part.prefix === "body");
+    let b = bodyByJaw.get(f.jaw);
+    if (!b && L) {
+      // ⚠️ 数え上げ（ボクセル数・三角形数）は見本1体ぶんを表示に使っているので、
+      //    作り分けのぶんを足してはいけない。前後で戻す。
+      const v0 = voxelCount, t0 = triangles, d0 = skinDropped, c0 = cavityFaces;
+      // ⚠️ buildPart は body を作ると bodyMesh / bodyCells を**書き替える**。
+      //    作り分けのぶんで上書きすると、setJaw が見本ではなく作り分けのほうを
+      //    作り直してしまう（実測: あごを narrow にしても見本の形が変わらなかった）。
+      //    セルだけ受け取って、見本のぶんは元に戻す。
+      const keep = jaw, keepMesh = bodyMesh, keepCells = bodyCells;
+      jaw = f.jaw;
+      const mesh = buildPart(L, undefined, 1);
+      const cells = bodyCells;
+      jaw = keep; bodyMesh = keepMesh; bodyCells = keepCells;
+      voxelCount = v0; triangles = t0; skinDropped = d0; cavityFaces = c0;
+      if (mesh) {
+        mesh.setEnabled(false);
+        b = { mesh, cells };
+        bodyByJaw.set(f.jaw, b);
+      }
+    }
+    if (!b) return { body: bodyMesh!, face: markMesh };
+    const key = faceKey(f) + "|" + markEpoch;
+    let fm = faceByKey.get(key);
+    if (!fm) {
+      fm = buildFace(b.cells, f) ?? undefined;
+      if (fm) { fm.setEnabled(false); faceByKey.set(key, fm); }
+    }
+    return { body: b.mesh, face: fm ?? null };
   };
 
   const model: RawModel = {
     rig, root, skel, meshes, byPart, voxelCount, triangles, height, perBone, skinDropped, cavityFaces, lodPart, lodStep: LOD_STEP, backNumberBand,
-    setJaw, hairNames, loadHair,
+    setJaw, rebuildMarks: buildMarks, variant, hairNames, loadHair,
     modelHeightCm: modelHeight * 100, setHeight, setBody, thickness, applyTo,
   };
   return model;

@@ -58,14 +58,24 @@ export const HUD_OPTS: {
 //   thinkMs:  相手の思考時間(ms)。手番が来てから札を置き始めるまでの間
 //   stepMs:   札を1枚ずつ選手へ乗せていく間隔(ms)
 //   dealMs:   補充した札が手札に入るアニメの長さ(ms)
+//   revealMs: 観戦（CPU同士）で役を見せている時間(ms)
+//   carryMs:  観戦で「持ち越し」を見せている時間(ms)
 export const POKER_OPTS: {
   userTeam: number | null; home: number; thinkMs: number; stepMs: number; dealMs: number;
+  revealMs: number; carryMs: number;
 //   ⚠️ 既定は null（CPU 対 CPU）。タイトルで「あなた 対 CPU」を選ぶと 0 になる。
-} = { userTeam: null, home: 0, thinkMs: 900, stepMs: 420, dealMs: 260 };
+} = { userTeam: null, home: 0, thinkMs: 900, stepMs: 420, dealMs: 260, revealMs: 3000, carryMs: 1400 };
 
 export const PLAYER_SPEED = 6.2;  // オフェンス時の走行速度
 export const DEF_SPEED = 6.5;     // 守備がリカバーできるよう少しだけ速い
 export const BURST_SPEED = 7.5;   // 抜き去りバーストの想定速度
+/**
+ * 見ていない方向でこぼれた球への反応の遅れ（0=遅れなし / 0.5=背中側で1.5倍）。
+ * ⚠️ ここが一番効く。実測(8試合): 0 → 得点 16.2 / 0.5 → 14.0 / 1.25 → 13.4。
+ *    見ていない側が 50-50 の球を取り切れなくなり、上げすぎると試合が止まる。
+ */
+export const LOOSE_BLIND = 0.5;
+
 export const BODY_MIN_DIST = 0.62; // 選手同士の最小ボディ間隔(押し離しの基準)
 export const OOB_OUTSET = 0.3;     // アウトオブバウンズでラインの外に立つ距離
 export const INBOUNDS_INSET = 1.0; // コート内に収める際のラインからの内側距離

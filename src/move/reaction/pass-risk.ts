@@ -1,5 +1,6 @@
 // パスの「効果」= レーン妨害・インターセプト確率の算出（判定ルール）。状態は変更
 // しない純粋関数。`defenders` には from(パサー)の相手チームを渡す。
+import { attnTo } from "../../ai/attention";
 import { Player } from "../../objects/player/player";
 import { LANE_W } from "../../config";
 import type { PassStyle } from "../../config";
@@ -42,6 +43,10 @@ export function interceptChance(
   const angle = from.has("outside") ? 0.8 : 1;                  // アウトサイド: 変な角度
   let p = inLane * (0.45 + hawk * 0.6) * distFactor * zip * angle - skill * 0.3;
   p += Math.max(0, d - 10) * 0.06;   // 遠投は滞空する — 誰でも跳べる
+  // ⚠️ レーンに立っていても、出し手を見ていなければ反応できない。
+  //    レーンを塞ぐ守備者はボールを見る（attention.ts）ので、ここは基本 1.0 に近い。
+  //    逆に自分のマークを見ている守備者は、レーンに居ても切れない。
+  p *= 0.45 + attnTo(block.def, from) * 0.55;
   return clamp(p, 0, 0.9) * reach;
 }
 
@@ -182,6 +187,9 @@ export function closingBest(
     let p = clamp(margin / CLOSE_SPAN, 0, 1) * (0.30 + hawk * 0.55) * reach;
     p *= 1.15 - rate(from.attr.passSpd) * 0.5;            // 速い球ほど切りにくい
     p -= rate(from.attr.passAcc) * 0.22;                  // 精度が高いほど動きを読んで通す
+    // ⚠️ 注目していない方向のボールには反応が遅れる。出し手を見ていない守備者は
+    //    走り込みのスタートが遅れる＝カットできない（注目システム）。
+    p *= 0.45 + attnTo(d, from) * 0.55;
     p = clamp(p, 0, 0.85);
     if (!best || p > best.p) best = { def: d, at: t, p };
   }

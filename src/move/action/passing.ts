@@ -404,8 +404,12 @@ export function updatePass(game: Game, dt: number): void {
       return;
     }
     // 綺麗に迎える: 最後の数cmを詰めて手元へ(back-snap無し)
+    // ⚠️ ここは 1フレームで最大 40cm 詰めていた＝**ワープ**（実測: 捕球の瞬間に 55〜65cm 飛ぶ）。
+    //    詰められるのはその選手が 1フレームで走れる分まで。届かない球は、届かないまま
+    //    腕を伸ばして捕る（腕の IK は catchBall が出す）。
     const gap = dist2DTo(receiver.pos, game.passCatch.x, game.passCatch.z);
-    if (gap > 0.02) moveToward2D(receiver.pos, game.passCatch.x, game.passCatch.z, Math.min(gap, 0.4));
+    const step = receiver.accelSpeed(dt) * dt;
+    if (gap > 0.02) moveToward2D(receiver.pos, game.passCatch.x, game.passCatch.z, Math.min(gap, step));
     // オーバー&バック違反のバックストップ: 公式通り相手ボールのスローインで再開
     if (game.frontT && game.attackSign(receiver.team) * receiver.pos.z < 0) {
       game.passTo = null;

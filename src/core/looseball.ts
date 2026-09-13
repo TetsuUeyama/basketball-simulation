@@ -277,7 +277,13 @@ export function chaseLoose(game: Game, dt: number): void {
           // 落下点に立てていないうちは跳ばない（跳んでも空振りして、着地後に拾う形になる）
           // planCatch が加速込みで到達可能な時刻しか返さないので、踏み込み(leap)の分だけ余裕を見る。
           const ready = gapNow <= runDist(p, plan.t) + LEAP_MAX / 2 + 0.35;
-          if (plan.t <= lead + 0.03 && ready) {
+          // ⚠️ リバウンドは**跳ね返りが頂点を過ぎてから**踏み切りを決める。リングから
+          //    弾んで上がっている最中に跳ぶと、実測でルーズ開始 0.07秒後・ボールが
+          //    2.74m（まだ上昇中）で踏み切っており、明らかに早い。
+          // ⚠️ 頂点までの猶予で許す条件は**外した**。上がっている最中に踏み切る絵が残る。
+          //    リバウンドは跳ね返りが**落ち始めてから**踏み切りを決める（vel.y <= 0）。
+          const peakOK = !game.looseIsRebound || game.ball.vel.y <= 0;
+          if (plan.t <= lead + 0.03 && ready && peakOK) {
             // ⚠️ 跳ぶ高さは plan.h ではなく**頂点の時刻のボールの高さ**から出す。plan.h だと
             //    少し早く踏み切った分ボールがまだ高く、実測で頂点のボールが手の上に残った。
             const th = L + dur / 2;                   // 今から頂点までの時間(沈み込み込み)
@@ -444,7 +450,11 @@ export function secureLoose(game: Game, p: Player, label?: string): void {
     // アウトレットの投げ方をここへ揃える。
     p.grabTwoHand = twoHandGrab(game, p, game.ball.pos);
     const offensive = p.team === game.looseOff;
-    if (game.looseIsRebound) p.stats.reb++;   // ミスショットからのリバウンドだけを数える
+    // ミスショットからのリバウンドだけを数える。撃った側が取ればオフェンスリバウンド。
+    if (game.looseIsRebound) {
+      p.stats.reb++;
+      if (offensive) p.stats.oreb++; else p.stats.dreb++;
+    }
     if (!offensive && game.looseStealBy) {    // 守備がはたき落としたボールを確保した
       game.looseStealBy.stats.stl++;          // スティールははたき出した者に記録
       if (game.looseStealVictim) game.looseStealVictim.stats.tov++;
