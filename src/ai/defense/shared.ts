@@ -60,17 +60,31 @@ export function getBackOnDefense(
     d.transitT = 0.2;   // 戻っている間は守備の構えをやめて全力疾走の向きで走る
     const depth = d.role === "C" ? 1.6 : 3.0;
     const tz = s * (RIM.z - depth);
-    const gb = game.steerAround(d, 0, tz);   // 体を避けて全力で戻る
+    // ⚠️ x=0（コート中央）を目標にしていたため、ビッグ全員が中央を通って戻っていた。
+    const gb = game.steerAround(d, runLane(d.pos.x, 0, 0.45), tz);   // 体を避けて全力で戻る
     moveToward2D(d.pos, gb.x, gb.z, d.accelToward(dt, gb.x, gb.z, 1.15) * dt);
     game.clampCourt(d.pos);
     return true;
   }
   if (upCourt || stranded) {
     d.transitT = 0.2;
-    const gb = game.steerAround(d, man.pos.x * 0.4, s * (RIM.z - 7));
+    // 走路は自分のレーンを保ったまま斜めに寄せる（下の runLane 参照）。
+    const gb = game.steerAround(d, runLane(d.pos.x, man.pos.x * 0.4, 0.5), s * (RIM.z - 7));
     moveToward2D(d.pos, gb.x, gb.z, d.accelToward(dt, gb.x, gb.z, 1.12) * dt);
     game.clampCourt(d.pos);
     return true;
   }
   return false;
+}
+
+/**
+ * 戻り/上がりの走路の横位置。
+ * ⚠️ 目標へ一直線に向かわせると全員がコート中央へ吸い寄せられ、左右のレーンが空く
+ *    （実測: 移動中の守備は 39.9% が中心1.5m以内、外側 4.5〜7.0m には 6.6% しか居ない）。
+ *    今いるレーンを保ったまま **斜めに** 寄せる。converge が小さいほどレーンを保つ。
+ *    ⚠️ これは「行ける場所の制限」ではない。行き先の**取り方**を変えているだけで、
+ *    　 選手は従来どおり自分の足で（accelToward の刻みで）動く。
+ */
+export function runLane(curX: number, wantX: number, converge: number): number {
+  return curX + (wantX - curX) * converge;
 }

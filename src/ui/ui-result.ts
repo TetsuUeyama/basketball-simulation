@@ -10,12 +10,14 @@ declare module "./ui" {
     buildResult(): void;
     refreshBoardNames(): void;
     showResult(game: Game): void;
+    showResultPreview(game: Game): void;   // ⚠️ 仮: レイアウト確認用
     resultTabBar(): HTMLDivElement;
     renderResultTab(): void;
     statsTable(game: Game, team: number): HTMLDivElement;
     teamCompare(game: Game): HTMLDivElement;
     cell(text: string, width: number, align?: string): HTMLSpanElement;
     stickyCell(text: string, width: number): HTMLSpanElement;
+
     teamBlock(name: string, color: string, align: string): HTMLElement;
     scoreEl(color: string): HTMLSpanElement;
     button(label: string): HTMLButtonElement;
@@ -65,7 +67,7 @@ UI.prototype.buildResult = function(): void {
       fontSize: btnFont, fontWeight: "800", padding: "9px clamp(12px, 4.2vw, 22px)", whiteSpace: "nowrap",
       background: "rgba(232,235,242,0.96)", color: "#10131a", border: "1px solid rgba(255,255,255,0.5)",
     } as Partial<CSSStyleDeclaration>);
-    rematch.onclick = () => { this.onBack(); this.refreshEditors(); this.setPhase("pregame"); };
+    rematch.onclick = () => { this.onBack(); this.refreshEditors(); this.startMatch(); };
 
     // チーム選択 → クラブチーム選択ウィザードへ飛ぶ
     const pickTeams = this.button("チーム選択");
@@ -162,22 +164,78 @@ UI.prototype.statsTable = function(game: Game, team: number): HTMLDivElement {
     const table = document.createElement("div");
     Object.assign(table.style, { width: "max-content" } as Partial<CSSStyleDeclaration>);
 
+    const GAP = 2;
+    // ヘッダーのセル。**1行のflexの中で縦に伸びる**ので、group を持たない列の項目名は
+    // 2段ぶんの高さの中央に来る（REB のような2段の見出しと高さが揃う）。
+    const headCell = (text: string, w: number, dim: number, bold = false): HTMLDivElement => {
+      const d = document.createElement("div");
+      Object.assign(d.style, {
+        width: `${w}px`, flexShrink: "0", display: "flex",
+        alignItems: "center", justifyContent: "center", textAlign: "center",
+        opacity: String(dim), fontWeight: bold ? "800" : "600",
+        ...ELLIPSIS,
+      } as Partial<CSSStyleDeclaration>);
+      d.textContent = text;
+      return d;
+    };
+
+    // ヘッダーは**1行**。group を持つ連続した列だけ、その中で上下2段に割る。
     const cols = document.createElement("div");
-    Object.assign(cols.style, { display: "flex", gap: "4px", fontSize: "10px", opacity: "0.6", margin: "1px 0" });
+    Object.assign(cols.style, {
+      display: "flex", gap: `${GAP}px`, fontSize: "10px", margin: "1px 0", alignItems: "stretch",
+    } as Partial<CSSStyleDeclaration>);
     const hc = this.stickyCell("", UI.NAME_W); hc.style.opacity = "0.6";
     cols.appendChild(hc);
-    for (const c of UI.BOX_COLS) cols.appendChild(this.cell(c.label, c.w, "center"));
+    for (let i = 0; i < UI.BOX_COLS.length; i++) {
+      const c = UI.BOX_COLS[i];
+      if (!c.group) { cols.appendChild(headCell(c.label, c.w, 0.6)); continue; }
+      // まとめた見出し（上段）＋内訳のラベル（下段）
+      let n = 0, span = 0;
+      while (i + n < UI.BOX_COLS.length && UI.BOX_COLS[i + n].group === c.group) {
+        span += UI.BOX_COLS[i + n].w; n++;
+      }
+      span += GAP * (n - 1);                      // 束ねた列の間の余白も見出しの幅に含める
+      const block = document.createElement("div");
+      Object.assign(block.style, {
+        width: `${span}px`, flexShrink: "0", display: "flex", flexDirection: "column",
+      } as Partial<CSSStyleDeclaration>);
+      const gl = document.createElement("div");
+      Object.assign(gl.style, {
+        textAlign: "center", fontWeight: "800", opacity: "0.85",
+        borderBottom: "1px solid rgba(255,255,255,0.3)", paddingBottom: "1px", marginBottom: "1px",
+      } as Partial<CSSStyleDeclaration>);
+      gl.textContent = c.group;
+      const subs = document.createElement("div");
+      Object.assign(subs.style, { display: "flex", gap: `${GAP}px` } as Partial<CSSStyleDeclaration>);
+      for (let k = 0; k < n; k++) {
+        const sc = UI.BOX_COLS[i + k];
+        subs.appendChild(headCell(sc.label, sc.w, 0.6));
+      }
+      block.append(gl, subs);
+      cols.appendChild(block);
+      i += n - 1;
+    }
     table.appendChild(cols);
 
-    for (const pl of game.allPlayers(team)) {
+    game.allPlayers(team).forEach((pl, i) => {
       const row = document.createElement("div");
-      Object.assign(row.style, { display: "flex", gap: "4px", fontSize: "12px", margin: "1px 0" });
+      Object.assign(row.style, {
+        display: "flex", gap: `${GAP}px`, fontSize: "12px", margin: "1px 0",
+        // ゼブラ: 1行おきに地色を変えて横方向を追いやすくする
+        background: UI.ROW_ALT[i % 2],
+      } as Partial<CSSStyleDeclaration>);
       const nm = this.stickyCell(`${pl.role} ${pl.name}`, UI.NAME_W);
       nm.style.opacity = pl.idx < STARTERS ? "0.95" : "0.7"; // ベンチは少し暗く
+      // ⚠️ 名前セルは sticky で不透明な地色を持つ。ゼブラを見せるため同じ明暗を持たせる。
+      nm.style.background = UI.NAME_ALT[i % 2];
       row.appendChild(nm);
-      for (const c of UI.BOX_COLS) row.appendChild(this.cell(c.get(pl.stats), c.w, "center"));
+      for (const c of UI.BOX_COLS) {
+        const el = this.cell(c.get(pl.stats), c.w, "center");
+        if (c.bold) el.style.fontWeight = "700";   // 合計(TD)だけ太字
+        row.appendChild(el);
+      }
       table.appendChild(row);
-    }
+    });
     scroller.appendChild(table);
     wrap.appendChild(scroller);
     return wrap;
@@ -193,14 +251,15 @@ UI.prototype.teamCompare = function(game: Game): HTMLDivElement {
     };
     const t0 = total(0), t1 = total(1);
     const pct = (m: number, at: number) => at ? ` (${Math.round(100 * m / at)}%)` : "";
-    const rows: { label: string; a: string; b: string }[] = [
+    const rows: { label: string; a: string; b: string; tint?: "part"; bold?: boolean }[] = [
       { label: "PTS", a: `${t0.pts}`, b: `${t1.pts}` },
       { label: "FG", a: `${t0.fgm}/${t0.fga}${pct(t0.fgm, t0.fga)}`, b: `${t1.fgm}/${t1.fga}${pct(t1.fgm, t1.fga)}` },
       { label: "3P", a: `${t0.tpm}/${t0.tpa}${pct(t0.tpm, t0.tpa)}`, b: `${t1.tpm}/${t1.tpa}${pct(t1.tpm, t1.tpa)}` },
       { label: "FT", a: `${t0.ftm}/${t0.fta}${pct(t0.ftm, t0.fta)}`, b: `${t1.ftm}/${t1.fta}${pct(t1.ftm, t1.fta)}` },
-      { label: "OREB", a: `${t0.oreb}`, b: `${t1.oreb}` },
-      { label: "DREB", a: `${t0.dreb}`, b: `${t1.dreb}` },
-      { label: "REB", a: `${t0.reb}`, b: `${t1.reb}` },
+      // リバウンドは内訳(OREB/DREB)と合計(REB)を別行にし、背景で束ねて内訳だと分かるようにする
+      { label: "OREB", a: `${t0.oreb}`, b: `${t1.oreb}`, tint: "part" as const },
+      { label: "DREB", a: `${t0.dreb}`, b: `${t1.dreb}`, tint: "part" as const },
+      { label: "REB", a: `${t0.reb}`, b: `${t1.reb}`, bold: true },
       { label: "AST", a: `${t0.ast}`, b: `${t1.ast}` },
       { label: "STL", a: `${t0.stl}`, b: `${t1.stl}` },
       { label: "BLK", a: `${t0.blk}`, b: `${t1.blk}` },
@@ -250,21 +309,27 @@ UI.prototype.teamCompare = function(game: Game): HTMLDivElement {
       wrap.appendChild(ls);
     }
 
-    for (const r of rows) {
+    rows.forEach((r) => {
       const row = document.createElement("div");
-      Object.assign(row.style, { display: "flex", alignItems: "center", fontSize: "12px", margin: "1px 0" });
+      Object.assign(row.style, {
+        display: "flex", alignItems: "center", fontSize: "12px", margin: "1px 0",
+      } as Partial<CSSStyleDeclaration>);
       const a = document.createElement("span");
-      Object.assign(a.style, { flex: "1", textAlign: "right", color: colorOf(0), fontWeight: "700" });
+      Object.assign(a.style, { flex: "1", textAlign: "right", color: colorOf(0), fontWeight: r.bold ? "800" : "700" });
       a.textContent = r.a;
       const lab = document.createElement("span");
       Object.assign(lab.style, { width: "44px", textAlign: "center", opacity: "0.6", fontSize: "10px" });
       lab.textContent = r.label;
       const b = document.createElement("span");
-      Object.assign(b.style, { flex: "1", textAlign: "left", color: colorOf(1), fontWeight: "700" });
+      Object.assign(b.style, { flex: "1", textAlign: "left", color: colorOf(1), fontWeight: r.bold ? "800" : "700" });
       b.textContent = r.b;
+      // OREB / DREB は REB の内訳。背景は使わず、文字を控えめにして従属関係を示す。
+      if (r.tint === "part") {
+        for (const el of [a, lab, b]) { el.style.opacity = "0.6"; el.style.fontSize = "11px"; }
+      }
       row.append(a, lab, b);
       wrap.appendChild(row);
-    }
+    });
     return wrap;
 };
 
@@ -314,4 +379,42 @@ UI.prototype.button = function(label: string): HTMLButtonElement {
       borderRadius: "8px", padding: "6px 14px", fontSize: "13px", fontWeight: "700", cursor: "pointer",
     } as Partial<CSSStyleDeclaration>);
     return b;
+};
+
+// ============================================================================
+// ⚠️ 仮（レイアウト確認用）— リザルト画面をタイトルから直接開くためのダミー集計。
+//    本番のフローでは使わない。確認が済んだら、この節と ui-title.ts の
+//    「リザルト画面を確認（仮）」ボタン、ui.ts の `lastGame` 退避を削除すること。
+// ============================================================================
+UI.prototype.showResultPreview = function(game: Game): void {
+    const rnd = (a: number, b: number) => a + Math.floor(Math.random() * (b - a + 1));
+    for (let t = 0; t < 2; t++) {
+      for (const pl of game.allPlayers(t)) {
+        const s = pl.stats;
+        const starter = pl.idx < 5;
+        s.min = rnd(starter ? 1400 : 300, starter ? 2200 : 1100);   // 秒（表示は /60）
+        s.fga = rnd(starter ? 6 : 1, starter ? 22 : 9);
+        s.fgm = rnd(0, s.fga);
+        s.tpa = rnd(0, Math.min(9, s.fga));
+        s.tpm = rnd(0, s.tpa);
+        s.fta = rnd(0, 11);
+        s.ftm = rnd(0, s.fta);
+        s.pts = s.fgm * 2 + s.tpm + s.ftm;
+        s.oreb = rnd(0, 6);
+        s.dreb = rnd(0, 11);
+        s.reb = s.oreb + s.dreb;      // 合計は必ず内訳の和
+        s.ast = rnd(0, 13);
+        s.stl = rnd(0, 5);
+        s.blk = rnd(0, 5);
+        s.tov = rnd(0, 7);
+      }
+    }
+    const tot = (t: number) => game.allPlayers(t).reduce((a, p) => a + p.stats.pts, 0);
+    game.score = [tot(0), tot(1)];
+    // ラインスコア（4Q ぶん）。合計が score と合うように最後のQで帳尻を合わせる。
+    game.qLine = [0, 1].map((t) => {
+      const q = [rnd(15, 30), rnd(15, 30), rnd(15, 30)];
+      return [...q, Math.max(0, game.score[t] - q[0] - q[1] - q[2])];
+    });
+    this.showResult(game);
 };

@@ -206,6 +206,19 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
         spx2 = spx + Math.sin(p.freePhase) * r;
         spz2 = spz + Math.cos(p.freePhase) * r * 0.6;        // 横に広く、縦は控えめ
       }
+      // ⚠️ 持ち場が遠いとき、目標へ一直線に向かうと全員がコート中央を通る
+      //    （実測: ウイングの持ち場は |x|=5.66m なのに実際は 3.48m、コーナーは
+      //    　6.80m に対し 3.72m と、2〜3m 内側に寄っていた。ワイドレーン(|x|>4m)に
+      //    　居るのは平均1.7人で、12.9% は 0人だった）。
+      //    **先に自分のレーンへ開いてから上がる**＝斜めに走ってコート幅を使う。
+      //    縦の詰めを半分に抑えるだけなので、行ける場所を制限しているわけではない。
+      {
+        const gap = dist2DTo(p.pos, spx2, spz2);
+        const wide = Math.abs(spx2) > 3.5;   // ウイング/コーナーなど外の持ち場
+        if (gap > 3.5 && wide && Math.abs(p.pos.x) < Math.abs(spx2) - 1.0) {
+          spz2 = p.pos.z + (spz2 - p.pos.z) * 0.45;   // 横へ開くのを先行させる
+        }
+      }
       const sj = game.steerAround(p, spx2, spz2, true);   // 通り抜けず迂回
       // ⚠️ 持ち場へはジョグで向かっていた（倍率指定なし=1.0）。実測で攻撃移行中の速度は
       //    走力の 43% しかなく、守備がセットし切ってから攻撃が始まっていた。

@@ -18,6 +18,20 @@ export function overallOf(p: Player): number {
 /** 守れるポジションのビット（C=1 / PF=2 / SF=4 / SG=8 / PG=16）。identity.ts の posMask と同じ並び。 */
 export const POS_BIT: Record<string, number> = { C: 1, PF: 2, SF: 4, SG: 8, PG: 16 };
 
+/** スロット番号 → そのスロットで守るポジション。0=PG .. 4=C。 */
+export const SLOT_POS = ["PG", "SG", "SF", "PF", "C"] as const;
+
+/**
+ * その選手が**今就いているスロットの位置**。交代の適格判定はここを基準にすること。
+ * ⚠️ `p.role` はロスター構築時にスロットの位置で上書きされたラベルで、交代で別の枠へ
+ *    入った後も更新されない。`roleFit(b, out.role)` と書くと「退く選手のラベル」を
+ *    基準にしてしまい、ズレが連鎖する（実測: コート上の 39.5% で role と実スロットが
+ *    食い違い、適性外の選手が 7.5%、相手のゴール下ビッグに本来ガードが付く場面が 13.3%）。
+ */
+export function slotPosOf(p: { slot: number; role: string }): string {
+  return SLOT_POS[p.slot] ?? p.role;
+}
+
 // ポジション適格性: 主ロール / 選手DBの posMask（守れるポジション）/ EXTRA_POSITIONS の手指定。
 // 適格なら 1、不適格なら 0。posMask は WE2010 の J〜N 列由来で、1人が複数ポジションを持つ。
 export function roleFit(p: { role: string; name: string; posMask?: number }, slot: string): number {

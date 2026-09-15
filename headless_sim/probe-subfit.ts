@@ -52,6 +52,8 @@ const hoops = buildCourt(scene); const game = new Game(scene);
 const g = game as unknown as { applyRoster(): void; reset(): void };
 const DT = 1 / 60;
 const NG = Number(process.env.NG ?? 4);
+let subs = 0;
+const onCourt = new Map<number, Set<string>>();
 let on = 0, onBad = 0, starterBad = 0, starterN = 0, subBad = 0, subN = 0;
 let drift = 0, tipN = 0, tipBad = 0;
 let badN = 0, badButRoleOK = 0;
@@ -60,6 +62,12 @@ for (let gi = 0; gi < NG; gi++) {
   g.applyRoster(); g.reset();
   for (let i = 0; i < 60 * 60 * 8; i++) {
     game.update(DT);
+    for (let t = 0; t < 2; t++) {
+      const cur = new Set(game.teamPlayers(t).map((q) => q.name));
+      const prev = onCourt.get(t);
+      if (prev) for (const nm of cur) if (!prev.has(nm)) subs++;
+      onCourt.set(t, cur);
+    }
     if (i % 120) continue;
     for (let t = 0; t < 2; t++) for (const p of game.teamPlayers(t)) {
       const slot = SLOT_POS[p.slot] ?? p.role;
@@ -78,5 +86,6 @@ console.log(`  スロット位置に適性なし: ${(onBad/on*100).toFixed(1)}%`
 console.log(`  　先発枠の選手: ${(starterBad/Math.max(1,starterN)*100).toFixed(1)}% (${starterN})`);
 console.log(`  　控えの選手:   ${(subBad/Math.max(1,subN)*100).toFixed(1)}% (${subN})`);
 console.log(`  ジャンプボール時点(交代前): ${(tipBad/Math.max(1,tipN)*100).toFixed(1)}% (${tipN}件)`);
+console.log(`  交代で入った回数: ${subs}（${NG}試合、1チーム1試合 ${(subs / NG / 2).toFixed(1)}回）`);
 console.log(`  role と実スロットの食い違い: ${(drift/on*100).toFixed(1)}%  ← 次の交代はこの role で適格判定される`);
 console.log(`  適性なしのうち「自分の role なら適格」: ${(badButRoleOK/Math.max(1,badN)*100).toFixed(1)}% (${badN}件)`);

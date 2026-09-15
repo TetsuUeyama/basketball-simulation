@@ -191,7 +191,7 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
 
     const wrap = document.createElement("div");
     Object.assign(wrap.style, {
-      width: "100%", boxSizing: "border-box", padding: "7px 14px",
+      width: "100%", boxSizing: "border-box", padding: "2px 14px 4px",
       background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.14)",
       // gap: 比較行間の縦の間隔
       borderRadius: "12px", display: "flex", flexDirection: "column", gap: "1px",
@@ -209,9 +209,15 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
       d.textContent = TEAM_NAMES[t];
       return d;
     };
-    const ovrEl = (v: number, win: boolean, delta: number | null): HTMLDivElement => {
+    // ポーカーの役（ハイカード等）。戦力値のすぐ隣に出す。未確定なら peek の暫定値。
+    const rankName = (t: number): string => {
+      const m = this.game?.poker;
+      if (!m) return "";
+      return (m.teams[t].rank ?? m.peek(t))?.name ?? "";
+    };
+    const ovrEl = (v: number, win: boolean, delta: number | null, t = -1): HTMLDivElement => {
       const d = document.createElement("div");
-      Object.assign(d.style, { display: "flex", alignItems: "baseline", gap: "3px", fontSize: "22px", fontWeight: "800", color: "#fff", opacity: win ? "1" : "0.55" });
+      Object.assign(d.style, { display: "flex", alignItems: "baseline", gap: "3px", fontSize: "18px", fontWeight: "800", color: "#fff", opacity: win ? "1" : "0.55" });
       const n = document.createElement("span");
       n.textContent = String(v);
       d.appendChild(n);
@@ -220,6 +226,18 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
         Object.assign(dl.style, { fontSize: "12px", fontWeight: "800", color: delta > 0 ? UI.GAIN : UI.LOSS });
         dl.textContent = delta > 0 ? `+${delta}` : `${delta}`;
         d.appendChild(dl);
+      }
+      if (t >= 0) {
+        const rk = rankName(t);
+        if (rk) {
+          const r = document.createElement("span");
+          Object.assign(r.style, {
+            fontSize: "11px", fontWeight: "800", opacity: "0.9", color: colorOf(t),
+            whiteSpace: "nowrap",
+          } as Partial<CSSStyleDeclaration>);
+          r.textContent = rk;
+          d.appendChild(r);
+        }
       }
       return d;
     };
@@ -232,9 +250,9 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
     const oa = dispOvr[0], ob = dispOvr[1];
     head.append(
       nameEl(0, "left"),
-      ovrEl(oa, oa >= ob, prev(0) ? oa - baseOvr[0] : null),
+      ovrEl(oa, oa >= ob, prev(0) ? oa - baseOvr[0] : null, 0),
       vs,
-      ovrEl(ob, ob >= oa, prev(1) ? ob - baseOvr[1] : null),
+      ovrEl(ob, ob >= oa, prev(1) ? ob - baseOvr[1] : null, 1),
       nameEl(1, "right"),
     );
     wrap.appendChild(head);
@@ -245,8 +263,9 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
       const row = document.createElement("div");
       Object.assign(row.style, {
         // 値の列は数字を外側の端に寄せ、±N は浮遊（absolute）させて列幅を消費させない。
-        display: "grid", gridTemplateColumns: "40px 1fr 54px 1fr 40px", gap: "6px",
-        alignItems: "center",
+        // ⚠️ 縦を薄くするため列間と行間を詰める（ラベル列も狭める）。
+        display: "grid", gridTemplateColumns: "34px 1fr 46px 1fr 34px", gap: "2px 5px",
+        alignItems: "center", lineHeight: "1.1",
       } as Partial<CSSStyleDeclaration>);
       const scale = (v: number) => clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
       // 値のセル: 数字は外側の端に密着; 色付きの ±N はバーの端の上に内向きに浮遊する。
@@ -258,7 +277,7 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
           justifyContent: align === "right" ? "flex-start" : "flex-end",
         } as Partial<CSSStyleDeclaration>);
         const n = document.createElement("span");
-        Object.assign(n.style, { fontSize: "12px", fontWeight: "800", color: "#fff", opacity: win ? "1" : "0.5" });
+        Object.assign(n.style, { fontSize: "10px", fontWeight: "800", color: "#fff", opacity: win ? "1" : "0.5" });
         n.textContent = v.toFixed(1);   // 0.1 の精度で小さな交代も見えるように
         d.appendChild(n);
         // 小数第1位までの変化
@@ -283,7 +302,7 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
       const bar = (v: number, color: string, win: boolean, fromRight: boolean, old: number | null): HTMLDivElement => {
         const track = document.createElement("div");
         Object.assign(track.style, {
-          height: "8px", background: "rgba(255,255,255,0.08)", borderRadius: "4px",
+          height: "5px", background: "rgba(255,255,255,0.08)", borderRadius: "3px",
           overflow: "hidden", display: "flex", justifyContent: fromRight ? "flex-end" : "flex-start",
         } as Partial<CSSStyleDeclaration>);
         const seg = (w: number, bg: string): HTMLDivElement => {
@@ -307,7 +326,7 @@ UI.prototype.buildVsBoard = function(preview?: { team: number; roster: PlayerDef
         return track;
       };
       const lab = document.createElement("div");
-      Object.assign(lab.style, { fontSize: "11px", fontWeight: "700", opacity: "0.75", textAlign: "center", whiteSpace: "nowrap" });
+      Object.assign(lab.style, { fontSize: "9px", fontWeight: "700", opacity: "0.72", textAlign: "center", whiteSpace: "nowrap" });
       lab.textContent = label;
       row.append(
         val(a, a >= b, "right", oldA),

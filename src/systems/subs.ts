@@ -5,7 +5,7 @@ import { QUARTERS } from "../config";
 import { STARTERS } from "../roster";
 import { scoringPower } from "../roles";
 import { rate, clamp, dist2DTo, moveToward2D } from "../util";
-import { roleFit, overallOf, refreshChoiceRanks } from "../ai/lineups";
+import { roleFit, slotPosOf, overallOf, refreshChoiceRanks } from "../ai/lineups";
 import { runDefenseDuringDeadish } from "../ai/defense";
 import { benchSeat, benchStandSpot } from "../core/bench";
 import { blockBench, pushApart } from "../core/collision";
@@ -69,7 +69,7 @@ export function matchupSubs(game: Game, team: number, exclude: Player | null): v
       if (gap > 0.12 || hurting) {
         let best: Player | null = null, bestD = defRating(ourDef) + 0.06;   // 本当のアップグレードが必要
         for (const b of bench) {
-          if (roleFit(b, ourDef.role) <= 0) continue;   // そのポジション適格のみ
+          if (roleFit(b, slotPosOf(ourDef)) <= 0) continue;   // そのポジション適格のみ
           const d = defRating(b);
           if (d > bestD) { bestD = d; best = b; }
         }
@@ -90,7 +90,7 @@ export function matchupSubs(game: Game, team: number, exclude: Player | null): v
       let best: Player | null = null, bestH = handleScore(ourPG) + 0.08;
       for (const b of bench) {
         if (b.role !== "PG" && b.role !== "SG") continue;  // ガード
-        if (roleFit(b, ourPG.role) <= 0) continue;   // そのポジション適格のみ
+        if (roleFit(b, slotPosOf(ourPG)) <= 0) continue;   // そのポジション適格のみ
         const hs = handleScore(b);
         if (hs > bestH) { bestH = hs; best = b; }
       }
@@ -120,7 +120,7 @@ export function planSubs(game: Game, exclude: Player | null): boolean {
         if (b.fatigue > 0.35) continue;                 // 回復不十分
         // ガベージ時以外は明確に新しい脚が必要
         if (!blowout && b.fatigue > out.fatigue - 0.15) continue;
-        const fit = roleFit(b, out.role);
+        const fit = roleFit(b, slotPosOf(out));
         if (fit <= 0) continue;
         const score = overallOf(b) * 0.5 + (1 - b.fatigue) * 0.5 + fit * 0.3;
         if (score > bestScore) { bestScore = score; best = b; }
@@ -148,7 +148,7 @@ export function planSubs(game: Game, exclude: Player | null): boolean {
           if (oc === game.handler || oc === exclude) continue;
           if (oc.idx < STARTERS) continue;                       // 他の先発は下げない
           if (oc.stintT < 12) continue;                          // 入ったばかり
-          if (roleFit(starter, oc.role) <= 0) continue; // 適格のみ
+          if (roleFit(starter, slotPosOf(oc)) <= 0) continue; // 適格のみ
           if (game.subWalkers.some((w) => w.p === oc)) continue;
           const bad = oc.fatigue + (1 - overallOf(oc) / 99);   // 最も疲れ/弱い者から
           if (bad > worst) { worst = bad; target = oc; }

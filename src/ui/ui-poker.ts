@@ -14,11 +14,12 @@ import { POKER_OPTS, teamShort } from "../config";
 import { ROSTER, ROSTER_SIZE, STARTERS } from "../roster";
 import { ATTR_META } from "../attributes";
 import type { Player } from "../objects/player/player";
-import { PokerMatch, POKER_ROUNDS, type DiscardTarget } from "../poker/state";
+import type { PlayerDef } from "../attributes";
+import { PokerMatch, POKER_ROUNDS, HAND_SIZE, type DiscardTarget } from "../poker/state";
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
 import { discardEffect, hinderEffect, MAX_DISCARDS, type AttrKey } from "../poker/effects";
 import { cpuPlan, cpuWantsConfirm } from "../poker/ai";
-import { UI, colorOf, INK } from "./ui";
+import { UI, colorOf, INK, BTN_BG } from "./ui";
 
 declare module "./ui" {
   interface UI {
@@ -36,11 +37,18 @@ declare module "./ui" {
     pokerTargets: Map<number, DiscardTarget>;
     /** タップ操作で選択中の手札（ドラッグしない環境用）。-1 = なし */
     pokerPicked: number;
+    /** 操作モード: カードで強化 / 選手を入れ替え。 */
+    pokerMode: "cards" | "swap";
+    /** 入れ替えモードで1人目に選んだロスター番号（-1 = 未選択）。 */
+    pokerSwapPick: number;
+    /** 上段の控え枠に出しているチーム（0/1）。 */
+    pokerBenchSide: number;
     /** 札を置ける選手アイコン（ドロップ判定に使う）。 */
     pokerSpots: { target: DiscardTarget; el: HTMLElement }[];
     /** ラウンド1が終わったあとに一度だけ走らせる処理（選手紹介 → ティップオフ）。 */
     pokerThen: (() => void) | null;
     beginPoker(then?: () => void): void;
+    startMatch(): void;
     openPoker(round: number): void;
     renderPoker(): void;
     finishPokerRound(): void;
@@ -84,6 +92,9 @@ UI.prototype.openPoker = function(round: number): void {
   this.simPaused = true;
   this.pokerTargets = new Map();
   this.pokerPicked = -1;
+  this.pokerMode = "cards";
+  this.pokerSwapPick = -1;
+  this.pokerBenchSide = POKER_OPTS.userTeam ?? 0;
   this.pokerSpots = [];
   this.pokerFresh = 0;
   // まず相手の手番。画面を出してから思考 → 札を置く → 補充、の順に見せる。
@@ -92,7 +103,8 @@ UI.prototype.openPoker = function(round: number): void {
   if (!this.pokerPanel) {
     const p = this.panel();
     Object.assign(p.style, {
-      zIndex: "70", gap: "10px", padding: "12px", overflowY: "auto",
+      zIndex: "70", gap: "3px", padding: "0 12px 12px", overflowY: "auto",
+      justifyContent: "flex-start",   // 中央寄せをやめて上詰めにする
     } as Partial<CSSStyleDeclaration>);
     this.pokerPanel = p;
     this.root.appendChild(p);
@@ -121,92 +133,79 @@ UI.prototype.renderPoker = function(): void {
 
   const opp = 1 - user;
   const placed = this.pokerTargets;
+  // ---- VS ボード ----
+  {
+    const vs = this.buildVsBoard();          // 前試合画面と同じ幅制限で中央に置く
+    vs.style.width = "min(560px, 100%)";
+    vs.style.alignSelf = "center";
+    p.appendChild(vs);
+  }
 
-  // ---- 相手の伏せた手札（最上段） ----
-  p.appendChild(opponentArea(this, m, opp));
+  // ---- 控え（フィールドボードの上）。左のボタンで 自分 ⇄ 相手 を切り替える ----
+  {
+    const benchRow = document.createElement("div");
+    Object.assign(benchRow.style, {
+      display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+      width: "100%", flexWrap: "wrap",
+    } as Partial<CSSStyleDeclaration>);
+    benchRow.append(benchSideToggle(this, user, opp), benchGrid(this, m, this.pokerBenchSide));
+    p.appendChild(benchRow);
+  }
 
   // ---- コート盤: 左半分が相手の先発5人（妨害）/ 右半分が自分の先発5人（強化） ----
   p.appendChild(courtBoard(this, m, user));
 
-  // ---- 手札（置いていない札だけ）----
-  const handRow = document.createElement("div");
-  Object.assign(handRow.style, {
-    display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap", minHeight: "76px",
+  // ---- カード（フィールドボードの下）----
+  // ⚠️ **今カードを出している側だけ**を出す。両方並べると同じ場所に手札が2列できて二重に見える。
+  //    高さは固定し、相手の番 ⇄ 自分の番で中身が変わっても下の要素が動かないようにする。
+  //    相手の伏せ札の位置は、飛んでくる札の演出（flyCardToTarget）の起点になるので、
+  //    相手の交換中は必ず描くこと。
+  const cards = document.createElement("div");
+  Object.assign(cards.style, {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
+    minHeight: "68px", justifyContent: "center", width: "100%",
   } as Partial<CSSStyleDeclaration>);
-  const hand = m.teams[user].hand;
-  hand.forEach((card, i) => {
-    if (placed.has(i)) return;
-    handRow.appendChild(handCard(this, card, i));
-  });
-  p.appendChild(handRow);
+  if (this.pokerStage === "cpu") {
+    cards.appendChild(opponentArea(this, m, opp));    // 相手が交換中 → 相手の伏せ札だけ
+  } else {
+    const handRow = document.createElement("div");
+    Object.assign(handRow.style, {
+      display: "flex", gap: `${CARD_GAP}px`, justifyContent: "center", flexWrap: "wrap",
+    } as Partial<CSSStyleDeclaration>);
+    const hand = m.teams[user].hand;
+    hand.forEach((card, i) => {
+      if (placed.has(i)) return;
+      handRow.appendChild(handCard(this, card, i));
+    });
+    cards.appendChild(handRow);                       // それ以外 → 自分の手札だけ
+  }
+  // カードの右隣にボタンを縦並びで置く。
+  {
+    const bottom = document.createElement("div");
+    Object.assign(bottom.style, {
+      display: "flex", alignItems: "center", justifyContent: "center", gap: "10px",
+      width: "100%", flexWrap: "wrap",
+    } as Partial<CSSStyleDeclaration>);
+    // ⚠️ 札を置くと手札が減るが、**カード欄の幅は変えない**。幅が縮むと左右のボタン列が
+    //    内側へ寄って動いてしまう。手札5枚ぶんの幅を常に確保しておく。
+    cards.style.width = `${CARD_W * HAND_SIZE + CARD_GAP * (HAND_SIZE - 1)}px`;
+    cards.style.flexShrink = "0";
+    // ボタンはカードの**左**。
+    // 左 = 交換 / 手札公開、右 = 操作モードのトグル。
+    bottom.append(pokerActionCol(this, m, g, user), cards, pokerModeCol(this));
+    p.appendChild(bottom);
+  }
 
-  // ---- 控え8人（手札の下） ----
-  p.appendChild(benchGrid(this, m, user));
-
-  // ---- 現在の役 + ボタン ----
+  // ---- 下段のボタン ----
+  // ⚠️ 役（ハイカード等）は VS ボードの戦力値の隣に出しているので、ここには出さない。
+  //    交換ボタンは上のボタン行へ移した。ここに残るのは公開後の「試合へ」だけ。
   const btns = document.createElement("div");
   Object.assign(btns.style, {
     display: "flex", gap: "12px", justifyContent: "center", alignItems: "center", flexWrap: "wrap",
   } as Partial<CSSStyleDeclaration>);
-  const rank = m.peek(user);
-  const rankRow = document.createElement("div");
-  Object.assign(rankRow.style, {
-    display: "flex", alignItems: "baseline", gap: "8px",
-    fontSize: "clamp(14px,3.4vw,19px)", fontWeight: "800", letterSpacing: "1px",
-    color: colorOf(user),
-  } as Partial<CSSStyleDeclaration>);
-  const mine = document.createElement("span");
-  mine.textContent = rank.name;
-  rankRow.appendChild(mine);
-  const oppRank = m.teams[opp].rank;
-  if (oppRank) {
-    const vs = document.createElement("span");
-    vs.textContent = "vs";
-    Object.assign(vs.style, { fontSize: "12px", opacity: "0.6", color: "#fff", fontWeight: "600" });
-    const theirs = document.createElement("span");
-    theirs.textContent = oppRank.name;
-    Object.assign(theirs.style, { color: colorOf(opp) });
-    rankRow.append(vs, theirs);
-  }
-  btns.appendChild(rankRow);
-  const accent = (b: HTMLButtonElement): void => {
-    Object.assign(b.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
-  };
-
-  if (this.pokerStage === "exchange") {
-    const n = placed.size;
-    const ex = this.button(n ? `${n}枚 交換` : "交換しない");
-    if (n) accent(ex);
-    ex.onclick = () => {
-      const picks = [...placed.keys()].sort((a, b) => a - b);
-      const targets = picks.map((i) => placed.get(i)!);   // DiscardTarget（自軍/相手）
-      m.exchange(user, picks, targets);
-      g.applyRoster();                 // 能力値が動いたので派生値（走速など）を作り直す
-      this.pokerTargets = new Map();
-      this.pokerPicked = -1;
-      if (user === m.home) { this.pokerStage = "confirm"; this.renderPoker(); }
-      else cpuHomeDecides(this, m, g);
-    };
-    btns.appendChild(ex);
-  } else if (this.pokerStage === "confirm") {
-    const lock = this.button("確定");
-    accent(lock);
-    lock.onclick = () => {
-      m.confirm();
-      announceHands(m, g);
-      g.applyRoster();
-      this.pokerStage = "reveal";
-      this.renderPoker();
-    };
-    btns.appendChild(lock);
-    if (m.round < POKER_ROUNDS) {
-      const carry = this.button("持ち越し");
-      carry.onclick = () => { m.carryOver(); this.finishPokerRound(); };
-      btns.appendChild(carry);
-    }
-  } else if (this.pokerStage === "reveal") {
+  if (this.pokerStage === "reveal") {
     const go = this.button("試合へ");
-    accent(go);
+    Object.assign(go.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
     go.onclick = () => this.finishPokerRound();
     btns.appendChild(go);
   }
@@ -485,8 +484,8 @@ function opponentArea(ui: UI, m: PokerMatch, opp: number): HTMLDivElement {
   });
   area.appendChild(hand);
 
-  // 相手の控え8人。ここにも札を置いて妨害できる（自分側と対称の並び）。
-  area.appendChild(benchGrid(ui, m, opp));
+  // ⚠️ 相手の控え8人は**上段の控え枠へ移した**（自分/相手をトグルで切り替える）。
+  //    ここに置くとカード欄の下に控えがもう1つ並んで二重になる。
 
   return area;
 }
@@ -514,18 +513,19 @@ function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
     position: "relative", width: "min(470px, 94vw)", aspectRatio: "28 / 15",
     background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
     border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px",
-    flexShrink: "0", margin: "2px 0 14px",
+    flexShrink: "0", margin: "2px 0 2px",   // カード欄との隙間を詰める
   } as Partial<CSSStyleDeclaration>);
   board.innerHTML = COURT_SVG;
-  const put = (t: number, i: number, spot: { x: number; y: number }): void => {
-    const cell = playerCell(ui, m, t, i, 34);
+  // mirror=true なら役割ピルを顔の**左**へ出す（盤の左半分＝相手側）。
+  const put = (t: number, i: number, spot: { x: number; y: number }, mirror = false): void => {
+    const cell = playerCell(ui, m, t, i, 34, mirror);
     Object.assign(cell.style, {
       position: "absolute", left: `${spot.x}%`, top: `${spot.y}%`,
       transform: "translate(-50%,-50%)",
     } as Partial<CSSStyleDeclaration>);
     board.appendChild(cell);
   };
-  for (let i = 0; i < STARTERS; i++) put(opp, i, OPP_SPOT[i]);   // 相手は左半分
+  for (let i = 0; i < STARTERS; i++) put(opp, i, OPP_SPOT[i], true);   // 相手は左半分（ピルも左）
   for (let i = 0; i < STARTERS; i++) put(team, i, OWN_SPOT[i]);  // 自分は右半分
   return board;
 }
@@ -534,15 +534,19 @@ function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
 function benchGrid(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
   const bench = document.createElement("div");
   Object.assign(bench.style, {
-    display: "grid", gridTemplateColumns: "repeat(4, auto)", gap: "4px 10px",
+    display: "grid", gridTemplateColumns: "repeat(4, auto)", gap: "1px 10px",
     justifyContent: "center", alignContent: "center",
     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
-    borderRadius: "10px", padding: "6px 8px",
+    borderRadius: "10px", padding: "1px 8px",   // 上下の隙間をほぼ無くす
   } as Partial<CSSStyleDeclaration>);
   for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 30));
   return bench;
 }
 
+/** 手札1枚の寸法。カード欄の幅を固定するのにも使う。 */
+const CARD_W = 44, CARD_H = 62;
+/** 手札どうしの間隔。 */
+const CARD_GAP = 8;
 /** 置いた札の1行ぶんの高さ。札が無くても同じ高さを空けておく。 */
 const CHIP_H = 13;
 
@@ -565,7 +569,8 @@ function doneChip(by: number, key: AttrKey, amount: number): HTMLDivElement {
  * 札を落とせる選手ひとり分（先発・控え・相手選手すべて同じ作り）。
  * `team` が操作中のチームなら強化、相手チームなら妨害になる。
  */
-function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number): HTMLDivElement {
+function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number,
+                    mirror = false): HTMLDivElement {
   const user = POKER_OPTS.userTeam ?? 0;
   const own = team === user;
   const cell = document.createElement("div");
@@ -595,17 +600,33 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
     face.style.border = "2px solid rgb(" + col + ")";
     face.style.boxShadow = "0 0 0 1px rgba(" + col + ",0.55), 0 0 10px 2px rgba(" + col + ",0.5)";
   }
-  cell.appendChild(face);
-
   const def = ROSTER[team][idx];
+  // 顔の**右横**に役割ピルを縦並びで置く（1段目: 攻ロール＋オフェンス順位 / 2段目: 守ロール）。
+  {
+    const headRow = document.createElement("div");
+    Object.assign(headRow.style, {
+      display: "flex", alignItems: "center", gap: "4px",
+    } as Partial<CSSStyleDeclaration>);
+    // 盤の左半分の選手は、顔の左にピルを出して中央を空ける。
+    if (mirror) {
+      headRow.appendChild(rolePills(ui, def, team, size, true));
+      headRow.appendChild(face);
+    } else {
+      headRow.appendChild(face);
+      headRow.appendChild(rolePills(ui, def, team, size));
+    }
+    cell.appendChild(headRow);
+  }
   const name = document.createElement("div");
   name.textContent = `${def.role} ${def.name}`;
   Object.assign(name.style, {
-    fontSize: size >= 40 ? "10px" : "9px", fontWeight: "700",
+    fontSize: size >= 40 ? "9px" : "8px", fontWeight: "700",
     maxWidth: size >= 40 ? "94px" : "78px", whiteSpace: "nowrap",
     overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 3px rgba(0,0,0,0.9)",
   } as Partial<CSSStyleDeclaration>);
   cell.appendChild(name);
+
+  // 役割ピル: 攻ロール / オフェンス選択順位 / 守ロール。自分のチームだけ操作できる。
 
   // 名前の下の1行。高さは札が無くても最初から確保し、中身は絶対配置にして
   // セルの幅にも影響させない（置いても・相手が動いても配置がずれない）。
@@ -661,12 +682,26 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
     const target: DiscardTarget = { team, idx };
     ui.pokerSpots.push({ target, el: cell });   // 相手の札が飛んでくる先にも使う
     if (ui.pokerStage === "exchange") {
-      cell.onclick = () => {           // タップ操作: 札を選んでから選手を叩く
-        if (ui.pokerPicked < 0) return;
+      cell.onclick = () => {
+        // 入れ替えモード: 1人目を選び、2人目で先発⇄控えを交換する。
+        if (ui.pokerMode === "swap") {
+          if (POKER_OPTS.userTeam === null || team !== POKER_OPTS.userTeam) return;
+          if (ui.pokerSwapPick < 0) { ui.pokerSwapPick = idx; ui.renderPoker(); return; }
+          if (ui.pokerSwapPick !== idx) swapRosterSlots(ui, m, team, ui.pokerSwapPick, idx);
+          ui.pokerSwapPick = -1;
+          ui.renderPoker();
+          return;
+        }
+        // 札を持たずに顔を叩いたら選手詳細を開く（選手一覧を廃した代わりの入口）。
+        if (ui.pokerPicked < 0) { ui.openDetailModal(ROSTER[team][idx], team); return; }
         placeCard(ui, ui.pokerPicked, target);
         ui.pokerPicked = -1;
         ui.renderPoker();
       };
+      if (ui.pokerMode === "swap" && ui.pokerSwapPick === idx) {
+        cell.style.outline = "2px solid rgb(120,225,140)";   // 1人目に選んだ印
+        cell.style.borderRadius = "8px";
+      }
     } else {
       cell.style.cursor = "default";
     }
@@ -676,7 +711,7 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
 
 /** 手札の1枚。ドラッグして選手へ落とす / タップで選んでから選手を叩く。 */
 function handCard(ui: UI, card: Card, i: number): HTMLDivElement {
-  const el = cardFace(card, 52, 74);
+  const el = cardFace(card, CARD_W, CARD_H);
   el.style.pointerEvents = "auto";
   if (ui.pokerStage !== "exchange") return el;
   el.style.cursor = "grab";
@@ -813,3 +848,218 @@ const COURT_SVG = `
     <path d="M 278,9 L 250,9 A 70 70 0 0 0 250,141 L 278,141"/>
   </g>
 </svg>`;
+
+// ============================================================================
+// 選手一覧を廃した代わりに、ポーカー画面のセルへ役割設定と入れ替えを持たせる。
+// ============================================================================
+
+/** 小さなピル。セル幅に収まるよう文字も詰める。 */
+function miniPill(text: string, active: boolean, accent: string, title: string,
+                  enabled: boolean, small: boolean, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.textContent = text;
+  b.title = title;
+  Object.assign(b.style, {
+    fontSize: small ? "8px" : "9px", fontWeight: active ? "800" : "600",
+    padding: small ? "1px 3px" : "1px 4px", borderRadius: "8px", lineHeight: "1.25",
+    cursor: enabled ? "pointer" : "default", whiteSpace: "nowrap",
+    background: active ? accent : BTN_BG,
+    color: active ? "#101319" : "rgba(255,255,255,0.5)",
+    border: active ? `1px solid ${accent}` : "1px solid rgba(255,255,255,0.16)",
+    opacity: enabled ? "1" : "0.55",
+  } as Partial<CSSStyleDeclaration>);
+  b.onpointerdown = (e) => e.stopPropagation();
+  b.onclick = (e) => { e.stopPropagation(); if (enabled) onClick(); };
+  return b;
+}
+
+/** 攻ロール / オフェンス選択順位 / 守ロール の3ピル。自分のチームだけ操作できる。 */
+function rolePills(ui: UI, def: PlayerDef, team: number, size: number,
+                   mirror = false): HTMLDivElement {
+  const row = document.createElement("div");
+  const small = size < 40;
+  // 顔の右横に置く縦2段。1段目 = 攻ロール + オフェンス順位、2段目 = 守ロール。
+  Object.assign(row.style, {
+    display: "flex", flexDirection: "column", gap: "2px",
+    alignItems: mirror ? "flex-end" : "flex-start",
+  } as Partial<CSSStyleDeclaration>);
+  const on = POKER_OPTS.userTeam !== null && team === POKER_OPTS.userTeam;
+  const offC = (def.evalRole && UI.OFF_GROUP_C[def.evalRole]) || "rgba(255,255,255,0.28)";
+  const defC = (def.defRole && UI.DEF_GROUP_C[def.defRole]) || "rgba(255,255,255,0.28)";
+  const offP = miniPill(def.evalRole ? (UI.EVAL_ROLES[def.evalRole]?.short ?? "?") : "攻-",
+    !!def.evalRole, offC, "オフェンスロール", on, small,
+    () => ui.openRolePicker(def, team, offP, () => ui.renderPoker(), "off"));
+  // 選択順位は攻ロールの隣。タップで 1→2→…→5→自動 と回る。
+  const rankP = miniPill(def.choiceRank ? String(def.choiceRank) : "自",
+    !!def.choiceRank, "rgb(120,225,140)", "オフェンス選択順位（1=最優先 / 自=能力で自動）", on, small,
+    () => {
+      def.choiceRank = def.choiceRank === undefined ? 1 : def.choiceRank >= 5 ? undefined : def.choiceRank + 1;
+      ui.renderPoker();
+    });
+  const defP = miniPill(def.defRole ? (UI.DEF_ROLES[def.defRole]?.short ?? "?") : "守-",
+    !!def.defRole, defC, "ディフェンスロール", on, small,
+    () => ui.openRolePicker(def, team, defP, () => ui.renderPoker(), "def"));
+  const line1 = document.createElement("div");
+  Object.assign(line1.style, { display: "flex", gap: "2px" } as Partial<CSSStyleDeclaration>);
+  // 左側のチーム（mirror）は、オフェンス順位を攻ロールの**左**へ。
+  if (mirror) line1.append(rankP, offP); else line1.append(offP, rankP);
+  row.append(line1, defP);
+  return row;
+}
+
+/**
+ * ロスターの2枠を入れ替える（先発⇄控え）。
+ * ⚠️ ポーカーの強化は `applied[].idx` の**インデックス管理**なので、枠を入れ替えたら
+ *    記録側の idx も付け替えないと `revert()` が別人から能力を引く。
+ *    置きかけの札（pokerTargets）も同じ理由で付け替える。
+ */
+function swapRosterSlots(ui: UI, m: PokerMatch, team: number, a: number, b: number): void {
+  const r = ROSTER[team];
+  [r[a], r[b]] = [r[b], r[a]];
+  for (const d of m.applied) {
+    if (d.team !== team) continue;
+    if (d.idx === a) d.idx = b; else if (d.idx === b) d.idx = a;
+  }
+  // ⚠️ コート上の5人は onPrepare の applyRoster で既に確定している。枠を入れ替えたら
+  //    ここで組み直さないと、画面のスタメンだけ入れ替わってコートは古いままになる。
+  ui.onPrepare();
+  for (const t of ui.pokerTargets.values()) {
+    if (t.team !== team) continue;
+    if (t.idx === a) t.idx = b; else if (t.idx === b) t.idx = a;
+  }
+}
+
+/**
+ * 試合を始める。旧・前試合画面（選手一覧）を廃したので、クラブ選択と再戦から
+ * **直接ここへ入る**。役割設定・先発入れ替え・VSボードはポーカー画面側へ移設済み。
+ * ⚠️ 旧 `tipOffButton` と同じ3手順を保つこと（コート配置 → ポーカー → ティップオフ）。
+ */
+UI.prototype.startMatch = function(): void {
+  this.setPhase("playing");
+  this.onPrepare();                       // 両チーム確定 → コートに並べる
+  this.beginPoker(() => this.onStart());  // ポーカー → 選手紹介 → ティップオフ
+};
+
+/**
+ * 上段のボタン行。左から
+ *   [交換しない / N枚 交換] [カードで強化] [選手を入れ替え] [手札公開]
+ * 中央2つが操作モードのトグル、両脇が確定タイミングの選択。
+ * ⚠️ 両脇はそれぞれのフェーズでだけ押せる（左=交換フェーズ / 右=確定フェーズ）。
+/** カード欄の左右に置くボタン列の共通の器。 */
+function btnCol(): HTMLDivElement {
+  const col = document.createElement("div");
+  Object.assign(col.style, {
+    display: "flex", flexDirection: "column", gap: "5px", alignItems: "stretch",
+    justifyContent: "center", minWidth: "104px",
+  } as Partial<CSSStyleDeclaration>);
+  return col;
+}
+
+/**
+ * カード欄の**左**。交換の実行と手札公開。
+ * ⚠️ それぞれのフェーズでだけ押せる（交換=交換フェーズ / 手札公開=確定フェーズ）。
+ *    列幅がフェーズで変わらないよう、押せない間も場所を確保して薄く出す。
+ */
+function pokerActionCol(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>, user: number): HTMLDivElement {
+  const col = btnCol();
+  const side = (label: string, enabled: boolean, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    Object.assign(b.style, {
+      padding: "4px 12px", borderRadius: "9px", fontSize: "11px", fontWeight: "800",
+      cursor: enabled ? "pointer" : "default", color: "#fff",
+      background: enabled ? colorOf(user) : BTN_BG,
+      border: enabled ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.14)",
+      opacity: enabled ? "1" : "0.35",
+    } as Partial<CSSStyleDeclaration>);
+    if (enabled) { b.style.color = INK; b.onclick = onClick; }
+    return b;
+  };
+
+  // 次のクォーターへ持ち越す（役を確定させない）。
+  const carry = (): void => { m.carryOver(); ui.finishPokerRound(); };
+
+  // 上のボタンは局面で役割が変わる。
+  //   交換フェーズ・札あり … 「N枚 交換」= 置いた札を切る
+  //   交換フェーズ・札なし … 「交換しない」= **確定させず次のクォーターへ持ち越す**
+  //   確定フェーズ       … 「継続」      = 公開せず次のクォーターへ持ち越す
+  // ⚠️ どちらの局面でも「持ち越し」を選べるようにしておくこと。手札公開しか選べないと
+  //    確定タイミングを握っている意味が無くなる。
+  const canCarry = m.round < POKER_ROUNDS;
+  const n = ui.pokerTargets.size;
+  if (ui.pokerStage === "exchange") {
+    col.appendChild(side(n ? `${n}枚 交換` : "交換しない", true, () => {
+      // ⚠️ 最終ラウンドは持ち越せないので、0枚のまま確定フェーズへ進める（詰まないように）。
+      if (n === 0 && canCarry) { carry(); return; }   // 交換しない = 持ち越し
+      const placed = ui.pokerTargets;
+      const picks = [...placed.keys()].sort((a, b) => a - b);
+      const targets = picks.map((i) => placed.get(i)!);   // DiscardTarget（自軍/相手）
+      m.exchange(user, picks, targets);
+      g.applyRoster();                 // 能力値が動いたので派生値（走速など）を作り直す
+      ui.pokerTargets = new Map();
+      ui.pokerPicked = -1;
+      if (user === m.home) { ui.pokerStage = "confirm"; ui.renderPoker(); }
+      else cpuHomeDecides(ui, m, g);
+    }));
+  } else {
+    col.appendChild(side("継続", ui.pokerStage === "confirm" && canCarry, carry));
+  }
+
+  col.appendChild(side("手札公開", ui.pokerStage === "confirm", () => {
+    m.confirm();
+    announceHands(m, g);
+    g.applyRoster();
+    ui.pokerStage = "reveal";
+    ui.renderPoker();
+  }));
+  return col;
+}
+
+/** カード欄の**右**。操作モード（カードで強化 ⇄ 選手を入れ替え）のトグル。 */
+function pokerModeCol(ui: UI): HTMLDivElement {
+  const col = btnCol();
+  for (const [mode, label] of [["cards", "カードで強化"], ["swap", "選手を入れ替え"]] as const) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    const act = ui.pokerMode === mode;
+    Object.assign(b.style, {
+      padding: "4px 12px", borderRadius: "9px", cursor: "pointer",
+      fontSize: "11px", fontWeight: act ? "800" : "600",
+      background: act ? "rgba(70,120,220,0.92)" : BTN_BG, color: "#fff",
+      border: act ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)",
+      opacity: act ? "1" : "0.7",
+    } as Partial<CSSStyleDeclaration>);
+    b.onclick = () => { ui.pokerMode = mode; ui.pokerSwapPick = -1; ui.pokerPicked = -1; ui.renderPoker(); };
+    col.appendChild(b);
+  }
+  return col;
+}
+
+/**
+ * 上段の控え枠に出すチームを選ぶトグル。
+ * ⚠️ 相手の控えは以前 `opponentArea` の中（カード欄の下）に並べていたが、
+ *    それだと控えの一覧が上下2か所に出て二重になる。同じ位置で切り替える。
+ */
+function benchSideToggle(ui: UI, user: number, opp: number): HTMLDivElement {
+  const col = document.createElement("div");
+  // 控え一覧の**左**に縦並びで置く。見出しの文字は置かない（ボタンだけで分かる）。
+  Object.assign(col.style, {
+    display: "flex", flexDirection: "column", gap: "4px", alignItems: "stretch",
+    justifyContent: "center",
+  } as Partial<CSSStyleDeclaration>);
+  for (const t of [user, opp]) {
+    const b = document.createElement("button");
+    b.textContent = teamShort(t);
+    const act = ui.pokerBenchSide === t;
+    Object.assign(b.style, {
+      padding: "3px 10px", borderRadius: "8px", cursor: "pointer",
+      fontSize: "10px", fontWeight: act ? "800" : "600", whiteSpace: "nowrap",
+      background: act ? colorOf(t) : BTN_BG, color: act ? INK : "#fff",
+      border: act ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)",
+      opacity: act ? "1" : "0.7",
+    } as Partial<CSSStyleDeclaration>);
+    b.onclick = () => { ui.pokerBenchSide = t; ui.pokerSwapPick = -1; ui.renderPoker(); };
+    col.appendChild(b);
+  }
+  return col;
+}

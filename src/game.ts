@@ -981,17 +981,23 @@ export class Game {
   }
 
   // この選手がローブロックに属するか。ビッグはゴールに住み、ストレッチ脅威のみペリメーターへ広がる。
+
+  /** ゴール下に住む1人（チームのビッグのうち最も3Pが低い"内寄り"）。 */
+  postAnchor(team: number): Player | null {
+    let anchor: Player | null = null;
+    for (const b of this.teamPlayers(team)) {
+      if (!this.isBig(b)) continue;
+      if (!anchor || rate(b.attr.threeAcc) < rate(anchor.attr.threeAcc)) anchor = b;
+    }
+    return anchor;
+  }
   prefersPost(p: Player): boolean {
     if (p.has("post") || p.has("centerSpot")) return true;
     if (!this.isBig(p)) return false;
     // ゴール下のアンカーは、チームのビッグのうち最も3Pが低い"内寄り"の1人に固定する。
     // これは役割ラベル(ストレッチ/プレイメイキングビッグ)より優先。3Pの下手なビッグ(C等)が
     // 誤ってストレッチ役を割り当てられても、必ずゴール下に入る。
-    let anchor: Player | null = null;
-    for (const b of this.teamPlayers(p.team)) {
-      if (!this.isBig(b)) continue;
-      if (!anchor || rate(b.attr.threeAcc) < rate(anchor.attr.threeAcc)) anchor = b;
-    }
+    const anchor = this.postAnchor(p.team);
     if (p === anchor) return true;                   // 最内ビッグは必ずポスト
     // アンカーは1人。もう1人のビッグは広げてスペーシングを確保する（リムランナー/
     // スクリーナーだけは内側に住む）。役割ラベルより属性優先の設計を保つ。
@@ -999,9 +1005,16 @@ export class Game {
     return false;
   }
 
-  // フォーメーションスポット: ポストのビッグはブロックへ(PF=左, C=右)、他は自分の枠のスポット。
+  // ⚠️ スポット6は**ブロックではなくショートコーナー(x=6.2)**。以前は slot===3(PF) だけを
+  //    5(ローブロック)へ送り、C(slot 4) は必ず 6 へ回していたため、**センターがゴール下に
+  //    居ない**状態になっていた（実測: C はリムから平均 9.96m・ゴール下3.5m内 12.7% で、
+  //    PF の 22.7% より外側だった）。ゴール下に住むのは postAnchor と決まっているので、
+  //    **アンカーを 5(ローブロック) へ入れ**、もう1人のポスト役を 6 へ出す。
+  //    「中は1人だけ」というスペーシングの設計はそのまま保たれる。
   homeSpotIdx(p: Player): number {
-    if (this.isBig(p) && this.prefersPost(p)) return p.slot === 3 ? 5 : 6;
+    if (this.isBig(p) && this.prefersPost(p)) {
+      return p === this.postAnchor(p.team) ? 5 : 6;
+    }
     return p.slot;
   }
 

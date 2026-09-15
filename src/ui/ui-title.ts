@@ -91,7 +91,24 @@ UI.prototype.buildTitle = function(): void {
     //    画面の中で選べる（リーグ選択前なら全チーム、リーグ選択後はそのリーグから）。
     const clubBtn = bigBtn("クラブチーム対戦", "リーグとチームを選んで対戦", () => this.startClubMatchup());
 
-    p.append(title, modeRow, sub, clubBtn);
+    // ⚠️ 仮（レイアウト確認用）: 試合を終えなくてもリザルト画面を開けるボタン。
+    //    ダミーのスタッツを入れて showResult を呼ぶだけ。確認が済んだら
+    //    このブロックと ui-result.ts の showResultPreview を削除すれば元に戻る。
+    const previewBtn = document.createElement("button");
+    Object.assign(previewBtn.style, {
+      width: "100%", padding: "8px", cursor: "pointer", color: "#fff",
+      borderRadius: "10px", border: "1px dashed rgba(255,255,255,0.35)",
+      background: "rgba(255,255,255,0.06)", fontSize: "clamp(11px,2.6vw,13px)",
+      fontWeight: "700", opacity: "0.85",
+    } as Partial<CSSStyleDeclaration>);
+    previewBtn.textContent = "リザルト画面を確認（仮）";
+    previewBtn.onclick = () => {
+      this.onNeedWorld();                    // まだコート/選手が無ければここで作る
+      const g = this.game;
+      if (g) this.showResultPreview(g);
+    };
+
+    p.append(title, modeRow, sub, clubBtn, previewBtn);
     this.root.appendChild(p);
     this.titlePanel = p;
 };
@@ -428,7 +445,7 @@ UI.prototype.openMatchupWizard = function(): void {
         this.closeChooser();          // オーバーレイを除去 → コート/選手が再び表示される
         this.onSetupLineups();        // 相手を考慮した DEFAULT の5人（エディタ表示前）
         this.refreshEditors();
-        this.setPhase("pregame");
+        this.startMatch();   // 旧・前試合画面は廃止。直接ポーカー画面へ
       }
     };
 

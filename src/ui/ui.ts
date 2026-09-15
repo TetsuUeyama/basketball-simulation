@@ -591,23 +591,33 @@ export class UI {
     if (phase === "playing") this.refreshBoardNames();
   }
 
-  // ボックススコアの列。FG / 3P / FT は 成功 ● / 試投 ● を表示（「3/8」）。
-  static readonly BOX_COLS: { label: string; w: number; get: (s: import("../objects/player/stats").Stats) => string }[] = [
-    { label: "MIN", w: 40, get: (s) => (s.min / 60).toFixed(1) },
-    { label: "PTS", w: 34, get: (s) => String(s.pts) },
-    { label: "FG", w: 48, get: (s) => `${s.fgm}/${s.fga}` },
-    { label: "3P", w: 44, get: (s) => `${s.tpm}/${s.tpa}` },
-    { label: "FT", w: 44, get: (s) => `${s.ftm}/${s.fta}` },
-    { label: "OR", w: 28, get: (s) => String(s.oreb) },
-    { label: "DR", w: 28, get: (s) => String(s.dreb) },
-    { label: "REB", w: 34, get: (s) => String(s.reb) },
-    { label: "AST", w: 34, get: (s) => String(s.ast) },
-    { label: "STL", w: 34, get: (s) => String(s.stl) },
-    { label: "BLK", w: 34, get: (s) => String(s.blk) },
-    { label: "TO", w: 30, get: (s) => String(s.tov) },
+  /**
+   * ボックススコアの列。FG / 3P / FT は 成功/試投。
+   * `group` を持つ連続した列は、ヘッダー2段目の上に**まとめた見出し**が1つ載る。
+   * リバウンドは上段に「REB」を3列ぶんの幅で置き、下段を OR / DR / TD に分ける。
+   */
+  static readonly BOX_COLS: {
+    label: string; w: number; group?: string; bold?: boolean;
+    get: (s: import("../objects/player/stats").Stats) => string;
+  }[] = [
+    { label: "MIN", w: 32, get: (s) => (s.min / 60).toFixed(1) },
+    { label: "PTS", w: 26, get: (s) => String(s.pts) },
+    { label: "FG", w: 40, get: (s) => `${s.fgm}/${s.fga}` },
+    { label: "3P", w: 40, get: (s) => `${s.tpm}/${s.tpa}` },
+    { label: "FT", w: 40, get: (s) => `${s.ftm}/${s.fta}` },
+    { label: "OR", w: 24, group: "REB", get: (s) => String(s.oreb) },
+    { label: "DR", w: 24, group: "REB", get: (s) => String(s.dreb) },
+    { label: "TD", w: 30, group: "REB", bold: true, get: (s) => String(s.reb) },
+    { label: "AST", w: 24, get: (s) => String(s.ast) },
+    { label: "STL", w: 24, get: (s) => String(s.stl) },
+    { label: "BLK", w: 24, get: (s) => String(s.blk) },
+    { label: "TO", w: 24, get: (s) => String(s.tov) },
   ];
-  static readonly NAME_W = 128;
-
+  /** ボックススコアの行の地色。1行おきに変えて横方向を追いやすくする（ゼブラ）。 */
+  static readonly ROW_ALT = ["rgba(255,255,255,0.00)", "rgba(255,255,255,0.055)"] as const;
+  /** 左端の固定セル(名前)は横スクロールで透けないよう不透明。ゼブラと同じ明暗を持たせる。 */
+  static readonly NAME_ALT = ["#0c0f16", "#15181f"] as const;
+  static readonly NAME_W = 124;
   // ---- 小さなビルダー ----------------------------------------------------
 
   // ---- 下部の選手バー（チームごとの顔アイコン、コート上 ⇄ ベンチのタブ） ----

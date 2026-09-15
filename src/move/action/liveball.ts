@@ -2,6 +2,7 @@
 // オフェンス/守備/はたきの毎フレーム進行、キャリー/ギャザー/ピックアップのボール位置決め。
 import { rate, clamp, dist2D, chance, dirTo2D } from "../../util";
 import { runOffense } from "../../ai/offense/onball";
+import { updateOffBallMotion } from "../../ai/offense/offball";
 import { runDefense } from "../../ai/defense";
 import { catchStrips, swarmStrips } from "../../ai/defense/vs-onball/strip";
 import { passToReceiver } from "./passing";
@@ -60,6 +61,12 @@ export function updateLive(game: Game, dt: number): void {
         passToReceiver(game, h, target, true, "jump");   // トラップ越しのコミット済みキックアウト
       }
     }
+    // ⚠️ パスの溜め中でも**オフボールの味方は動き続ける**。ここはハンドラーが
+    //    コミット済みで判断もドライブもしない分岐だが、オフボールの駆動は
+    //    runOffense の内側にあるため、以前はこの分岐に入るたびに味方4人が
+    //    まるごと1フレーム分の命令を失っていた（＝ハンドラーが足を止めると
+    //    全員が止まって見える原因）。守備だけが更新され、攻撃だけが凍っていた。
+    updateOffBallMotion(game, dt, h.team, h);
     runDefense(game, dt);
     return;
   }
