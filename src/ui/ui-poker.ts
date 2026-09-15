@@ -130,99 +130,107 @@ UI.prototype.openPoker = function(round: number): void {
   void round;
 };
 
+/**
+ * ポーカー画面の描画。
+ * ⚠️ **プレイヤー対CPUと CPU同士で分岐を作らないこと。** 以前は観戦を `renderWatch` という
+ *    別関数で組んでおり、後から足した部品（VSボード・配置ボード・控えの切替など）が
+ *    片方にしか入らず UI が食い違った。違いは「操作できるか」だけなので、
+ *    `watching` フラグで中身を差し替える形にして**並びは1本**に保つ。
+ */
 UI.prototype.renderPoker = function(): void {
   const g = this.game;
   const m = g?.poker;
   const p = this.pokerPanel;
-  const user = POKER_OPTS.userTeam;
   if (!g || !m || !p) return;
   p.replaceChildren();
   this.pokerSpots = [];
-  if (user === null) { renderWatch(this, m, p); return; }   // 観戦（CPU同士）
 
-  const opp = 1 - user;
+  const watching = POKER_OPTS.userTeam === null;       // CPU同士を眺めている
+  const view = POKER_OPTS.userTeam ?? m.home;          // 盤の右半分に置くチーム
+  const opp = 1 - view;
   const placed = this.pokerTargets;
-  // ---- VS ボード ----
+  const side = this.pokerBenchSide;
+
+  // ---- 見出し（ラウンドと、いま何が起きているか） ----
+  p.appendChild(pokerHeader(this, m));
+
+  // ---- VS ボード（戦力値の隣に役） ----
   {
-    const vs = this.buildVsBoard();          // 前試合画面と同じ幅制限で中央に置く
+    const vs = this.buildVsBoard();
     vs.style.width = "min(560px, 100%)";
     vs.style.alignSelf = "center";
     p.appendChild(vs);
   }
 
-  // ---- 控え（フィールドボードの上）。左のボタンで 自分 ⇄ 相手 を切り替える ----
+  // ---- 控え（左のボタンで 自分 ⇄ 相手 を切り替える） ----
   {
     const benchRow = document.createElement("div");
     Object.assign(benchRow.style, {
       display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
       width: "100%", flexWrap: "wrap",
     } as Partial<CSSStyleDeclaration>);
-    benchRow.append(benchSideToggle(this, user, opp), benchGrid(this, m, this.pokerBenchSide));
+    benchRow.append(benchSideToggle(this, view, opp), benchGrid(this, m, side));
     p.appendChild(benchRow);
   }
 
-  // ---- 盤（試合盤 ⇄ 各チームの配置ボード） ----
-  // ---- 盤（試合盤 ⇄ 自チームの攻撃/守備の配置ボード） ----
-  p.appendChild(boardToggle(this, user, opp));
+  // ---- 盤（試合盤 ⇄ 攻撃/守備の配置ボード） ----
+  p.appendChild(boardToggle(this, view, opp));
   p.appendChild(this.pokerBoard === "match"
-    ? courtBoard(this, m, user)
-    : formationBoard(this, user, this.pokerBoard));
+    ? courtBoard(this, m, view)
+    : formationBoard(this, watching ? side : view, this.pokerBoard));
 
-  // ---- カード（フィールドボードの下）----
-  // ⚠️ **今カードを出している側だけ**を出す。両方並べると同じ場所に手札が2列できて二重に見える。
-  //    高さは固定し、相手の番 ⇄ 自分の番で中身が変わっても下の要素が動かないようにする。
-  //    相手の伏せ札の位置は、飛んでくる札の演出（flyCardToTarget）の起点になるので、
-  //    相手の交換中は必ず描くこと。
+  // ---- カード（盤の下）＋ 左右のボタン列 ----
+  // ⚠️ 今カードを出している側だけを出す。幅は手札5枚ぶんで固定して、札を置いても
+  //    左右のボタンが動かないようにする。相手の伏せ札は飛んでくる札の演出の起点。
   const cards = document.createElement("div");
   Object.assign(cards.style, {
     display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
-    minHeight: "68px", justifyContent: "center", width: "100%",
+    minHeight: "68px", justifyContent: "center",
   } as Partial<CSSStyleDeclaration>);
-  if (this.pokerStage === "cpu") {
-    cards.appendChild(opponentArea(this, m, opp));    // 相手が交換中 → 相手の伏せ札だけ
+  if (watching) {
+    const turn = this.pokerWatchTurn ?? -1;
+    if (this.pokerStage === "reveal" || turn < 0) {
+      cards.append(opponentArea(this, m, opp), opponentArea(this, m, view));
+    } else {
+      cards.appendChild(opponentArea(this, m, turn));
+    }
+  } else if (this.pokerStage === "cpu") {
+    cards.appendChild(opponentArea(this, m, opp));
   } else {
     const handRow = document.createElement("div");
     Object.assign(handRow.style, {
       display: "flex", gap: `${CARD_GAP}px`, justifyContent: "center", flexWrap: "wrap",
     } as Partial<CSSStyleDeclaration>);
-    const hand = m.teams[user].hand;
-    hand.forEach((card, i) => {
+    m.teams[view].hand.forEach((card, i) => {
       if (placed.has(i)) return;
       handRow.appendChild(handCard(this, card, i));
     });
-    cards.appendChild(handRow);                       // それ以外 → 自分の手札だけ
+    cards.appendChild(handRow);
   }
-  // カードの右隣にボタンを縦並びで置く。
+  cards.style.width = `${CARD_W * HAND_SIZE + CARD_GAP * (HAND_SIZE - 1)}px`;
+  cards.style.flexShrink = "0";
   {
     const bottom = document.createElement("div");
     Object.assign(bottom.style, {
       display: "flex", alignItems: "center", justifyContent: "center", gap: "10px",
       width: "100%", flexWrap: "wrap",
     } as Partial<CSSStyleDeclaration>);
-    // ⚠️ 札を置くと手札が減るが、**カード欄の幅は変えない**。幅が縮むと左右のボタン列が
-    //    内側へ寄って動いてしまう。手札5枚ぶんの幅を常に確保しておく。
-    cards.style.width = `${CARD_W * HAND_SIZE + CARD_GAP * (HAND_SIZE - 1)}px`;
-    cards.style.flexShrink = "0";
-    // ボタンはカードの**左**。
-    // 左 = 交換 / 手札公開、右 = 操作モードのトグル。
-    bottom.append(pokerActionCol(this, m, g, user), cards, pokerModeCol(this));
+    // 左 = 交換 / 手札公開（観戦ではスキップ）、右 = 操作モードのトグル
+    bottom.append(pokerActionCol(this, m, g, view, watching), cards, pokerModeCol(this));
     p.appendChild(bottom);
   }
 
-  // ---- 下段のボタン ----
-  // ⚠️ 役（ハイカード等）は VS ボードの戦力値の隣に出しているので、ここには出さない。
-  //    交換ボタンは上のボタン行へ移した。ここに残るのは公開後の「試合へ」だけ。
+  // ---- 下段のボタン（公開後の「試合へ」だけ） ----
   const btns = document.createElement("div");
   Object.assign(btns.style, {
     display: "flex", gap: "12px", justifyContent: "center", alignItems: "center", flexWrap: "wrap",
   } as Partial<CSSStyleDeclaration>);
-  if (this.pokerStage === "reveal") {
+  if (!watching && this.pokerStage === "reveal") {
     const go = this.button("試合へ");
-    Object.assign(go.style, { background: colorOf(user), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
+    Object.assign(go.style, { background: colorOf(view), color: INK, fontWeight: "800" } as Partial<CSSStyleDeclaration>);
     go.onclick = () => this.finishPokerRound();
     btns.appendChild(go);
   }
-  // stage === "cpu" の間はボタンを出さない（相手が打ち終わるまで触れない）
   p.appendChild(btns);
 };
 
@@ -275,59 +283,9 @@ function runWatchRound(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void 
  *    配置ボードも控えのトグルも無く、UI が食い違っていた。
  *    違うのは「操作できない」ことだけ（編集の可否は各部品が userTeam を見て決める）。
  */
-function renderWatch(ui: UI, m: PokerMatch, p: HTMLDivElement): void {
-  const away = 1 - m.home;
-  const side = ui.pokerBenchSide;          // 盤と控えに出すチーム（下のボタンで切替）
-  p.appendChild(watchHeader(ui, m));
-
-  // VS ボード（戦力値の隣に役）
-  {
-    const vs = ui.buildVsBoard();
-    vs.style.width = "min(560px, 100%)";
-    vs.style.alignSelf = "center";
-    p.appendChild(vs);
-  }
-
-  // 控え（左のボタンでチームを切替）— プレイ時と同じ作り
-  {
-    const benchRow = document.createElement("div");
-    Object.assign(benchRow.style, {
-      display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-      width: "100%", flexWrap: "wrap",
-    } as Partial<CSSStyleDeclaration>);
-    benchRow.append(benchSideToggle(ui, m.home, away), benchGrid(ui, m, side));
-    p.appendChild(benchRow);
-  }
-
-  // 盤: 試合盤 ⇄ 「控えで選んでいるチーム」の攻撃/守備の配置ボード
-  p.appendChild(boardToggle(ui, m.home, away));
-  p.appendChild(ui.pokerBoard === "match"
-    ? courtBoard(ui, m, m.home)              // 右半分がホーム、左半分がアウェイ
-    : formationBoard(ui, side, ui.pokerBoard));
-
-  // カード: 今打っている側だけ（公開後は両方）
-  {
-    const cards = document.createElement("div");
-    Object.assign(cards.style, {
-      display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
-      minHeight: "68px", justifyContent: "center", width: "100%",
-    } as Partial<CSSStyleDeclaration>);
-    const turn = ui.pokerWatchTurn ?? -1;
-    if (ui.pokerStage === "reveal" || turn < 0) {
-      cards.append(opponentArea(ui, m, away), opponentArea(ui, m, m.home));
-    } else {
-      cards.appendChild(opponentArea(ui, m, turn));
-    }
-    p.appendChild(cards);
-  }
-
-  p.appendChild(teamStrip(ui, m, away));
-  p.appendChild(teamStrip(ui, m, m.home));
-  p.appendChild(watchFooter(ui, m));
-}
 
 /** 見出し: ラウンドと、いま何が起きているか。 */
-function watchHeader(ui: UI, m: PokerMatch): HTMLDivElement {
+function pokerHeader(ui: UI, m: PokerMatch): HTMLDivElement {
   const row = document.createElement("div");
   Object.assign(row.style, {
     display: "flex", gap: "10px", alignItems: "baseline", justifyContent: "center",
@@ -335,6 +293,12 @@ function watchHeader(ui: UI, m: PokerMatch): HTMLDivElement {
   } as Partial<CSSStyleDeclaration>);
   const r = document.createElement("span");
   r.textContent = `ポーカー強化  ラウンド ${m.round} / ${POKER_ROUNDS}`;
+  // ⚠️ 旧 teamStrip が出していた「公開の決定権はホーム」をここへ集約した。
+  const h = document.createElement("span");
+  h.textContent = `公開の決定権: ${teamShort(m.home)}`;
+  Object.assign(h.style, {
+    fontSize: "10px", opacity: "0.7", fontWeight: "700", color: colorOf(m.home),
+  } as Partial<CSSStyleDeclaration>);
   const s = document.createElement("span");
   const turn = ui.pokerWatchTurn ?? -1;
   s.textContent = ui.pokerStage === "reveal" ? "役を公開"
@@ -345,58 +309,11 @@ function watchHeader(ui: UI, m: PokerMatch): HTMLDivElement {
     fontSize: "11px", opacity: "0.85",
     color: turn >= 0 ? colorOf(turn) : "#fff",
   } as Partial<CSSStyleDeclaration>);
-  row.append(r, s);
+  row.append(r, s, h);
   return row;
 }
 
-/** チーム名 + 役（確定後）+ そのラウンドの手番表示。 */
-function teamStrip(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
-  const row = document.createElement("div");
-  Object.assign(row.style, {
-    display: "flex", gap: "8px", alignItems: "center", justifyContent: "center",
-    fontSize: "clamp(12px,3vw,16px)", fontWeight: "800",
-  } as Partial<CSSStyleDeclaration>);
-  const name = document.createElement("span");
-  name.textContent = teamShort(team);
-  Object.assign(name.style, { color: colorOf(team) } as Partial<CSSStyleDeclaration>);
-  row.appendChild(name);
-  const tag = document.createElement("span");
-  tag.textContent = team === m.home ? "ホーム（公開の決定権）" : "アウェイ";
-  Object.assign(tag.style, { fontSize: "10px", opacity: "0.7", fontWeight: "700" } as Partial<CSSStyleDeclaration>);
-  row.appendChild(tag);
-  const rank = m.teams[team].rank;
-  if (rank) {
-    const rk = document.createElement("span");
-    rk.textContent = rank.name;
-    Object.assign(rk.style, {
-      fontSize: "12px", padding: "1px 6px", borderRadius: "6px",
-      border: "1px solid " + colorOf(team), color: INK, background: colorOf(team),
-    } as Partial<CSSStyleDeclaration>);
-    row.appendChild(rk);
-  }
-  if ((ui.pokerWatchTurn ?? -1) === team) {
-    const dot = document.createElement("span");
-    dot.textContent = "● 手番";
-    Object.assign(dot.style, { fontSize: "10px", color: colorOf(team) } as Partial<CSSStyleDeclaration>);
-    row.appendChild(dot);
-  }
-  return row;
-}
 
-/** 観戦の足元: 待ち時間を飛ばすボタン。 */
-function watchFooter(ui: UI, m: PokerMatch): HTMLDivElement {
-  const row = document.createElement("div");
-  Object.assign(row.style, {
-    display: "flex", gap: "10px", justifyContent: "center", alignItems: "center",
-  } as Partial<CSSStyleDeclaration>);
-  if (ui.pokerSkip) {
-    const b = ui.button(ui.pokerStage === "reveal" ? "試合へ" : "進む");
-    b.onclick = () => ui.pokerSkip?.();
-    row.appendChild(b);
-  }
-  void m;
-  return row;
-}
 
 /** チームの呼び名（ホーム/アウェイ）。 */
 function teamLabel(team: number, m: PokerMatch): string {
@@ -1004,9 +921,12 @@ function swapRosterSlots(ui: UI, m: PokerMatch, team: number, a: number, b: numb
     if (d.team !== team) continue;
     if (d.idx === a) d.idx = b; else if (d.idx === b) d.idx = a;
   }
-  // ⚠️ コート上の5人は onPrepare の applyRoster で既に確定している。枠を入れ替えたら
-  //    ここで組み直さないと、画面のスタメンだけ入れ替わってコートは古いままになる。
-  ui.onPrepare();
+  // ⚠️ コート上の5人は applyRoster で確定しているので、枠を入れ替えたら組み直す。
+  //    **`onPrepare()` を呼んではいけない**。その中の `game.reset()` は試合まるごとの
+  //    リセットで、score / qLine / quarter / gameClock まで初期化してしまう
+  //    （実害: クォーター間のポーカーで入れ替えが起きると 1Q の得点が 0 に戻った）。
+  //    ここで必要なのはロスターの組み直しだけ。
+  ui.game?.applyRoster();
   for (const t of ui.pokerTargets.values()) {
     if (t.team !== team) continue;
     if (t.idx === a) t.idx = b; else if (t.idx === b) t.idx = a;
@@ -1044,7 +964,8 @@ function btnCol(): HTMLDivElement {
  * ⚠️ それぞれのフェーズでだけ押せる（交換=交換フェーズ / 手札公開=確定フェーズ）。
  *    列幅がフェーズで変わらないよう、押せない間も場所を確保して薄く出す。
  */
-function pokerActionCol(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>, user: number): HTMLDivElement {
+function pokerActionCol(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>, user: number,
+                        watching = false): HTMLDivElement {
   const col = btnCol();
   const side = (label: string, enabled: boolean, onClick: () => void): HTMLButtonElement => {
     const b = document.createElement("button");
@@ -1069,6 +990,11 @@ function pokerActionCol(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>, user:
   //   確定フェーズ       … 「継続」      = 公開せず次のクォーターへ持ち越す
   // ⚠️ どちらの局面でも「持ち越し」を選べるようにしておくこと。手札公開しか選べないと
   //    確定タイミングを握っている意味が無くなる。
+  // 観戦(CPU同士)では自分が打たないので、この列はスキップだけにする。
+  if (watching) {
+    col.appendChild(side("スキップ", true, () => ui.pokerSkip?.()));
+    return col;
+  }
   const canCarry = m.round < POKER_ROUNDS;
   const n = ui.pokerTargets.size;
   if (ui.pokerStage === "exchange") {

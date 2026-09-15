@@ -106,6 +106,8 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
 
     // ローブロック(idx 5/6)はビッグの領域: ガードやストレッチビッグは張らない
     if (i >= 5 && !game.prefersPost(self)) continue;
+    // 逆に、ポスト役は外(0..4)のスポットを取らない（3Pラインに立たせない）
+    if (i < 5 && game.prefersPost(self)) continue;
 
     let score: number;
     if (i >= 5) {
@@ -131,7 +133,8 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
         - clog * 2.5                            // ドライブレーンを塞がない
         - dist2DTo(self.pos, s.x, s.z) * 0.1;   // 移動コスト
       if (self.has("sideSpot") && (i === 3 || i === 4)) score += 1.5;
-      if (game.prefersPost(self)) score = Math.min(score, 4.0) - 1.5;
+      // ⚠️ 以前はここで減点するだけで、結局**取れてしまって**いた（実測: PF の 43.1% /
+      //    C の 36.6% が 3Pラインより外）。上のループ冒頭で弾くように変更済み。
     }
     if (score > bestScore) { bestScore = score; bestI = i; }
   }
