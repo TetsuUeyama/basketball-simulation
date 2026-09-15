@@ -5,7 +5,7 @@ import { rate, dist2D, moveToward2D, towardPoint } from "../../util";
 import { tickScreenCoverage, defendScreen } from "../../move/reaction/screen";
 import { defendHandler } from "./vs-onball";
 import { defendOffBall } from "./offball";
-import { getBackOnDefense } from "./shared";
+import { manOf, getBackOnDefense } from "./shared";
 import { pickDefScheme } from "./schemes";
 import { runZoneDefense } from "./schemes/zone";
 import { runPress } from "./schemes/press";
@@ -36,14 +36,15 @@ export function runDefense(game: Game, dt: number): void {
   {
     let best = Infinity;
     for (const d of defenders) {
-      if (offense[d.slot] === game.handler) continue;   // オンボールは除外
+      if (manOf(game, d) === game.handler) continue;   // オンボールは除外
       const score = dist2D(d.pos, protect) - (game.isBig(d) ? 1.2 : 0);
       if (score < best) { best = score; anchor = d; }
     }
   }
 
   for (const d of defenders) {
-    const man = offense[d.slot]; // index一致の man-to-man
+    // ⚠️ 既定は index 一致の man-to-man。配置ボードで相手を指定していればそちらを見る。
+    const man = manOf(game, d) ?? offense[d.slot];
     const isOnBall = man === game.handler;
     if (!isOnBall) d.decayLean(dt);
 

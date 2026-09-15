@@ -10,6 +10,7 @@ import { countScreening, handlerPressured, goodScreener, setScreen, updateScreen
 import { tightlyTrapped, trapReliever, trapReliefSpot } from "../reads";
 import { bestOpenSpot, spacingNudge, ballSpacingNudge, nearestTeammateDist } from "./spots";
 import type { Game } from "../../../game";
+import { defenderOf } from "../../defense/shared";
 import { attnTo } from "../../attention";
 
 // オフボール全員の駆動: スポット確保、リムへのカット、ギブ&ゴー、オープンスポットへの
@@ -337,7 +338,7 @@ function frontedBy(game: Game, p: Player, d: Player): boolean {
  *    印は注目システム（マーカーを見る）と外しの判断の両方が見るので、毎フレーム要る。
  */
 function markFronted(game: Game, p: Player): boolean {
-  const d = game.teamPlayers(1 - p.team)[p.slot];
+  const d = defenderOf(game, p);
   if (!d || !game.handler || game.handler === p) return false;
   const fronted = frontedBy(game, p, d);
   if (fronted) p.frontedT = 0.12;     // 毎フレーム更新するので短くてよい
@@ -347,7 +348,7 @@ function markFronted(game: Game, p: Player): boolean {
 function tryShake(game: Game, dt: number, p: Player): void {
   const fronted = p.frontedT > 0;
   if (p.shakeT > 0 || !game.handler || game.handler === p) return;
-  const d = game.teamPlayers(1 - p.team)[p.slot];   // 担当守備者(index一致)
+  const d = defenderOf(game, p);   // 担当守備者(index一致)
   if (!d) return;
   // 走り続ける選手は、少し離されていても動き直してスペースを作る
   const reach = 2.2 + rate(p.attr.agility) * 1.0;

@@ -66,6 +66,10 @@ export class Player {
   uprightTarget = 1;
   weight = 80;                   // kg（DB由来。体格＝見た目の厚みと接触の質量に使う）
   posMask = 0;                   // 守れるポジションのビット和（C=1/PF=2/SF=4/SG=8/PG=16）
+  /** 守り方の指定（PlayerDef 由来）。undefined = 自動。 */
+  defMode: "man" | "zone" | undefined = undefined;
+  /** マンマークで見る相手のスロット。undefined = 同じスロットの相手。 */
+  markSlot: number | undefined = undefined;
   runSpeed: number;              // m/s、`speed`能力値から算出
   role: string;                  // PG / SG / SF / PF / C
   evalRole: string | undefined;  // オフェンスロール — 攻撃時の挙動修飾 (applyDef)

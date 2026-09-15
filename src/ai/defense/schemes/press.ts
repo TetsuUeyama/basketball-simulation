@@ -2,6 +2,7 @@
 import { rate, clamp, chance, dist2D, moveToward2D, dirTo2D, towardPoint } from "../../../util";
 import { ballSecurity } from "../../../eval";
 import type { Game } from "../../../game";
+import { manOf } from "../shared";
 
 // フルコートプレス/トラップ。ボール保持者の男が嫌がらせ、2人目がトラップ(ダブル)、
 // 残りはアウトレットを denial、1人がセーフティで over-the-top のレイアップを止める。
@@ -45,7 +46,7 @@ export function runPress(game: Game, dt: number): void {
   }
   // DENY: ボールと担当の間(ボール側)のパスレーンに立つ
   for (const d of deny) {
-    const man = offense[d.slot];
+    const man = manOf(game, d) ?? offense[d.slot];
     const tx = man.pos.x * 0.55 + h.pos.x * 0.45 + (h.pos.x - man.pos.x) * 0.05;
     const tz = man.pos.z * 0.55 + h.pos.z * 0.45;
     moveToward2D(d.pos, tx, tz, d.accelToward(dt, tx, tz, 1.05) * dt);

@@ -7,6 +7,7 @@ import { twWeight, leapHeight } from "../../../eval";
 import { defEffort, denyIntensity, getBackOnDefense } from "../shared";
 import { attnTo } from "../../attention";
 import { THREE_DIST } from "../../../config";
+import { TACTICS } from "../../../attributes";
 import type { Game } from "../../../game";
 
 // anchor は今このポゼッションでリムに残す1人（runDefense が毎tick選ぶ）。
@@ -19,12 +20,12 @@ import type { Game } from "../../../game";
  * 配置は攻撃のフォーメーションと同じ形を、リム寄りへ引き込んだもの。
  * slot: 0=ポイント 1/2=ウイング 3/4=ベースライン寄り。
  */
-const SHELL: [number, number][] = [
-  [0.0, 5.2],    // 0 トップ
-  [-4.2, 3.2],   // 1 左ウイング
-  [4.2, 3.2],    // 2 右ウイング
-  [-3.6, 1.0],   // 3 左ベースライン
-  [3.6, 1.0],    // 4 右ベースライン
+export const DEF_BASE_DEFAULT: { x: number; d: number }[] = [
+  { x: 0.0, d: 5.2 },    // 0 トップ
+  { x: -4.2, d: 3.2 },   // 1 左ウイング
+  { x: 4.2, d: 3.2 },    // 2 右ウイング
+  { x: -3.6, d: 1.0 },   // 3 左ベースライン
+  { x: 3.6, d: 1.0 },    // 4 右ベースライン
 ];
 /** 守備フォーメーション内と見なす半径。ここへ相手が入ってきたらマンマークへ切り替える。 */
 const SHELL_IN = THREE_DIST + 0.6;
@@ -33,8 +34,10 @@ const SHELL_SHOOTER = THREE_DIST + 1.6;
 
 function shellSpot(game: Game, d: Player, protect: Vector3, defTeam: number): [number, number] {
   const dir = game.attackSign(defTeam);   // 守るリムからミッドコートへ向かう向き
-  const [sx, sz] = SHELL[d.slot] ?? SHELL[0];
-  return [protect.x + sx, protect.z + dir * sz];
+  // ⚠️ チームごとの守備ベース位置（フォーメーションボードで編集）。無ければ既定値。
+  const base = TACTICS[defTeam].defBase ?? DEF_BASE_DEFAULT;
+  const b = base[d.slot] ?? base[0] ?? DEF_BASE_DEFAULT[0];
+  return [protect.x + b.x, protect.z + dir * b.d];
 }
 
 export function defendOffBall(
@@ -124,7 +127,9 @@ const ANCHOR_RATE = 0.75;
   //    状態だった（実測: マンがリムから 4.8〜7.35m に居るとき、守備との距離は中央 2.87m・
   //    47% が 3m 超）。3Pラインの内側へ入ってきた相手は必ず捕まえる。
   // 守備の優先順位: ①まず陣形を整える ②相手が陣形へ入ってきたらマンマークする。
-  const pickup = mRim < SHELL_IN || (shooter3 && mRim < SHELL_SHOOTER);
+  // ⚠️ ゾーン指定の選手は担当を追わない。常に守備ベース（シェル）を保つ。
+  const pickup = d.defMode === "zone" ? false
+    : mRim < SHELL_IN || (shooter3 && mRim < SHELL_SHOOTER);
   if (!pickup) {
     // 担当はまだ遠い — 追いかけず、自分の持ち場（シェル）を埋める。
     const [fx, fz] = shellSpot(game, d, protect, defTeam);

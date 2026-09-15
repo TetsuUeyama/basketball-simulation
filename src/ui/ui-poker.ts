@@ -19,6 +19,12 @@ import { PokerMatch, POKER_ROUNDS, HAND_SIZE, type DiscardTarget } from "../poke
 import { SUIT_MARK, SUIT_RED, rankLabel, type Card } from "../poker/cards";
 import { discardEffect, hinderEffect, MAX_DISCARDS, type AttrKey } from "../poker/effects";
 import { cpuPlan, cpuWantsConfirm } from "../poker/ai";
+import { scoringPower } from "../roles";
+import { rate } from "../util";
+import { roleFit, SLOT_POS } from "../ai/lineups";
+import { TACTICS } from "../attributes";
+import { OFF_BASE_DEFAULT } from "../game";
+import { DEF_BASE_DEFAULT } from "../ai/defense/offball";
 import { UI, colorOf, INK, BTN_BG } from "./ui";
 
 declare module "./ui" {
@@ -43,6 +49,8 @@ declare module "./ui" {
     pokerSwapPick: number;
     /** 上段の控え枠に出しているチーム（0/1）。 */
     pokerBenchSide: number;
+    /** 表示中の盤: "match" = 試合盤 / 0,1 = そのチームの配置ボード。 */
+    pokerBoard: "match" | "off" | "def";
     /** 札を置ける選手アイコン（ドロップ判定に使う）。 */
     pokerSpots: { target: DiscardTarget; el: HTMLElement }[];
     /** ラウンド1が終わったあとに一度だけ走らせる処理（選手紹介 → ティップオフ）。 */
@@ -95,6 +103,7 @@ UI.prototype.openPoker = function(round: number): void {
   this.pokerMode = "cards";
   this.pokerSwapPick = -1;
   this.pokerBenchSide = POKER_OPTS.userTeam ?? 0;
+  this.pokerBoard = "match";
   this.pokerSpots = [];
   this.pokerFresh = 0;
   // まず相手の手番。画面を出してから思考 → 札を置く → 補充、の順に見せる。
@@ -152,8 +161,12 @@ UI.prototype.renderPoker = function(): void {
     p.appendChild(benchRow);
   }
 
-  // ---- コート盤: 左半分が相手の先発5人（妨害）/ 右半分が自分の先発5人（強化） ----
-  p.appendChild(courtBoard(this, m, user));
+  // ---- 盤（試合盤 ⇄ 各チームの配置ボード） ----
+  // ---- 盤（試合盤 ⇄ 自チームの攻撃/守備の配置ボード） ----
+  p.appendChild(boardToggle(this, user, opp));
+  p.appendChild(this.pokerBoard === "match"
+    ? courtBoard(this, m, user)
+    : formationBoard(this, user, this.pokerBoard));
 
   // ---- カード（フィールドボードの下）----
   // ⚠️ **今カードを出している側だけ**を出す。両方並べると同じ場所に手札が2列できて二重に見える。
@@ -256,13 +269,59 @@ function runWatchRound(ui: UI, m: PokerMatch, g: NonNullable<UI["game"]>): void 
 }
 
 /** 観戦の画面。両チームを上下に並べ、真ん中の盤に置かれた札（強化/妨害）が出る。 */
+/**
+ * 観戦（CPU同士）の描画。
+ * ⚠️ プレイ時と**同じ部品・同じ並び**で組む。以前はここだけ独自の並びで、
+ *    配置ボードも控えのトグルも無く、UI が食い違っていた。
+ *    違うのは「操作できない」ことだけ（編集の可否は各部品が userTeam を見て決める）。
+ */
 function renderWatch(ui: UI, m: PokerMatch, p: HTMLDivElement): void {
   const away = 1 - m.home;
+  const side = ui.pokerBenchSide;          // 盤と控えに出すチーム（下のボタンで切替）
   p.appendChild(watchHeader(ui, m));
+
+  // VS ボード（戦力値の隣に役）
+  {
+    const vs = ui.buildVsBoard();
+    vs.style.width = "min(560px, 100%)";
+    vs.style.alignSelf = "center";
+    p.appendChild(vs);
+  }
+
+  // 控え（左のボタンでチームを切替）— プレイ時と同じ作り
+  {
+    const benchRow = document.createElement("div");
+    Object.assign(benchRow.style, {
+      display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+      width: "100%", flexWrap: "wrap",
+    } as Partial<CSSStyleDeclaration>);
+    benchRow.append(benchSideToggle(ui, m.home, away), benchGrid(ui, m, side));
+    p.appendChild(benchRow);
+  }
+
+  // 盤: 試合盤 ⇄ 「控えで選んでいるチーム」の攻撃/守備の配置ボード
+  p.appendChild(boardToggle(ui, m.home, away));
+  p.appendChild(ui.pokerBoard === "match"
+    ? courtBoard(ui, m, m.home)              // 右半分がホーム、左半分がアウェイ
+    : formationBoard(ui, side, ui.pokerBoard));
+
+  // カード: 今打っている側だけ（公開後は両方）
+  {
+    const cards = document.createElement("div");
+    Object.assign(cards.style, {
+      display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
+      minHeight: "68px", justifyContent: "center", width: "100%",
+    } as Partial<CSSStyleDeclaration>);
+    const turn = ui.pokerWatchTurn ?? -1;
+    if (ui.pokerStage === "reveal" || turn < 0) {
+      cards.append(opponentArea(ui, m, away), opponentArea(ui, m, m.home));
+    } else {
+      cards.appendChild(opponentArea(ui, m, turn));
+    }
+    p.appendChild(cards);
+  }
+
   p.appendChild(teamStrip(ui, m, away));
-  p.appendChild(opponentArea(ui, m, away));
-  p.appendChild(courtBoard(ui, m, m.home));       // 右半分がホーム、左半分がアウェイ
-  p.appendChild(opponentArea(ui, m, m.home));
   p.appendChild(teamStrip(ui, m, m.home));
   p.appendChild(watchFooter(ui, m));
 }
@@ -372,6 +431,8 @@ function runCpuTurn(ui: UI, m: PokerMatch, cpu: number, done: () => void): void 
   const apply = (): void => {
     m.exchange(cpu, plan.picks, plan.targets);
     ui.game?.applyRoster();
+    cpuAdjustSquad(ui, m, cpu);          // CPU も編成と役割を手当てする
+    cpuAssignDefense(cpu);               // 相手の能力を見て守備の割り当てを決める
     ui.pokerFresh = plan.picks.length;   // 補充ぶんをアニメで出す
     ui.pokerFreshTeam = cpu;             // ⚠️ 観戦では両チームの札が並ぶ。打った側だけ動かす
     ui.renderPoker();
@@ -571,6 +632,9 @@ function doneChip(by: number, key: AttrKey, amount: number): HTMLDivElement {
  */
 function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: number,
                     mirror = false): HTMLDivElement {
+  // 表示するピルは盤のタブで決まる。試合タブでは出さない（カード強化と選手交代だけ）。
+  const pillMode: "off" | "def" | "none" =
+    ui.pokerBoard === "off" ? "off" : ui.pokerBoard === "def" ? "def" : "none";
   const user = POKER_OPTS.userTeam ?? 0;
   const own = team === user;
   const cell = document.createElement("div");
@@ -608,12 +672,14 @@ function playerCell(ui: UI, m: PokerMatch, team: number, idx: number, size: numb
       display: "flex", alignItems: "center", gap: "4px",
     } as Partial<CSSStyleDeclaration>);
     // 盤の左半分の選手は、顔の左にピルを出して中央を空ける。
-    if (mirror) {
-      headRow.appendChild(rolePills(ui, def, team, size, true));
+    if (pillMode === "none") {
+      headRow.appendChild(face);
+    } else if (mirror) {
+      headRow.appendChild(rolePills(ui, def, team, size, true, pillMode));
       headRow.appendChild(face);
     } else {
       headRow.appendChild(face);
-      headRow.appendChild(rolePills(ui, def, team, size));
+      headRow.appendChild(rolePills(ui, def, team, size, false, pillMode));
     }
     cell.appendChild(headRow);
   }
@@ -874,11 +940,18 @@ function miniPill(text: string, active: boolean, accent: string, title: string,
 }
 
 /** 攻ロール / オフェンス選択順位 / 守ロール の3ピル。自分のチームだけ操作できる。 */
+/**
+ * 役割ピル。`mode` でどれを出すか決める。
+ *  "off"  … 攻ロール + オフェンス順位（攻撃タブ）
+ *  "def"  … 守ロール（守備タブ）
+ *  "all"  … 両方
+ * ⚠️ 試合タブでは呼ばない（カード強化と選手交代だけに絞るため）。
+ */
 function rolePills(ui: UI, def: PlayerDef, team: number, size: number,
-                   mirror = false): HTMLDivElement {
+                   mirror = false, mode: "off" | "def" | "all" = "all"): HTMLDivElement {
   const row = document.createElement("div");
   const small = size < 40;
-  // 顔の右横に置く縦2段。1段目 = 攻ロール + オフェンス順位、2段目 = 守ロール。
+  // 顔の右横に置く縦並び。攻撃側は「攻ロール + 順位」で1段、守備側は「守ロール」で1段。
   Object.assign(row.style, {
     display: "flex", flexDirection: "column", gap: "2px",
     alignItems: mirror ? "flex-end" : "flex-start",
@@ -899,11 +972,22 @@ function rolePills(ui: UI, def: PlayerDef, team: number, size: number,
   const defP = miniPill(def.defRole ? (UI.DEF_ROLES[def.defRole]?.short ?? "?") : "守-",
     !!def.defRole, defC, "ディフェンスロール", on, small,
     () => ui.openRolePicker(def, team, defP, () => ui.renderPoker(), "def"));
-  const line1 = document.createElement("div");
-  Object.assign(line1.style, { display: "flex", gap: "2px" } as Partial<CSSStyleDeclaration>);
-  // 左側のチーム（mirror）は、オフェンス順位を攻ロールの**左**へ。
-  if (mirror) line1.append(rankP, offP); else line1.append(offP, rankP);
-  row.append(line1, defP);
+  if (mode === "off") {
+    // 攻撃タブ: 攻ロールの**下**にオフェンス順位を縦並びで置く。
+    row.append(offP, rankP);
+  } else if (mode === "def") {
+    // 守備タブ: 守ロールの**下**に「ゾーン/マン」、**その横**にマーク相手を並べる。
+    const line2 = document.createElement("div");
+    Object.assign(line2.style, { display: "flex", gap: "2px" } as Partial<CSSStyleDeclaration>);
+    line2.append(...defAssignPills(ui, def, team, small));
+    row.append(defP, line2);
+  } else {
+    const line1 = document.createElement("div");
+    Object.assign(line1.style, { display: "flex", gap: "2px" } as Partial<CSSStyleDeclaration>);
+    // 左側のチーム（mirror）は、オフェンス順位を攻ロールの**左**へ。
+    if (mirror) line1.append(rankP, offP); else line1.append(offP, rankP);
+    row.append(line1, defP);
+  }
   return row;
 }
 
@@ -1062,4 +1146,355 @@ function benchSideToggle(ui: UI, user: number, opp: number): HTMLDivElement {
     col.appendChild(b);
   }
   return col;
+}
+
+/**
+ * CPU のチーム編成の手当て。ポーカーの手番のたびに1回だけ走る。
+ *  ①役割が「自動」のままの先発へ、攻守のロールを割り当てる
+ *  ②控えに明らかに上の選手がいて、その枠に適格なら1人だけ入れ替える
+ * ⚠️ 入れ替えは `swapRosterSlots` を通すこと。ポーカーの強化は `applied[].idx` の
+ *    インデックス管理なので、直接 ROSTER を触ると別人の能力を巻き戻すことになる。
+ * ⚠️ 差が小さいのに入れ替えると毎ラウンド入れ替わって落ち着かないので、明確な差
+ *    （SWAP_EDGE）を要求する。1手番につき最大1回。
+ */
+const SWAP_EDGE = 3;
+function cpuAdjustSquad(ui: UI, m: PokerMatch, cpu: number): void {
+  // ① 役割: 未設定（＝自動）の先発だけ埋める。手で設定した相手の指定は触らない。
+  const takenDef = new Map<string, number>();
+  for (let i = 0; i < STARTERS; i++) {
+    const d = ROSTER[cpu][i];
+    if (d.defRole) takenDef.set(d.defRole, (takenDef.get(d.defRole) ?? 0) + 1);
+  }
+  for (let i = 0; i < STARTERS; i++) {
+    const d = ROSTER[cpu][i];
+    if (!d.evalRole) d.evalRole = ui.bestOffRole(d);
+    if (!d.defRole) {
+      d.defRole = ui.pickDefRole(d, takenDef);
+      takenDef.set(d.defRole, (takenDef.get(d.defRole) ?? 0) + 1);
+    }
+  }
+
+  // ② 入れ替え: 一番弱い先発と、その枠に適格な控えの最良を比べる。
+  let worst = -1, worstOvr = Infinity;
+  for (let i = 0; i < STARTERS; i++) {
+    const v = ui.ovrOf(ROSTER[cpu][i]);
+    if (v < worstOvr) { worstOvr = v; worst = i; }
+  }
+  if (worst < 0) return;
+  const slot = SLOT_POS[worst] ?? ROSTER[cpu][worst].role;
+  let best = -1, bestOvr = worstOvr + SWAP_EDGE;
+  for (let i = STARTERS; i < ROSTER_SIZE; i++) {
+    const d = ROSTER[cpu][i];
+    if (roleFit(d, slot) <= 0) continue;          // その枠を守れない選手は出さない
+    const v = ui.ovrOf(d);
+    if (v > bestOvr) { bestOvr = v; best = i; }
+  }
+  if (best >= 0) swapRosterSlots(ui, m, cpu, worst, best);
+}
+
+// ============================================================================
+// フォーメーションボード（各チームのベース位置を編集する）
+// ============================================================================
+// ⚠️ ここで編集するのは「開始位置と戻る先の基準」であって、その瞬間に取る位置ではない。
+//    オープンスポットへの動き直し・スペーシング・マーク外しは従来どおり AI が決める。
+// ⚠️ 盤はフルコート。**攻撃のベースは攻めるリム側（右端）／守備のベースは守るリム側
+//    （左端）**に出る。保持形式 {x, d} が「リムからの距離」なので、攻守が自然に
+//    コートの両端へ分かれ、1枚で両方を見渡せる。
+//    左端には相手の攻撃ベース、右端には相手の守備ベースが薄く重なる＝マッチアップの絵。
+
+/** コート寸法（config の COURT と一致させること）。盤の % 変換に使う。 */
+const BOARD_LEN = 28, BOARD_WID = 15, BOARD_RIM = 13.0;
+/** 選手が立てる範囲（コートのクランプと同じ）。 */
+const BASE_X_MAX = 7.0;
+const BASE_D = { lo: 0.5, hi: 13.5 };
+
+/** ベース位置 → 盤の % 。`atk` = 攻めるリム側（右端）に置くか。 */
+function baseToPct(b: { x: number; d: number }, atk: boolean): { x: number; y: number } {
+  const z = atk ? BOARD_RIM - b.d : -BOARD_RIM + b.d;
+  return {
+    x: ((z + BOARD_LEN / 2) / BOARD_LEN) * 100,
+    y: ((b.x + BOARD_WID / 2) / BOARD_WID) * 100,
+  };
+}
+/** 盤の % → ベース位置（範囲内へ丸める）。 */
+function pctToBase(px: number, py: number, atk: boolean): { x: number; d: number } {
+  const z = (px / 100) * BOARD_LEN - BOARD_LEN / 2;
+  const d = clampNum(atk ? BOARD_RIM - z : z + BOARD_RIM, BASE_D.lo, BASE_D.hi);
+  const x = clampNum((py / 100) * BOARD_WID - BOARD_WID / 2, -BASE_X_MAX, BASE_X_MAX);
+  return { x, d };
+}
+function clampNum(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** そのチームの攻撃ベース（未設定なら既定値のコピーを作って持たせる）。 */
+function offBaseOf(team: number): { x: number; d: number }[] {
+  const t = TACTICS[team];
+  if (!t.offBase) t.offBase = OFF_BASE_DEFAULT.map((b) => ({ ...b }));
+  return t.offBase;
+}
+function defBaseOf(team: number): { x: number; d: number }[] {
+  const t = TACTICS[team];
+  if (!t.defBase) t.defBase = DEF_BASE_DEFAULT.map((b) => ({ ...b }));
+  return t.defBase;
+}
+
+/** 盤に置く小さな顔アイコン（設定ボード用。名前も役割ピルも付けない）。 */
+function baseIcon(ui: UI, team: number, idx: number, size: number, dim: boolean): HTMLDivElement {
+  const el = document.createElement("div");
+  Object.assign(el.style, {
+    position: "absolute", width: `${size}px`, height: `${size}px`, borderRadius: "50%",
+    overflow: "hidden", border: `2px solid ${colorOf(team)}`, boxSizing: "border-box",
+    background: "rgba(20,24,34,0.9)", transform: "translate(-50%,-50%)",
+    opacity: dim ? "0.38" : "1", pointerEvents: dim ? "none" : "auto",
+  } as Partial<CSSStyleDeclaration>);
+  const pl: Player | undefined = ui.game?.roster[team][idx];
+  if (pl) {
+    const c = document.createElement("canvas");
+    c.width = size; c.height = size;
+    Object.assign(c.style, { width: `${size}px`, height: `${size}px`, display: "block" } as Partial<CSSStyleDeclaration>);
+    ui.drawFace(c, pl);
+    el.appendChild(c);
+  }
+  return el;
+}
+
+/**
+ * 1チームぶんの設定ボード。左端＝守備ベース、右端＝攻撃ベース。
+ * 相手のベースは薄く重ねるだけで動かせない（`dim`）。
+ * 編集できるのは自分のチームだけ（CPU戦の相手やCPU対CPUでは閲覧のみ）。
+ */
+function formationBoard(ui: UI, team: number, side: "off" | "def"): HTMLDivElement {
+  const opp = 1 - team;
+  const atk = side === "off";
+  const board = document.createElement("div");
+  Object.assign(board.style, {
+    position: "relative", width: "min(470px, 94vw)", aspectRatio: "28 / 15",
+    background: "linear-gradient(180deg, rgba(44,38,30,0.95), rgba(30,26,21,0.95))",
+    border: "1px solid rgba(255,255,255,0.18)", borderRadius: "10px",
+    flexShrink: "0", margin: "2px 0", touchAction: "none",
+  } as Partial<CSSStyleDeclaration>);
+  board.innerHTML = COURT_SVG;
+
+  const tag = document.createElement("div");
+  tag.textContent = atk ? "攻撃ベース（このリムを攻める）" : "守備ベース（このリムを守る）";
+  Object.assign(tag.style, {
+    position: "absolute", top: "3px", [atk ? "right" : "left"]: "8px",
+    fontSize: "9px", fontWeight: "800", opacity: "0.6", letterSpacing: "1px",
+  } as Partial<CSSStyleDeclaration>);
+  board.appendChild(tag);
+
+  const editable = POKER_OPTS.userTeam === team;
+  const g = ui.game;
+  const arr = atk ? offBaseOf(team) : defBaseOf(team);
+
+  for (let i = 0; i < STARTERS; i++) {
+    const pl = g?.roster[team][i];
+    // 攻撃は「その選手が持ち場にしているスポット」を動かす（ポストのビッグは 5/6）。
+    const slot = atk && pl && g ? g.homeSpotIdx(pl) : i;
+    if (!arr[slot]) continue;
+    // 顔 + そのタブの役割ピルを1つの塊にして盤へ置く。
+    // ⚠️ **顔そのものを基準点に置く**。顔と名前をまとめた列を基準にすると、列の幅が
+    //    名前の長さで決まり、ピルが「名前の右端」に付いてしまう（＝顔の横ではなくなる）。
+    //    名前は顔の下、ピルは顔の右へ、どちらも絶対配置でぶら下げる。
+    const d = ROSTER[team][i];
+    const wrap = document.createElement("div");
+    Object.assign(wrap.style, {
+      position: "absolute", width: "26px", height: "26px",
+      transform: "translate(-50%,-50%)",
+    } as Partial<CSSStyleDeclaration>);
+    const icon = baseIcon(ui, team, i, 26, false);
+    icon.style.position = "absolute";
+    icon.style.left = "0"; icon.style.top = "0";
+    icon.style.transform = "none";
+    wrap.appendChild(icon);
+    if (d) {
+      const nm = document.createElement("div");
+      nm.textContent = `${SLOT_POS[i] ?? d.role} ${d.name}`;
+      Object.assign(nm.style, {
+        position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)",
+        marginTop: "1px", fontSize: "8px", fontWeight: "700", maxWidth: "72px",
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        textShadow: "0 1px 3px rgba(0,0,0,0.95)", pointerEvents: "none",
+      } as Partial<CSSStyleDeclaration>);
+      wrap.appendChild(nm);
+      const pills = rolePills(ui, d, team, 30, false, side);
+      Object.assign(pills.style, {
+        position: "absolute", left: "100%", top: "50%",
+        transform: "translateY(-50%)", marginLeft: "3px",
+      } as Partial<CSSStyleDeclaration>);
+      wrap.appendChild(pills);
+    }
+
+    const paint = (): void => {
+      const p = baseToPct(arr[slot], atk);
+      wrap.style.left = `${p.x}%`; wrap.style.top = `${p.y}%`;
+    };
+    paint();
+    if (editable) {
+      // ⚠️ ドラッグの掴み所は**顔だけ**。ピルはタップで役割を変える操作に使う。
+      icon.style.cursor = "grab";
+      icon.onpointerdown = (ev: PointerEvent) => {
+        ev.preventDefault(); ev.stopPropagation();
+        icon.setPointerCapture(ev.pointerId);
+        icon.style.cursor = "grabbing";
+        const move = (e: PointerEvent): void => {
+          const r = board.getBoundingClientRect();
+          arr[slot] = pctToBase(((e.clientX - r.left) / r.width) * 100,
+                                ((e.clientY - r.top) / r.height) * 100, atk);
+          paint();
+        };
+        const up = (): void => {
+          icon.style.cursor = "grab";
+          icon.removeEventListener("pointermove", move);
+          icon.removeEventListener("pointerup", up);
+          icon.removeEventListener("pointercancel", up);
+        };
+        icon.addEventListener("pointermove", move);
+        icon.addEventListener("pointerup", up);
+        icon.addEventListener("pointercancel", up);
+      };
+    }
+    board.appendChild(wrap);
+  }
+
+  // 相手の対になるベースを薄く重ねる（攻撃タブなら相手の守備、守備タブなら相手の攻撃）。
+  // ⚠️ 相手の座標は相手のリム基準なので、atk を反転して同じ端へ置く。
+  const oArr = atk ? defBaseOf(opp) : offBaseOf(opp);
+  for (let i = 0; i < STARTERS; i++) {
+    const pl = g?.roster[opp][i];
+    const slot = !atk && pl && g ? g.homeSpotIdx(pl) : i;
+    const b = oArr[slot]; if (!b) continue;
+    const el = baseIcon(ui, opp, i, 20, true);
+    const p = baseToPct(b, !atk);
+    el.style.left = `${p.x}%`; el.style.top = `${p.y}%`;
+    board.appendChild(el);
+  }
+  return board;
+}
+
+/** 盤の切り替え: 試合 / 各チームの設定ボード。 */
+function boardToggle(ui: UI, user: number, opp: number): HTMLDivElement {
+  const row = document.createElement("div");
+  Object.assign(row.style, {
+    display: "flex", gap: "5px", justifyContent: "center", alignItems: "center",
+  } as Partial<CSSStyleDeclaration>);
+  void opp;
+  // ⚠️ 自チームの攻守を切り替える。役割の編集もここで分担する:
+  //    試合 = カード強化と選手交代だけ / 攻撃 = 攻ロールと順位 / 守備 = 守ロール。
+  const opts: { key: UI["pokerBoard"]; label: string; col: string }[] = [
+    { key: "match", label: "試合", col: "rgba(70,120,220,0.92)" },
+    { key: "off", label: "攻撃", col: colorOf(user) },
+    { key: "def", label: "守備", col: colorOf(user) },
+  ];
+  for (const o of opts) {
+    const b = document.createElement("button");
+    b.textContent = o.label;
+    const act = ui.pokerBoard === o.key;
+    Object.assign(b.style, {
+      padding: "3px 10px", borderRadius: "8px", cursor: "pointer",
+      fontSize: "10px", fontWeight: act ? "800" : "600", whiteSpace: "nowrap",
+      background: act ? o.col : BTN_BG, color: act ? INK : "#fff",
+      border: act ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)",
+      opacity: act ? "1" : "0.7",
+    } as Partial<CSSStyleDeclaration>);
+    b.onclick = () => { ui.pokerBoard = o.key; ui.renderPoker(); };
+    row.appendChild(b);
+  }
+  return row;
+}
+
+/**
+ * 守備タブの追加ピル: ①ゾーン ⇄ マンマーク ②マンマーク時に見る相手。
+ * ⚠️ マーク相手は「相手のスロット番号」で持つ。相手が交代しても枠は変わらないので、
+ *    誰が入っても同じ枠を見続ける（＝ポジションで見る指示になる）。
+ */
+function defAssignPills(ui: UI, def: PlayerDef, team: number, small: boolean): HTMLElement[] {
+  const on = POKER_OPTS.userTeam !== null && team === POKER_OPTS.userTeam;
+  const zone = def.defMode === "zone";
+  const out: HTMLElement[] = [];
+  out.push(miniPill(zone ? "ゾーン" : "マン", true,
+    zone ? "rgb(140,170,255)" : "rgb(255,196,110)",
+    "ゾーンディフェンス ⇄ マンマーク", on, small,
+    () => {
+      def.defMode = zone ? "man" : "zone";
+      if (def.defMode === "zone") def.markSlot = undefined;   // ゾーンに相手指定は要らない
+      ui.renderPoker();
+    }));
+  if (!zone) {
+    // マーク相手: タップで 自動 → 相手PG → … → 相手C → 自動 と回る。
+    const opp = 1 - team;
+    const cur = def.markSlot;
+    const label = cur === undefined ? "相手: 自動"
+      : `相手: ${SLOT_POS[cur] ?? cur} ${(ROSTER[opp][cur]?.name ?? "").slice(0, 4)}`;
+    out.push(miniPill(label, cur !== undefined, "rgb(255,196,110)",
+      "マンマークで見る相手（自動 = 同じスロットの相手）", on, small,
+      () => {
+        def.markSlot = cur === undefined ? 0 : cur >= STARTERS - 1 ? undefined : cur + 1;
+        ui.renderPoker();
+      }));
+  }
+  return out;
+}
+
+/**
+ * CPU の守備の割り当て。相手の能力を見て、マンマークの相手・ゾーン・
+ * エースへのダブルチームを決める。ポーカーの手番ごとに引き直す。
+ *
+ * 手順:
+ *  ①相手5人の脅威度（得点力 + 身長）と、自分5人の守備力を出す
+ *  ②脅威の高い相手から順に、守備力の高い選手を当てる（1対1の組み合わせ）
+ *  ③エースが突出していれば、最も脅威の低い相手を見ていた選手をエースへ回す
+ *    ＝ダブルチーム。空いた相手は誰も見ないが、それがダブルチームの代償。
+ *  ④身長・機動力で明確に劣る組み合わせは、追いかけずゾーンで面を守らせる
+ *
+ * ⚠️ `markSlot` は**相手のスロット番号**。相手が交代しても枠は変わらない。
+ * ⚠️ 手で設定したものは上書きしない（自チームは常にユーザーの指示が優先）。
+ */
+const ACE_GAP = 0.12;     // エースが2番手をこれだけ上回ればダブルチーム
+const ZONE_GAP = 0.18;    // 守備力がこれだけ下回るならゾーンに逃がす
+function cpuAssignDefense(cpu: number): void {
+  if (POKER_OPTS.userTeam === cpu) return;   // 自チームはユーザーの指示が優先
+  const opp = 1 - cpu;
+  const threat = (i: number): number => {
+    const d = ROSTER[opp][i];
+    return d ? scoringPower(d.attr) / 100 + (d.height - 1.9) * 0.25 : 0;
+  };
+  const guard = (i: number): number => {
+    const d = ROSTER[cpu][i];
+    if (!d) return 0;
+    return rate(d.attr.defense) * 0.55 + rate(d.attr.agility) * 0.25
+      + (d.height - 1.9) * 0.4 + rate(d.attr.reaction) * 0.2;
+  };
+
+  // ② 脅威の高い順に、守備力の高い選手を当てる
+  const oppOrder = [0, 1, 2, 3, 4].sort((a, b) => threat(b) - threat(a));
+  const defOrder = [0, 1, 2, 3, 4].sort((a, b) => guard(b) - guard(a));
+  const markOf = new Map<number, number>();          // 守備の slot → 相手の slot
+  oppOrder.forEach((o, k) => markOf.set(defOrder[k], o));
+
+  // ③ エースが突出していればダブルチーム
+  const ace = oppOrder[0], second = oppOrder[1];
+  const double = threat(ace) - threat(second) > ACE_GAP;
+  if (double) {
+    const weakest = oppOrder[oppOrder.length - 1];    // 最も脅威の低い相手
+    for (const [dSlot, oSlot] of markOf) {
+      if (oSlot === weakest) { markOf.set(dSlot, ace); break; }
+    }
+  }
+
+  // ④ 反映。明確に劣る組み合わせはゾーンへ逃がす。
+  for (let i = 0; i < STARTERS; i++) {
+    const d = ROSTER[cpu][i];
+    if (!d) continue;
+    const o = markOf.get(i);
+    if (o === undefined) { d.defMode = undefined; d.markSlot = undefined; continue; }
+    if (guard(i) < threat(o) - ZONE_GAP) {
+      d.defMode = "zone";                 // 追いかけても振り切られる → 面を守る
+      d.markSlot = undefined;
+    } else {
+      d.defMode = "man";
+      d.markSlot = o;
+    }
+  }
 }

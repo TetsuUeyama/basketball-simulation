@@ -88,3 +88,24 @@ export function getBackOnDefense(
 export function runLane(curX: number, wantX: number, converge: number): number {
   return curX + (wantX - curX) * converge;
 }
+
+/**
+ * この守備者が見る相手。既定は index 一致だが、配置ボードで `markSlot` を指定していれば
+ * そちらを優先する（＝ダブルチームや、エースへ最良の守備者を当てる指示）。
+ * ⚠️ 担当を引く場所はここに一本化すること。以前は守備・注目システム・スキームの
+ *    6か所でそれぞれ `offense[d.slot]` と書いており、`markSlot` を入れても
+ *    注目システムが別人を追い続けて指示が効かなかった。
+ */
+export function manOf(game: Game, d: Player, offTeam = game.possession): Player | undefined {
+  const off = game.teamPlayers(offTeam);
+  return off[d.markSlot ?? d.slot] ?? off[d.slot];
+}
+
+/**
+ * この攻撃側の選手に付いている守備者（`manOf` の逆引き）。
+ * 指名が無ければ index 一致。ダブルチームされていれば最初に見つかった1人を返す。
+ */
+export function defenderOf(game: Game, p: Player): Player | undefined {
+  const def = game.teamPlayers(1 - p.team);
+  return def.find((d) => (d.markSlot ?? d.slot) === p.slot) ?? def[p.slot];
+}

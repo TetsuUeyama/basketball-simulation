@@ -6,6 +6,7 @@ import { defHands, ballSecurity } from "../../../eval";
 import { defEffort, getBackOnDefense } from "../shared";
 import { defendOnBall } from "../vs-onball";
 import type { Game } from "../../../game";
+import { manOf } from "../shared";
 
 // ゾーンの各守備者のホーム位置。
 function zoneHomes(game: Game, defTeam: number, s: number): Map<Player, { x: number; z: number }> {
@@ -52,7 +53,7 @@ export function runZoneDefense(game: Game, dt: number): void {
   }
 
   for (const d of defenders) {
-    if (getBackOnDefense(game, dt, d, offense[d.slot])) continue;   // まずトランジション
+    if (getBackOnDefense(game, dt, d, manOf(game, d) ?? offense[d.slot])) continue;   // まずトランジション
     d.decayLean(dt);
 
     if (d === ballDef && h) {

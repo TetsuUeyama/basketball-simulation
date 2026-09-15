@@ -13,6 +13,7 @@
 //    0.35〜1.0 で返す。正面が 1.0、真横で約 0.6、背中側が 0.35。
 //    これを反応時間・カット率・キャッチの安定に掛ける。
 import type { Game } from "../game";
+import { manOf, defenderOf } from "./defense/shared";
 import type { Player } from "../objects/player/player";
 import { dist2D, normAngle, rate } from "../util";
 
@@ -69,12 +70,12 @@ export function updateAttention(game: Game, dt: number): void {
       kind = "rim"; x = rim.x; z = rim.z;
     } else if (own) {
       // オフボールの攻撃: 基本はボール。潰されている間だけマーカーを見る。
-      const d = game.teamPlayers(1 - p.team)[p.slot];
+      const d = defenderOf(game, p);
       if (d && p.frontedT > 0 && dist2D(d.pos, p.pos) < 2.6) {
         kind = "man"; x = d.pos.x; z = d.pos.z;
       }
     } else {
-      const man = game.teamPlayers(game.possession)[p.slot];
+      const man = manOf(game, p);
       if (man && game.handler === man) { kind = "handler"; x = man.pos.x; z = man.pos.z; }
       else if (man) {
         // ボールを見るか、マークを見るか。レーンを塞いでいる間はボールを見て
@@ -89,7 +90,7 @@ export function updateAttention(game: Game, dt: number): void {
     //    守備の分岐（戻り/オンボール）に入っている間だけ止めると見え位置が古くなり、
     //    分岐に戻った瞬間に目標が飛ぶ（実測: 遅れの90%が 4.74m まで伸びていた）。
     if (!own && p !== game.handler) {
-      const man = game.teamPlayers(game.possession)[p.slot];
+      const man = manOf(game, p);
       if (man) {
         if (!p.trackOn) { p.trackX = man.pos.x; p.trackZ = man.pos.z; p.trackOn = true; }
         // ⚠️ ボールの方を見ている守備は、マークの動き出しに気づくのが遅れる。
