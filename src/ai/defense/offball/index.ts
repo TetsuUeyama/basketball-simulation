@@ -33,6 +33,8 @@ const SHELL_IN = THREE_DIST + 0.6;
 const SHELL_SHOOTER = THREE_DIST + 1.6;
 /** ドロップ役のビッグが担当を捕まえに行く半径。ここから外へは出ない（ゴール下の危険域）。 */
 const DROP_IN = 4.6;
+/** 3Pの上手さで間合いをどれだけ詰めるか。lo〜hi の L精度を 0..1 に正規化し、cut の割合まで縮める。 */
+const THREE_TIGHT = { lo: 0.62, hi: 0.90, cut: 0.55 };
 
 function shellSpot(game: Game, d: Player, protect: Vector3, defTeam: number): [number, number] {
   const dir = game.attackSign(defTeam);   // 守るリムからミッドコートへ向かう向き
@@ -176,6 +178,14 @@ const ANCHOR_RATE = 0.75;
     // ⚠️ ボール側は**体が当たる間合い**まで詰める。1.05m では一度も触れず、
     //    「マークの攻防」が画面に出ない（実測: 体が当たっている割合 0.2%、1.2m 未満 23.4%）。
     if (mRim < THREE_DIST + 1.2) sag = Math.min(sag, ballSide ? 0.72 : 1.6);
+    // ⚠️ **3Pが上手い相手ほど近くで守る**。以前は shooter3(L精度82以上)の二値でしか
+    //    見ておらず、実測で3Pを打たれた時の守備距離が L精度 78未満 2.61m /
+    //    85以上 2.39m と**ほぼ差が無かった**＝名手をフリーにしていた。
+    //    アークの外に居る相手に対して、L精度に比例して間合いを詰める。
+    if (mRim > THREE_DIST - 0.8) {
+      const th = clamp((rate(man.attr.threeAcc) - THREE_TIGHT.lo) / (THREE_TIGHT.hi - THREE_TIGHT.lo), 0, 1);
+      sag *= 1 - th * THREE_TIGHT.cut;
+    }
     const st = towardPoint(seenX, seenZ, protect.x, protect.z, sag);
     stx = st.x; stz = st.z;
     // ⚠️ 旧「非脅威は半径5mまで」のクランプは削除。陣形へ入っていない担当は上で

@@ -33,6 +33,14 @@ export function perimContest(d: Player, shooter: Player): number {
 
 // 手のひらの「当たり判定」半径(m): 基準 + (守備者の守備 − 攻撃者のオフェンス)。
 // 守備者が上なら大きく、攻撃者が上回れば小さくなる。
+/**
+ * コンテストが届く距離(m)。
+ * ⚠️ **既知の問題（未解決）**: 基準が 1.5m なので、**守備が 1.8m 離れていると
+ *    フリーと完全に同じ成功率**になる（実測: 3Pの成功率が 守備3m と 1.8m で同値）。
+ *    基準を 2.0 に上げる修正を試したが、**全シュートに効いて FG が 46.7% → 42.3% まで
+ *    落ちた**（実際のバスケットは約47%）ので戻した。
+ *    直すなら3P限定で効かせる形にすること。一律に伸ばすと全体が崩れる。
+ */
 export function palmRadius(def: Player, att: Player): number {
   return clamp(1.5 + 1.7 * (rate(def.attr.defense) - rate(att.attr.offense)), 0.5, 2.6);
 }
