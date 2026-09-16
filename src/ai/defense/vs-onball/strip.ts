@@ -56,7 +56,9 @@ export function catchStrips(game: Game, dt: number): void {
         }
       }
       const close = 1 - clamp(gap / 1.8, 0, 1);
-      const edge = 0.18 + stripEdge(d, h) * 0.65;     // 守備者の手 vs ハンドラーの安全性
+      // ⚠️ 下駄(旧 0.18)が大きいと、能力に関係なく一定割合で剥がされる。下げて
+      //    stripEdge の効きを相対的に上げる。
+      const edge = 0.09 + stripEdge(d, h) * 0.65;     // 守備者の手 vs ハンドラーの安全性
       if (chance(Math.max(0, edge) * close * bobble * exposed * dt)) { deflectCatch(game, h, d); return; }
     }
   }

@@ -6,7 +6,7 @@ import { tickScreenCoverage, defendScreen } from "../../move/reaction/screen";
 import { defendHandler } from "./vs-onball";
 import { defendOffBall } from "./offball";
 import { manOf, getBackOnDefense } from "./shared";
-import { pickDefScheme } from "./schemes";
+import { pickDefScheme, applyDefScheme } from "./schemes";
 import { runZoneDefense } from "./schemes/zone";
 import { runPress } from "./schemes/press";
 import type { Game } from "../../game";
@@ -18,7 +18,11 @@ export function runDefense(game: Game, dt: number): void {
   const offense = game.teamPlayers(game.possession);
 
   // ポゼッション毎に守備の型を1回決める
-  if (game.possession !== game.schemePoss) { game.schemePoss = game.possession; pickDefScheme(game); }
+  if (game.possession !== game.schemePoss) {
+    game.schemePoss = game.possession;
+    pickDefScheme(game);
+    applyDefScheme(game, defTeam);   // 型 → 各守備者の役割（マン/ゾーン/ドロップ役）
+  }
 
   // フルコートプレス: 型に入る前のバックコートでトラップ
   game.pressTrapper = null;   // 毎tickリセット — ライブプレスのみ割り当て

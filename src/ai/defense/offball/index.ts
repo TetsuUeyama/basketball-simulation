@@ -31,6 +31,8 @@ export const DEF_BASE_DEFAULT: { x: number; d: number }[] = [
 const SHELL_IN = THREE_DIST + 0.6;
 /** 本物の3Pシューターだけは、これだけ外まで捕まえに出る。 */
 const SHELL_SHOOTER = THREE_DIST + 1.6;
+/** ドロップ役のビッグが担当を捕まえに行く半径。ここから外へは出ない（ゴール下の危険域）。 */
+const DROP_IN = 4.6;
 
 function shellSpot(game: Game, d: Player, protect: Vector3, defTeam: number): [number, number] {
   const dir = game.attackSign(defTeam);   // 守るリムからミッドコートへ向かう向き
@@ -128,8 +130,12 @@ const ANCHOR_RATE = 0.75;
   //    47% が 3m 超）。3Pラインの内側へ入ってきた相手は必ず捕まえる。
   // 守備の優先順位: ①まず陣形を整える ②相手が陣形へ入ってきたらマンマークする。
   // ⚠️ ゾーン指定の選手は担当を追わない。常に守備ベース（シェル）を保つ。
+  // ⚠️ ドロップ役のビッグは**外へ出ない**。担当がゴール下の危険域へ入ってきた時だけ付く。
+  //    これがドロップディフェンスの肝で、スクリーンで釣り出されずリムを守り続ける。
+  //    代償としてミドルのプルアップとピック&ポップは空く（設計どおりの弱点）。
+  const inR = d.dropBig ? DROP_IN : SHELL_IN;
   const pickup = d.defMode === "zone" ? false
-    : mRim < SHELL_IN || (shooter3 && mRim < SHELL_SHOOTER);
+    : mRim < inR || (shooter3 && !d.dropBig && mRim < SHELL_SHOOTER);
   if (!pickup) {
     // 担当はまだ遠い — 追いかけず、自分の持ち場（シェル）を埋める。
     const [fx, fz] = shellSpot(game, d, protect, defTeam);

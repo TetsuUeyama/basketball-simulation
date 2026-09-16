@@ -180,6 +180,13 @@ export interface Tactics {
    */
   offBase?: { x: number; d: number }[];
   defBase?: { x: number; d: number }[];
+  /**
+   * チームの守備の型。既定は "drop"（現代バスケの主流）。
+   *   "drop"    … ビッグはゴール下から出ず、ガードはマンマークで中へ誘導する
+   *   "boxOne"  … 1人が相手エースへ完全マンマーク、残りはゾーンでゴール下を固める
+   *   "matchup" … 外はマンマークで圧、ビッグは自分のゾーンに入った相手だけ守る
+   */
+  scheme?: "drop" | "boxOne" | "matchup";
   defense: {
     pressure: number;     // オンボールのタイトなプレッシャー(詰める、ギャンブルが多い)
     help: number;         // オフボールの守備がペイント保護のためどれだけ絞るか

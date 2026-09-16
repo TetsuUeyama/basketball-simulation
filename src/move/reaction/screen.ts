@@ -60,7 +60,11 @@ export function resolveScreenCoverage(game: Game, handler: Player, screener: Pla
 function chooseCoverage(game: Game, hDef: Player, sDef: Player): "drop" | "show" | "switch" {
   const press = TACTICS[sDef.team].defense.pressure;
   const sAgi = rate(sDef.attr.agility);
-  const wDrop = (game.isBig(sDef) ? 0.5 : 0.2) + (1 - sAgi) * 0.7 + (1 - press) * 0.3;
+  // ⚠️ チームの型が "drop" ならドロップを基本にする（現代バスケの主流）。
+  //    型を無視して毎回抽選すると、ビッグが飛び出してゴール下が空く絵が混ざる。
+  const scheme = TACTICS[sDef.team].scheme ?? "drop";
+  const schemeDrop = scheme === "drop" ? 1.6 : scheme === "matchup" ? 0.8 : 0.3;
+  const wDrop = (game.isBig(sDef) ? 0.5 : 0.2) + (1 - sAgi) * 0.7 + (1 - press) * 0.3 + schemeDrop;
   const wShow = 0.15 + press * 0.7 + sAgi * 0.25;
   const sizeGap = Math.abs(sDef.height - hDef.height);
   const wSwitch = 0.15 + sAgi * 0.4 + clamp(1 - sizeGap * 2.5, 0, 1) * 0.5

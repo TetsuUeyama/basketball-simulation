@@ -109,20 +109,48 @@ export function deepThreeOK(p: Player): boolean {
 
 // エリート(90/90)はラインの遥か外まで射程。それ以外は全員ライン際(THREE_DIST+0.5)までは
 // オープンなら打つ（深いヒーブはエリート限定）。
+/**
+ * この選手がオープンなら打つ最大距離(m)。
+ * ⚠️ 旧実装は `deepThreeOK`(3P精度90 かつ L速度90) の選手だけ `shootRangeOf` を使い、
+ *    それ以外は全員 `THREE_DIST + 0.5` の**固定値**だった。DB 4015人のうち 90/90 を
+ *    満たすのは **2人(0.05%)** なので、実質**全員が同じ 7.25m**。L速度の差が射程に
+ *    まったく出ていなかった。さらに持ち場も 7.25m なので、**全員が射程の境界線上**に
+ *    立ち、少し外へ押し出されるだけで「射程外 → ドライブへ切替」に落ちていた。
+ * ⚠️ L速度は溜め時間(`threePrepFor`)と精度の距離減衰(`shot-outcome`)にも効く。
+ *    射程まで急勾配にすると三重に効いてしまうので、ここは**緩やかな曲線**にする。
+ *      70→7.0 / 75→7.4 / 80→8.0 / 85→8.7 / 90→9.5 / 95→10.5
+ *    下限は 3Pライン+0.4m。誰でもライン際からは打てる。
+ */
 export function effShootRange(p: Player): number {
-  const r = shootRangeOf(p);
-  if (deepThreeOK(p)) return r;
-  return THREE_DIST + 0.5;
+  const seg: [number, number][] = [
+    [70, 7.0], [75, 7.4], [80, 8.0], [85, 8.7], [90, 9.5], [95, 10.5], [100, 11.5],
+  ];
+  const v = p.attr.threeRange;
+  let r = seg[0][1];
+  if (v > seg[0][0]) {
+    r = seg[seg.length - 1][1];
+    for (let i = 1; i < seg.length; i++) {
+      const [x1, y1] = seg[i], [x0, y0] = seg[i - 1];
+      if (v <= x1) { r = y0 + (y1 - y0) * ((v - x0) / (x1 - x0)); break; }
+    }
+  }
+  if (p.has("range")) r += 1.0;
+  return Math.max(THREE_DIST + 0.4, r);
 }
+
 
 // 3Pの準備時間(秒)。L速度95で即発射(0)、下がるほど少しずつ延長。
 // さらにディープ3は3Pラインからの超過距離が伸びるほど(二次で)延長する。
+/** 3Pの溜め時間の倍率。1.0 だと守備が寄り切ってしまい、理論値の半分しか決まらなかった。 */
+const THREE_PREP_SCALE = 0.5;
 export function threePrepFor(h: Player, dHoop: number): number {
   // 素の準備時間(ライン上): L速度10で2.5秒 → 95で0.36秒 を線形に(能力差を均等に)。
   const base = clamp(2.5 + (h.attr.threeRange - 10) * (0.36 - 2.5) / 85, 0.36, 2.5);
   const over = Math.max(0, dHoop - THREE_DIST);            // 3Pラインからの超過距離
   const deep = over * 0.14 + over * over * 0.02;           // 深いほど二次で延長
-  let w = base + deep;
+  // ⚠️ 溜めを半分にした。実測で3Pの成功率が 27.1% → 33.2% に上がり、実際の値(約36%)へ
+  //    近づいた。以前は溜めの間に守備が寄り切ってしまい、理論値の半分しか決まっていなかった。
+  let w = (base + deep) * THREE_PREP_SCALE;
   if (h.has("range")) w *= 0.7;                            // レンジ特能は準備が速い
   return w;
 }
@@ -174,8 +202,31 @@ export function defHands(d: Player): number {
 
 // ボール保持力: D精度/技術＋ドリブルキープ特能。剥がされ耐性の共通ベース。
 export function ballSecurity(h: Player): number {
-  return rate(h.attr.dribbleAcc) * 0.62 + rate(h.attr.handling) * 0.38
-    + (h.has("keepDribble") ? 0.28 : 0);
+  // D精度を主、技術を従として合成した「生の」ドリブル技量(0..100)。
+  const v = h.attr.dribbleAcc * 0.75 + h.attr.handling * 0.25;
+  return keepCurve(v) + (h.has("keepDribble") ? 0.20 : 0);
+}
+
+/**
+ * ドリブル技量(0..100) → ボール保持力(0..1)。
+ * ⚠️ 線形の rate() では、DBの能力値が 65〜85 に固まっているせいで差がほとんど出ない。
+ *    実プレーの感覚に合わせて**節点を置いた曲線**にする。
+ *      〜70   下手（明確に失う）
+ *      70〜75 並み
+ *      75〜   上手い。80 / 85 / 90 / 95 で段階的に安全になる
+ *    75〜90 を最も急にしてあるのは、選手の大半がこの帯に居て差が出てほしいため。
+ */
+function keepCurve(v: number): number {
+  const seg: [number, number][] = [
+    [60, 0.28], [70, 0.45], [75, 0.55], [80, 0.67],
+    [85, 0.78], [90, 0.88], [95, 0.95], [100, 1.00],
+  ];
+  if (v <= seg[0][0]) return seg[0][1];
+  for (let i = 1; i < seg.length; i++) {
+    const [x1, y1] = seg[i], [x0, y0] = seg[i - 1];
+    if (v <= x1) return y0 + (y1 - y0) * ((v - x0) / (x1 - x0));
+  }
+  return 1.0;
 }
 
 // コンテスト踏切の跳躍高さ(m)。
@@ -184,6 +235,13 @@ export function leapHeight(d: Player): number {
 }
 
 // 剥がしの優位度 = 守備の手 − ハンドラーの保持力。正なら守備有利。
+/**
+ * ⚠️ 選手DBの能力値は概ね 65〜85 に固まっており、素の差では stripEdge がほぼ 0 付近に
+ *    張り付いて**誰が持っても剥がされ方が同じ**になる（実測: D精度 65〜75 / 75〜85 /
+ *    85〜101 で 1000フレームあたり 1.17 / 0.81 / 0.65 と差が小さい）。
+ *    差を STRIP_GAIN 倍に広げ、能力差が結果に出るようにする。守備側にも同じだけ効く。
+ */
+const STRIP_GAIN = 1.6;   // 曲線側で差が付くので倍率は控えめに
 export function stripEdge(d: Player, h: Player): number {
-  return defHands(d) - ballSecurity(h);
+  return (defHands(d) - ballSecurity(h)) * STRIP_GAIN;
 }

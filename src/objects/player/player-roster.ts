@@ -21,6 +21,9 @@ Player.prototype.applyDef = function(def: PlayerDef): void {
     this.role = def.role;
     this.weight = def.weight;
     this.defMode = def.defMode;
+    // ⚠️ 手で指定したものか、守備の型が自動で入れたものかを区別する。
+    //    型は毎ポゼッション上書きするが、手の指定は尊重して残す。
+    this.defModeUser = def.defMode !== undefined;
     this.markSlot = def.markSlot;
     this.posMask = def.posMask;
     this.attr = def.attr;   // 再バインド: 試合前のスワップはdefオブジェクトを差し替えうる

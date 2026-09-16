@@ -7,8 +7,25 @@ import { perimContest, palmRadius, rimProtect } from "../../eval";
 
 // ジャンプシュート（ミドル/3P）の成功確率。距離・射程・コンテストから算出し、
 // 0.02〜0.93 にクランプして返す（レイアップ/ダンクは finishAtRim 側で別途）。
-/** 3P の基準成功率。ここを 0.16 にすると実測 43%、0.11 で約36%。 */
-const THREE_BASE = 0.14;
+/**
+ * 3Pの「素の」成功率（コンテスト・溜め不足・精神などを引く前）。
+ * ⚠️ 線形（旧: 0.14 + 精度×0.42）だと1点あたりの差が全域で同じで、しかも幅が
+ *    41.2%→53.8% の 12.6ポイントしか無かった。設計要件は
+ *    **「L精度が下がるほど1点の重みが増す」**なので、最高値からの**不足分の二乗**で落とす。
+ *      L精度100 → 55.0%（TOP）
+ *      不足 (1 - 精度/100) の二乗に FALL を掛けて引く
+ *    結果（1点下がった時の差 / 1万本あたり）:
+ *      95→23本  90→43本  85→64本  80→84本  75→105本  70→125本  65→146本
+ *    上に行くほど差が詰まり、下に行くほど開く。単調増加は全域で保証される。
+ */
+const THREE_TOP = 0.55;
+const THREE_FALL = 2.05;
+function threeSkillTerm(acc: number): number {
+  const miss = 1 - clamp(acc, 0, 100) / 100;
+  return THREE_TOP - THREE_FALL * miss * miss;
+}
+
+
 
 export function jumpShotMakeProbability(
   h: Player, dHoop: number, dDef: number,
@@ -25,7 +42,7 @@ export function jumpShotMakeProbability(
   // make % = この距離での選手の技量から、距離とコンテストを差し引く
   const skill = rate(isThree ? h.attr.threeAcc : h.attr.midAcc);
   // ⚠️ 3P の基準値。実測で 3P が 43% 入っていた（実際のバスケットは約36%）。
-  const baseLine = isThree ? THREE_BASE : 0.30;
+  const baseLine = 0.30;   // ミドル用。3Pは threeSkillTerm を使う
   const distRef = isThree ? THREE_DIST : 1.5;
   // L速度は深い3Pの減衰を緩め、特能ミドルは全距離で緩める
   let falloff = isThree ? 0.05 - rate(h.attr.threeRange) * 0.035 : 0.03;
@@ -33,7 +50,8 @@ export function jumpShotMakeProbability(
   const over = Math.max(0, dHoop - distRef);
   // 遠投は二次で崩れる。L速度が崩れを少し緩める。
   const heaveDrop = isThree ? over * over * 0.011 * (1 - rate(h.attr.threeRange) * 0.33) : 0;
-  let p = baseLine + skill * 0.42 - over * falloff - heaveDrop;
+  let p = (isThree ? threeSkillTerm(h.attr.threeAcc) : baseLine + skill * 0.42)
+    - over * falloff - heaveDrop;
   // ダイレクトプレイ: キャッチ&シュートのリズム
   if (h.quickT > 0 && h.has("oneTouch")) p += 0.05;
   // お膳立て: 良いパスからオープンで受けた膳立て

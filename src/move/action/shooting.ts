@@ -315,6 +315,13 @@ const CONTEST_RANGE = 3.6;
 
 export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, prepDone?: number): void {
     game.chargeShooter = null;
+    // ⚠️ 2P/3P は**放つ瞬間の立ち位置**で決める。溜めの間にステップバックやドライブで
+    //    数十センチ動くと、判断時の距離ではラインの内外が入れ替わる。
+    //    実測: 7.1〜7.8m から打っているのに shotPoints=2 の球があり、逆に 5.88m から
+    //    打って 3 になる球もあった。これが「3Pアテンプトが増えない」直接の原因。
+    //    ⚠️ 以降の距離依存（確率の減衰・弾道・狙い先・ロングショット判定）もすべて
+    //    　 この実測値を使うので、ここで上書きする。
+    dHoop = dist2D(h.pos, game.attackFloor(h.team));
     // 準備の充足度: 溜め切れば req=done で不足0。急ぎ撃ちは不足、どフリー延長は余剰。
     const req = game.shotWindup || 0;
     const done = prepDone ?? req;

@@ -1,5 +1,25 @@
 // ハンドラーの判断tick。シュート/ドライブ/パス/リセットを、状況(クロック・守備)と
 // オフェンスロール・個人の傾向・チーム戦術から選ぶ。実行は ./drive ./keep 側。
+
+/**
+ * 突破を仕掛けてよいかの門番。
+ *  lo/hi … ドリブル技量をこの範囲で 0..1 に正規化（DBの実分布は概ね 0.60〜0.95）
+ *  spd   … 走速のこの割合を超えていれば「スピードに乗っている」
+ *  edge  … 相手守備との差がこれだけあれば「明確に格下」
+ *  floor … どれも満たさない時に残す意欲の割合
+ */
+const DRIVE_GATE = { lo: 0.72, hi: 0.88, spd: 0.5, edge: 0.15, floor: 0.35 };
+
+/**
+ * 3Pラインの手前で打とうとした時に「一歩下がる」条件。
+ *  near  … リムからこれ以上なら、下がれば3Pになる距離とみなす
+ *  space … 守備がこれだけ離れていること（詰められていたら下がる余裕がない）
+ *  acc   … 3Pを打つ価値のある精度
+ */
+const ARC_STEP = { near: 5.9, space: 1.6, acc: 0.68 };
+
+/** 3Pの価値（2Pの1.5倍）を撃つ判断へ反映させる係数。射手の精度に比例して効く。 */
+const THREE_VALUE = 0.55;
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { THREE_DIST, SHOT_CLOCK, BUZZER_WINDOW } from "../../../config";
@@ -9,7 +29,7 @@ import { pass, passToReceiver } from "../../../move/action/passing";
 import { shoot, finishAtRim, tryShotFake } from "../../../move/action/shooting";
 import { denySmother } from "../../defense/shared";
 import { doubleTeamApproaching, betterOptionAvailable, laneClear } from "../reads";
-import { canIso, postMove, pushBreak, driveDecision, stepBack } from "./drive";
+import { canIso, postMove, pushBreak, driveDecision, stepBack, stepBehindArc } from "./drive";
 import {
   mustKeepDribble, keepDribbleDecide, trapKickOut, retreatFromTrap,
   bringUpLane, outletTo, advanceSafely,
@@ -297,6 +317,21 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     const tw = twWeight(h);
     let driveDesire = rate(h.attr.aggression) * 0.35 + rate(h.attr.handling) * 0.25 + tac.driveBias * 0.4 * tw;
     if (h.has("driver")) driveDesire += 0.25;        // ドリブラー: 抜き去りを狙う
+    // ⚠️ ドリブルが下手な選手ほど突破を控え、キープを優先する。
+    //    以前は handling の重みが 0.25 しかなく、実測でドライブ挑戦率が
+    //    ハンドリング 60〜70 / 70〜80 / 80〜101 で 2.2 / 2.5 / 2.5（1000フレーム比）と
+    //    **ほぼ横並び**だった。その結果、下手な選手が突っかけて失う。
+    //    ただし次のどれかが立てば従来どおり仕掛けてよい:
+    //      ①元々ドリブルが巧い ②既にスピードに乗っている ③相手が明確に格下
+    {
+      const hand = rate(h.attr.handling) * 0.6 + rate(h.attr.dribbleAcc) * 0.4;
+      const skill = clamp((hand - DRIVE_GATE.lo) / (DRIVE_GATE.hi - DRIVE_GATE.lo), 0, 1);
+      const atSpeed = clamp((h.curSpd - h.runSpeed * DRIVE_GATE.spd) / (h.runSpeed * 0.3), 0, 1);
+      const cd0 = game.nearestDefender(h);
+      const edge = cd0 ? clamp((hand - rate(cd0.attr.defense)) / DRIVE_GATE.edge, 0, 1) : 0.5;
+      const gate = Math.max(skill, atSpeed, edge);
+      driveDesire *= DRIVE_GATE.floor + gate * (1 - DRIVE_GATE.floor);
+    }
     let shootDesire = rate(h.attr.aggression) * 0.4 + prio * 0.4 + tac.pace * 0.2 * tw;
     if (h.has("striker")) shootDesire += 0.15;       // ストライカー: スコアラーの心構え
     if (h.has("keepDribble")) shootDesire -= 0.08;   // キープ型は攻め急がない
@@ -349,10 +384,25 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       const open = dDef > (h.has("isoShooter") ? 1.4 : 1.7);
       // クロック連動の撃ち急ぎ: 残クロックが減るほどオープンな射程内の球は打つ。
       const push = clockPush(game, 0.6);
-      let pShoot = 0.20 + shootDesire * 0.55 - (dHoop - 2) * 0.04 + (dDef - 1) * 0.3 + push * 0.5;
-      if (isThree) pShoot += tac.threeBias * 0.22 * tw - 0.05;
+      // ⚠️ 3Pは2Pの1.5倍の価値がある。以前は距離の罰 -(dHoop-2)*0.04 が 7m で -0.20 効き、
+      //    さらに 3P には -0.05 の下駄まで乗って**実質マイナス**だった。その結果
+      //    3Pの試投が全体の 13% ほどしか出ていなかった（実際のNBAは約39%）。
+      //    距離の罰はラインまでで頭打ちにし、3Pには射手の精度に応じた加点を与える。
+      const dPen = Math.min(dHoop, THREE_DIST) - 2;
+      let pShoot = 0.20 + shootDesire * 0.55 - dPen * 0.04 + (dDef - 1) * 0.3 + push * 0.5;
+      if (isThree) pShoot += tac.threeBias * 0.22 * tw + (rate(h.attr.threeAcc) - 0.55) * THREE_VALUE;
       pShoot = clamp(pShoot, 0.03, 0.96);
-      if (open && chance(pShoot)) { goShoot(); return; }
+      if (open && chance(pShoot)) {
+        // ⚠️ ラインの**手前**で構えていて、下がれば3Pになるなら一歩退がる。
+        //    実測でシュートが 6.0〜6.75m に固まり、3Pの試投が全体の 9.4% しか無かった。
+        //    条件: オープンで、3Pを狙う価値がある射手で、足が止まっていないこと。
+        if (!isThree && dHoop > ARC_STEP.near && dDef > ARC_STEP.space
+            && rate(h.attr.threeAcc) > ARC_STEP.acc && h.jukeT <= 0 && h.coolT <= 0) {
+          stepBehindArc(game, h);
+          return;
+        }
+        goShoot(); return;
+      }
 
       // クローズアウトしてくる守備者をステップバックで罰する: 抜き去るか綺麗な空間で打つ
       if (!open && dDef < 1.5 && canIso(game, h, dHoop) && h.jukeT <= 0

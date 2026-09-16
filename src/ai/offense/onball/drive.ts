@@ -6,6 +6,7 @@ import { reactionLag, jukeDeception, jukeDiscipline, shotThreat, burstTime } fro
 import { passToReceiver } from "../../../move/action/passing";
 import { finishAtRim } from "../../../move/action/shooting";
 import type { Game } from "../../../game";
+import { THREE_DIST } from "../../../config";
 
   // ビッグが相手を押し込む: 背中で守備者を押し下げてリムへ迫る(クロスオーバー/フェイント無し)。
   // ハンドリング非依存 — 接触の強さ=ボディバランス(balance)+postが押し込み・逆押し込みを支配する。
@@ -221,3 +222,21 @@ export function stepBack(game: Game, h: Player, d: Player, dHoop: number): void 
       h.driveTarget.copyFrom(h.jukeTarget);
     }
   }
+
+/**
+ * 3Pラインの**手前**で構えてしまった時、一歩下がってラインの外から打てるようにする。
+ * ⚠️ 位置を直接書き換えない。`jukeTarget` に下がり先を置いて**自分の足で**退がる。
+ * ⚠️ 実測でシュート距離が 6.0〜6.75m（ラインの内側）に固まっており、3Pの試投は
+ *    全体の 9.4% しか無かった。あと数十センチ下がれば3Pになる球を2Pで打っていた。
+ */
+export function stepBehindArc(game: Game, h: Player): void {
+  const rim = game.attackFloor(h.team);
+  const away = dirTo2D(rim.x, rim.z, h.pos.x, h.pos.z);   // リムから離れる方向
+  const need = THREE_DIST + ARC_MARGIN - dist2D(h.pos, rim);
+  if (need <= 0) return;
+  h.jukeT = rand(0.16, 0.26);
+  h.jukeTarget.set(h.pos.x + away.ux * need, 0, h.pos.z + away.uz * need);
+  game.clampCourt(h.jukeTarget);
+}
+/** ラインの外側にどれだけ余裕を持って下がるか(m)。踏んでいると2P扱いになる。 */
+const ARC_MARGIN = 0.35;

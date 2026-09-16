@@ -70,6 +70,10 @@ export class Player {
   defMode: "man" | "zone" | undefined = undefined;
   /** マンマークで見る相手のスロット。undefined = 同じスロットの相手。 */
   markSlot: number | undefined = undefined;
+  /** `defMode` が手動指定か（true なら守備の型で上書きしない）。 */
+  defModeUser = false;
+  /** ドロップ役のビッグ（外へ出ずゴール下に留まる）。守備の型が毎ポゼッション設定する。 */
+  dropBig = false;
   runSpeed: number;              // m/s、`speed`能力値から算出
   role: string;                  // PG / SG / SF / PF / C
   evalRole: string | undefined;  // オフェンスロール — 攻撃時の挙動修飾 (applyDef)

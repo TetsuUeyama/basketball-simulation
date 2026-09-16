@@ -41,6 +41,30 @@ function noOutward(game: Game, p: Player, rx: number, rz: number): [number, numb
   return [rx - (ox / d) * out, rz - (oz / d) * out];    // 横（接線）へ逃がす
 }
 
+/**
+ * 3Pラインの**外に居る選手を、押し出しでラインの内側へ落とさない**。
+ * ⚠️ 持ち場はラインの外（7.25m）に置いてあるが、味方やボールからの押し出しは
+ *    向きを問わないので、そのままだと簡単にラインの内側へ入る（実測: ペリメーターの
+ *    オフボールで「6.0〜6.75m のあと一歩」が 9.0%）。受けてそのまま打てば3Pになる
+ *    位置を保たせたい。
+ * ⚠️ これは「行けない場所」を作るのではない。**押し出しの向き**から内向き成分を
+ *    抜くだけで、選手は自分の意思（カット・持ち場の取り直し）では自由に入れる。
+ * ⚠️ 守るのはラインの外に居る時だけ。既に内側に居る選手は対象外（押し戻さない）。
+ */
+function noInward(game: Game, p: Player, rx: number, rz: number): [number, number] {
+  if (!game.frontT || p === game.handler || p.cutting || p.screening) return [rx, rz];
+  if (p.spotIdx >= 5) return [rx, rz];                 // ポスト役は対象外
+  const rim = game.attackFloor(p.team);
+  const ox = p.pos.x - rim.x, oz = p.pos.z - rim.z;
+  const d = Math.hypot(ox, oz);
+  if (d < THREE_DIST || d > THREE_DIST + ARC_KEEP || d < 1e-4) return [rx, rz];
+  const inward = -(rx * ox + rz * oz) / d;             // 押し出しのうち内向きの成分
+  if (inward <= 0) return [rx, rz];
+  return [rx + (ox / d) * inward, rz + (oz / d) * inward];   // 横（接線）へ逃がす
+}
+/** ラインの外側この範囲に居る間だけ、内向きの押し出しを抜く。 */
+const ARC_KEEP = 1.2;
+
 export function spacingNudge(game: Game, dt: number, p: Player, min = 3.5): void {
   const MIN = min;
   let rx = 0, rz = 0;
@@ -54,6 +78,7 @@ export function spacingNudge(game: Game, dt: number, p: Player, min = 3.5): void
     }
   }
   [rx, rz] = noOutward(game, p, rx, rz);
+  [rx, rz] = noInward(game, p, rx, rz);
   const rl = Math.hypot(rx, rz);
   if (rl > 1e-3) {
     const step = p.accelSpeed(dt, 0.8) * dt * Math.min(1, rl);   // 分離を押し出す
@@ -68,7 +93,8 @@ export function ballSpacingNudge(game: Game, dt: number, p: Player, min: number)
   const dx = p.pos.x - h.pos.x, dz = p.pos.z - h.pos.z;
   const d = Math.hypot(dx, dz);
   if (d >= min || d < 1e-3) return;
-  const [ux, uz] = noOutward(game, p, dx / d, dz / d);
+  let [ux, uz] = noOutward(game, p, dx / d, dz / d);
+  [ux, uz] = noInward(game, p, ux, uz);
   if (Math.abs(ux) + Math.abs(uz) < 1e-3) return;   // 外へ下がる以外に逃げ場が無い → 押さない
   const step = p.accelSpeed(dt, 0.8) * dt * ((min - d) / min);
   moveToward2D(p.pos, p.pos.x + ux, p.pos.z + uz, step);
