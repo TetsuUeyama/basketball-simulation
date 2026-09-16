@@ -69,8 +69,14 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
     // ⚠️ 遠い相手ほど選びにくくする。射程の頭打ちだけだと、射程内なら距離を問わず
     //    「空いている・リムに近い」が勝ち、コート横断のパスが普通に選ばれていた。
     const far = Math.max(0, dist2D(h.pos, p.pos) - LONG_PASS.free) * LONG_PASS.cost;
-    // vision: 低い攻判断は各選択肢の良さを見誤る
-    let value = open + progress * 3 - far + rand(-1, 1) * (1 - rate(h.attr.offense)) * 0.8;
+    // ⚠️ 見極めの誤差は **P精度** に紐づける。以前は攻判断(offense)だけを見ており、
+    //    実測で「最良の受け手を選べた割合」が P精度 65〜78 で 64% / 88以上で **58%** と
+    //    **上手いパサーほど下がる**逆転が起きていた。
+    // ⚠️ さらにオープン度の評価そのものを P精度 で重み付けする。巧いパサーは
+    //    「空いている人が見える」ので、オープンな味方を高く評価する。
+    const vision = rate(h.attr.passAcc) * 0.7 + rate(h.attr.offense) * 0.3;
+    let value = open * (PASS_VISION.openLo + vision * PASS_VISION.openHi)
+      + progress * 3 - far + rand(-1, 1) * (1 - vision) * PASS_VISION.noise;
     if (p.cutting) value += 1.5;            // カッターへのフィードを評価
     // ⚠️ ゴール下でカバーが来ていない味方は最優先。守備が戻る前に入れる。
     //    実測でゴール下の試投が 6.4 本/試合しか出ておらず、パスで穴を突けていなかった。
@@ -110,6 +116,13 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
   }
   return best;
 }
+
+/**
+ * 受け手の見極め。
+ *  openLo/openHi … オープン度の評価倍率（見極めが低い 0.7 倍 〜 高い 1.6 倍）
+ *  noise         … 見極めの誤差の大きさ（見極めが高いほど小さくなる）
+ */
+const PASS_VISION = { openLo: 0.6, openHi: 1.5, noise: 1.1 };
 
 export function pass(game: Game, h: Player): boolean {
   const target = chooseReceiver(game, h);

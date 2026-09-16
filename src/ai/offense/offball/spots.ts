@@ -34,7 +34,13 @@ function noOutward(game: Game, p: Player, rx: number, rz: number): [number, numb
   const rim = game.attackFloor(p.team);
   const ox = p.pos.x - rim.x, oz = p.pos.z - rim.z;
   const d = Math.hypot(ox, oz);
-  const max = THREE_DIST + (deepThreeOK(p) ? 1.6 : 0.8);
+  // ⚠️ 上限を固定 7.55m で見ていたため、持ち場（7.1〜7.5m）との間に**青天井の帯**が
+  //    でき、押し出しでそこへ流れて止まっていた（実測: オフボールの 46.2% が持ち場より
+  //    1m以上 外、持ち場から離れている時間の 39.8% が「外側で止まっている」）。
+  //    外に居すぎるとシュート射程からも外れ、3Pを打たずにドライブへ切り替わる。
+  //    **自分の持ち場より外へは押し出さない**。
+  const max = Math.min(THREE_DIST + (deepThreeOK(p) ? 1.6 : 0.8),
+                       p.spotRim > 0 ? p.spotRim + 0.4 : Infinity);
   if (d < max || d < 1e-4) return [rx, rz];
   const out = (rx * ox + rz * oz) / d;                  // 押し出しのうち外向きの成分
   if (out <= 0) return [rx, rz];

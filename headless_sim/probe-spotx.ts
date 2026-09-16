@@ -19,7 +19,7 @@ let n = 0, sumP = 0, sumS = 0, atSpot = 0;
 let churn = 0, churnFrames = 0;
 const br = new Map<string, number>(), bx = new Map<string, number>();
 const prevSpot = new Map<Player, number>();
-const cnt: Record<number, { n: number; px: number; sx: number }> = {};
+const cnt: Record<number, { n: number; px: number; sx: number; pr: number; sr: number; out: number }> = {};
 for (let gi = 0; gi < NG; gi++) {
   clubTeam(0, gi % 8); clubTeam(1, (gi + 4) % 8);
   g.applyRoster(); g.reset();
@@ -53,8 +53,11 @@ for (let gi = 0; gi < NG; gi++) {
       const s = spots[p.spotIdx]; if (!s) continue;
       n++; sumP += Math.abs(p.pos.x); sumS += Math.abs(s.x);
       if (dist2DTo(p.pos, s.x, s.z) < 1.8) atSpot++;
-      const c = cnt[p.spotIdx] ?? (cnt[p.spotIdx] = { n: 0, px: 0, sx: 0 });
+      const c = cnt[p.spotIdx] ?? (cnt[p.spotIdx] = { n: 0, px: 0, sx: 0, pr: 0, sr: 0, out: 0 });
       c.n++; c.px += Math.abs(p.pos.x); c.sx += Math.abs(s.x);
+      const rim = game.attackFloor(t);
+      const pr = dist2DTo(rim, p.pos.x, p.pos.z), sr = dist2DTo(rim, s.x, s.z);
+      c.pr += pr; c.sr += sr; if (pr > 6.75) c.out++;
     }
   }
 }
@@ -65,5 +68,5 @@ console.log(`  スポット変更: ${churn}回 / 選手1人あたり ${(churn / 
 console.log("\nスポット別:");
 for (const k of Object.keys(cnt).map(Number).sort((a, b) => a - b)) {
   const c = cnt[k];
-  console.log(`  spot${k}: ${c.n}件 / 実際 ${(c.px / c.n).toFixed(2)}m / 定義 ${(c.sx / c.n).toFixed(2)}m`);
+  console.log(`  spot${k}: ${String(c.n).padStart(5)}件 / リムから 実際 ${(c.pr / c.n).toFixed(2)}m ・定義 ${(c.sr / c.n).toFixed(2)}m / 3Pラインより外 ${(c.out / c.n * 100).toFixed(1)}%`);
 }

@@ -74,6 +74,8 @@ export class Player {
   defModeUser = false;
   /** ドロップ役のビッグ（外へ出ずゴール下に留まる）。守備の型が毎ポゼッション設定する。 */
   dropBig = false;
+  /** 自分の持ち場（フォーメーションスポット）のリムからの距離(m)。オフボールの駆動が毎フレーム更新。 */
+  spotRim = 0;
   runSpeed: number;              // m/s、`speed`能力値から算出
   role: string;                  // PG / SG / SF / PF / C
   evalRole: string | undefined;  // オフェンスロール — 攻撃時の挙動修飾 (applyDef)

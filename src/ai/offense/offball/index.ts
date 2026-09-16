@@ -4,7 +4,9 @@ import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { RIM, THREE_DIST } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D, dirTo2D, segPerp } from "../../../util";
-import { deepThreeOK } from "../../../eval";
+import { deepThreeOK, ballSecurity } from "../../../eval";
+/** ハンドラーのキープ力が、味方の動き直しの速さをどれだけ押し上げるか。 */
+const KEEP_TIME = { lo: 0.6, hi: 0.8 };
 import { laneBlock } from "../../../move/reaction/pass-risk";
 import { countScreening, handlerPressured, goodScreener, setScreen, updateScreen } from "../../../move/action/screen";
 import { tightlyTrapped, trapReliever, trapReliefSpot } from "../reads";
@@ -96,6 +98,11 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
       continue;
     }
 
+    // ⚠️ 押し出しが「自分の持ち場より外へ」出さないための基準。毎フレーム更新する。
+    {
+      const sp = spots[p.spotIdx];
+      p.spotRim = sp ? dist2D(sp, rim) : 0;
+    }
     // パスコースを潰されているか（毎フレーム）。外しの判断と注目システムが見る。
     markFronted(game, p);
     // 司令塔(とキープで時間を作るハンドラー)がチーム全体の再配置を速める
@@ -107,7 +114,11 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
     //    いない選手まで「止まったこと」を知っていることになる（注目システムに反する）。
     //    実測: ハンドラーが止まると他の9人の停止率が 24.8% → 45.5% に跳ねていた。
     if (game.handler && game.handler !== p && game.handler.stillT > 0.8) {
-      tick *= 1 + attnTo(p, game.handler) * 1.2;   // 見ている選手ほど早く動き直す
+      // ⚠️ ボールを持てるハンドラーほど、味方が動き直す時間を稼げる。
+      //    ドリブルで守れる選手がキープ → 味方がパスコースを作り直す → 巧いパサーが
+      //    そこへ通す、という繋がりを作る（ドリブルもパスも高い選手は両方できる）。
+      tick *= 1 + attnTo(p, game.handler) * 1.2
+        * (KEEP_TIME.lo + ballSecurity(game.handler) * KEEP_TIME.hi);
     }
     p.offTimer -= dt * tick;
 
@@ -228,9 +239,11 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
       const hustle = clamp(0.98 + farSpot * 0.09, 0.98, 1.15);
       if (farSpot > 3) p.transitT = 0.2;   // 走る姿勢（構えでなく進行方向へ胸を向ける）
       moveToward2D(p.pos, sj.x, sj.z, p.accelToward(dt, sj.x, sj.z, hustle) * dt);
-      spacingNudge(game, dt, p, atPost ? 2.0 : 4.2);   // 味方と近づきすぎない（間合いを広く）
+      // ⚠️ 間合いは 4.2 → 3.2 に緩めた。強い押し出しが持ち場からの引き剥がしになっており、
+      //    実測で「そのまま3Pを打てる位置」が 23.6% → 27.2% に改善した。
+      spacingNudge(game, dt, p, atPost ? 2.0 : 3.2);   // 味方と近づきすぎない（間合いを広く）
       // ボールからの連続的な分離: ドリブラーが寄ってきたら離れる(ドライブ/パスコースのスペース確保で強め)
-      ballSpacingNudge(game, dt, p, atPost ? 2.4 : 5.2);
+      ballSpacingNudge(game, dt, p, atPost ? 2.4 : 4.2);   // 5.2 → 4.2 に緩めた（同上）
       // マーク外し: 担当守備を振り切ってパスコースを作る（クイックネス or パワー勝負）
       tryShake(game, dt, p);
 
