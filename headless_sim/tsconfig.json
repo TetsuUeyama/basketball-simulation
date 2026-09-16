@@ -1,0 +1,16 @@
+{
+  // ⚠️ ルートの tsconfig は `"include": ["src"]` なので、headless_sim はどの
+  //    プロジェクトにも属していなかった。IDE が既定設定で開くため `process` が
+  //    未定義になり、import も解決されず any だらけに見える。
+  //    ビルド（vite / tsc -p .）はここを見ないので、これは**エディタのための設定**。
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // プローブは Node で走るので Node の型を入れる（@types/node は導入済み）。
+    "types": ["node"],
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    // プローブは esbuild が型を落として束ねるだけなので出力しない。
+    "noEmit": true
+  },
+  // src も含める。プローブが src を import しており、含めないと解決できない。
+  "include": ["../headless_sim", "../src"]
+}

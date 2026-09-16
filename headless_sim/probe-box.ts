@@ -28,4 +28,4 @@ for (const pl of game.allPlayers(0)) {
   console.log(pad(`${pl.role} ${pl.name}`.slice(0, 18), 20) + cells.map((t) => pad(t, 10)).join(""));
 }
 console.log("");
-console.log("帯の指定: " + cols.filter((c) => c.tint).map((c) => c.label + "=" + c.tint).join(" / "));
+console.log("グループ見出し: " + cols.filter((c) => c.group).map((c) => c.label + "=" + c.group).join(" / "));

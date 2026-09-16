@@ -65,6 +65,29 @@ declare module "./ui" {
 
 const ATTR_SHORT = new Map(ATTR_META.map((m) => [m.key, m.label]));
 
+/**
+ * そのチームの**コート上の5人**のロスター添字。
+ * ⚠️ 添字 0..4 を先発と決め打ってはいけない。試合中の交代は game.players[i] を
+ *    **実体ごと**入れ替えるだけで ROSTER の順は変わらないため、実測で **24.8%** の
+ *    場面で「ROSTER[0..4] がコート上に居ない」状態になる。決め打つと、盤の表示・
+ *    CPU の入れ替え・守備の割り当てが**別人に当たる**。
+ */
+function onCourtIdx(ui: UI, team: number): number[] {
+  const g = ui.game;
+  if (!g) return [0, 1, 2, 3, 4];
+  return g.teamPlayers(team).map((p) => g.roster[team].indexOf(p)).filter((i) => i >= 0);
+}
+/** そのチームの**ベンチ**のロスター添字。 */
+function benchIdx(ui: UI, team: number): number[] {
+  const g = ui.game;
+  if (!g) return [5, 6, 7, 8, 9, 10, 11, 12];
+  const out: number[] = [];
+  for (let i = 0; i < g.roster[team].length; i++) {
+    if (!g.onCourt(g.roster[team][i])) out.push(i);
+  }
+  return out;
+}
+
 // フルコートの盤（横長）の立ち位置（%）。左半分が相手、右半分が自分。
 /** 自分の先発5人（右のリムを攻める並び）。 */
 const OWN_SPOT: { x: number; y: number }[] = [
@@ -349,7 +372,7 @@ function runCpuTurn(ui: UI, m: PokerMatch, cpu: number, done: () => void): void 
     m.exchange(cpu, plan.picks, plan.targets);
     ui.game?.applyRoster();
     cpuAdjustSquad(ui, m, cpu);          // CPU も編成と役割を手当てする
-    cpuAssignDefense(cpu);               // 相手の能力を見て守備の割り当てを決める
+    cpuAssignDefense(ui, cpu);           // 相手の能力を見て守備の割り当てを決める
     ui.pokerFresh = plan.picks.length;   // 補充ぶんをアニメで出す
     ui.pokerFreshTeam = cpu;             // ⚠️ 観戦では両チームの札が並ぶ。打った側だけ動かす
     ui.renderPoker();
@@ -503,8 +526,9 @@ function courtBoard(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
     } as Partial<CSSStyleDeclaration>);
     board.appendChild(cell);
   };
-  for (let i = 0; i < STARTERS; i++) put(opp, i, OPP_SPOT[i], true);   // 相手は左半分（ピルも左）
-  for (let i = 0; i < STARTERS; i++) put(team, i, OWN_SPOT[i]);  // 自分は右半分
+  // ⚠️ 添字 0..4 ではなく**今コートに居る5人**を描く（交代後は一致しない）。
+  onCourtIdx(ui, opp).forEach((idx, k) => { if (OPP_SPOT[k]) put(opp, idx, OPP_SPOT[k], true); });
+  onCourtIdx(ui, team).forEach((idx, k) => { if (OWN_SPOT[k]) put(team, idx, OWN_SPOT[k]); });
   return board;
 }
 
@@ -517,7 +541,8 @@ function benchGrid(ui: UI, m: PokerMatch, team: number): HTMLDivElement {
     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "10px", padding: "1px 8px",   // 上下の隙間をほぼ無くす
   } as Partial<CSSStyleDeclaration>);
-  for (let i = STARTERS; i < ROSTER_SIZE; i++) bench.appendChild(playerCell(ui, m, team, i, 30));
+  // ⚠️ 添字 5..12 ではなく**コートに居ない全員**（交代で入れ替わる）。
+  for (const i of benchIdx(ui, team)) bench.appendChild(playerCell(ui, m, team, i, 30));
   return bench;
 }
 
@@ -1086,12 +1111,14 @@ function benchSideToggle(ui: UI, user: number, opp: number): HTMLDivElement {
 const SWAP_EDGE = 3;
 function cpuAdjustSquad(ui: UI, m: PokerMatch, cpu: number): void {
   // ① 役割: 未設定（＝自動）の先発だけ埋める。手で設定した相手の指定は触らない。
+  // ⚠️ 添字 0..4 ではなく**コート上の5人**を見る（交代後は一致しない）。
+  const onIdx = onCourtIdx(ui, cpu);
   const takenDef = new Map<string, number>();
-  for (let i = 0; i < STARTERS; i++) {
+  for (const i of onIdx) {
     const d = ROSTER[cpu][i];
     if (d.defRole) takenDef.set(d.defRole, (takenDef.get(d.defRole) ?? 0) + 1);
   }
-  for (let i = 0; i < STARTERS; i++) {
+  for (const i of onIdx) {
     const d = ROSTER[cpu][i];
     if (!d.evalRole) d.evalRole = ui.bestOffRole(d);
     if (!d.defRole) {
@@ -1102,14 +1129,16 @@ function cpuAdjustSquad(ui: UI, m: PokerMatch, cpu: number): void {
 
   // ② 入れ替え: 一番弱い先発と、その枠に適格な控えの最良を比べる。
   let worst = -1, worstOvr = Infinity;
-  for (let i = 0; i < STARTERS; i++) {
+  for (const i of onIdx) {
     const v = ui.ovrOf(ROSTER[cpu][i]);
     if (v < worstOvr) { worstOvr = v; worst = i; }
   }
   if (worst < 0) return;
-  const slot = SLOT_POS[worst] ?? ROSTER[cpu][worst].role;
+  // ⚠️ 枠の位置は ROSTER の添字ではなく、その実体が就いている slot で決まる。
+  const wp = ui.game?.roster[cpu][worst];
+  const slot = SLOT_POS[wp?.slot ?? 0] ?? ROSTER[cpu][worst].role;
   let best = -1, bestOvr = worstOvr + SWAP_EDGE;
-  for (let i = STARTERS; i < ROSTER_SIZE; i++) {
+  for (const i of benchIdx(ui, cpu)) {
     const d = ROSTER[cpu][i];
     if (roleFit(d, slot) <= 0) continue;          // その枠を守れない選手は出さない
     const v = ui.ovrOf(d);
@@ -1379,9 +1408,11 @@ function defAssignPills(ui: UI, def: PlayerDef, team: number, small: boolean): H
  */
 const ACE_GAP = 0.12;     // エースが2番手をこれだけ上回ればダブルチーム
 const ZONE_GAP = 0.18;    // 守備力がこれだけ下回るならゾーンに逃がす
-function cpuAssignDefense(cpu: number): void {
+function cpuAssignDefense(ui: UI, cpu: number): void {
   if (POKER_OPTS.userTeam === cpu) return;   // 自チームはユーザーの指示が優先
   const opp = 1 - cpu;
+  // ⚠️ 相手も自分も**コート上の5人**で考える（添字 0..4 は交代後ズレる）。
+  const oppIdx = onCourtIdx(ui, opp), myIdx = onCourtIdx(ui, cpu);
   const threat = (i: number): number => {
     const d = ROSTER[opp][i];
     return d ? scoringPower(d.attr) / 100 + (d.height - 1.9) * 0.25 : 0;
@@ -1394,8 +1425,8 @@ function cpuAssignDefense(cpu: number): void {
   };
 
   // ② 脅威の高い順に、守備力の高い選手を当てる
-  const oppOrder = [0, 1, 2, 3, 4].sort((a, b) => threat(b) - threat(a));
-  const defOrder = [0, 1, 2, 3, 4].sort((a, b) => guard(b) - guard(a));
+  const oppOrder = [...oppIdx].sort((a, b) => threat(b) - threat(a));
+  const defOrder = [...myIdx].sort((a, b) => guard(b) - guard(a));
   const markOf = new Map<number, number>();          // 守備の slot → 相手の slot
   oppOrder.forEach((o, k) => markOf.set(defOrder[k], o));
 
@@ -1410,7 +1441,7 @@ function cpuAssignDefense(cpu: number): void {
   }
 
   // ④ 反映。明確に劣る組み合わせはゾーンへ逃がす。
-  for (let i = 0; i < STARTERS; i++) {
+  for (const i of myIdx) {
     const d = ROSTER[cpu][i];
     if (!d) continue;
     const o = markOf.get(i);
@@ -1420,7 +1451,9 @@ function cpuAssignDefense(cpu: number): void {
       d.markSlot = undefined;
     } else {
       d.defMode = "man";
-      d.markSlot = o;
+      // ⚠️ markSlot は**相手のスロット番号**。守備側は teamPlayers(off)[markSlot] で引くので、
+      //    ロスターの添字をそのまま入れると別人を見に行く。
+      d.markSlot = ui.game?.roster[opp][o]?.slot ?? o;
     }
   }
 }
