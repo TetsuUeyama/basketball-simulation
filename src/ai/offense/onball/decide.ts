@@ -20,6 +20,19 @@ const ARC_STEP = { near: 5.9, space: 1.6, acc: 0.68 };
 
 /** 3Pの価値（2Pの1.5倍）を撃つ判断へ反映させる係数。射手の精度に比例して効く。 */
 const THREE_VALUE = 0.55;
+/**
+ * ジャンパーを撃つ資格。この距離帯のシュート精度を 0..1 に正規化し、
+ * 低い選手ほど pShoot を floor 倍まで削る。
+ * ⚠️ ミドルには**精度の項がまったく無かった**（pShoot は攻撃性・オフェンス順位・
+ *    チームのペースだけで決まっていた）。精度50のビッグも精度90のガードも同じ
+ *    確率でミドルを打っていた。打てない選手はゴール下を狙い、ジャンパーは
+ *    「仕方なく」打つ形にする。
+ * ⚠️ クロックに追われた分(push)には掛けない。残り時間が無ければ下手でも打つ＝
+ *    それが「仕方なく」。
+ */
+const SHOOTER_GATE = { lo: 0.62, hi: 0.85, floor: 0.25 };
+/** 打てない選手が、リムの近く(この距離内)に居る時どれだけリムへ向かうか。 */
+const RIM_PREF = { range: 5.0, gain: 0.35 };
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { THREE_DIST, SHOT_CLOCK, BUZZER_WINDOW } from "../../../config";
@@ -361,6 +374,15 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       }
     }
 
+    // 打てない選手は、近い位置ならジャンパーではなくリムへ持ち込む。
+    // ⚠️ 遠い位置では上げない。ハンドリングの低い選手をペリメーターから突っ込ませると
+    //    ターンオーバーが増えるだけ（DRIVE_GATE で既に抑えている理由と同じ）。
+    const jumpAcc = Math.max(rate(h.attr.midAcc), rate(h.attr.threeAcc));
+    const shooterGate = SHOOTER_GATE.floor
+      + clamp((jumpAcc - SHOOTER_GATE.lo) / (SHOOTER_GATE.hi - SHOOTER_GATE.lo), 0, 1)
+        * (1 - SHOOTER_GATE.floor);
+    if (dHoop <= RIM_PREF.range) driveDesire += (1 - shooterGate) * RIM_PREF.gain;
+
     const laneOpen = laneClear(game, h, rimFloor);
     const beaten = h.beatenT > 0;
     const isThree = dHoop > THREE_DIST;
@@ -389,7 +411,12 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       //    3Pの試投が全体の 13% ほどしか出ていなかった（実際のNBAは約39%）。
       //    距離の罰はラインまでで頭打ちにし、3Pには射手の精度に応じた加点を与える。
       const dPen = Math.min(dHoop, THREE_DIST) - 2;
-      let pShoot = 0.20 + shootDesire * 0.55 - dPen * 0.04 + (dDef - 1) * 0.3 + push * 0.5;
+      // ⚠️ この距離帯のシュート精度で意欲を削る。3Pは threeAcc、ミドルは midAcc。
+      //    クロックに追われた分(push)だけは削らない＝下手でも仕方なく打つ。
+      const gate = SHOOTER_GATE.floor
+        + clamp(((isThree ? rate(h.attr.threeAcc) : rate(h.attr.midAcc)) - SHOOTER_GATE.lo)
+                / (SHOOTER_GATE.hi - SHOOTER_GATE.lo), 0, 1) * (1 - SHOOTER_GATE.floor);
+      let pShoot = (0.20 + shootDesire * 0.55 - dPen * 0.04 + (dDef - 1) * 0.3) * gate + push * 0.5;
       if (isThree) pShoot += tac.threeBias * 0.22 * tw + (rate(h.attr.threeAcc) - 0.55) * THREE_VALUE;
       pShoot = clamp(pShoot, 0.03, 0.96);
       if (open && chance(pShoot)) {

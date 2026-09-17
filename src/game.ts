@@ -136,6 +136,10 @@ export class Game {
   pressOn = false;
   // このフレームのプレストラップ2人目 — ボールを狙う(ディグ姿勢)。runPress が設定、runDefense がクリア
   pressTrapper: Player | null = null;
+  /** ゴール下で量産されている相手（ダブルチームで抑える対象）。ポゼッションごとに決め直す。 */
+  doubleTarget: Player | null = null;
+  /** 上の対象へ寄せる2人目の守備者。 */
+  doubler: Player | null = null;
   // 飛行中のパスの質(1=ぴったり手元)。捕球時のギャザー時間を決める。
   passQ = 1;
   // このポゼッションでボールがフロントコートに定着したら true（以降バックコート違反）

@@ -3,7 +3,7 @@
 // 関数として集約。状態は Game に集約し各関数は第一引数 game を受け取る。
 // contestLeap は defense からも使うため Game 残置（game.contestLeap 経由）。
 import { Player } from "../../objects/player/player";
-import { RIM, THREE_DIST, PALM_HITBOX, SHOT_SET_Y, SHOT_GATHER_Y, BUZZER_WINDOW } from "../../config";
+import { RIM, RIM_PTS_R, THREE_DIST, PALM_HITBOX, beyondArc, SHOT_SET_Y, SHOT_GATHER_Y, BUZZER_WINDOW } from "../../config";
 import { rate, clamp, dist2D, moveToward2D, chance, rand } from "../../util";
 import { shotWindupFor, defHands, leapHeight } from "../../eval";
 import { jumpShotMakeProbability, rimFinishOutcome } from "../reaction/shot-outcome";
@@ -27,11 +27,6 @@ import type { Game } from "../../game";
 // 枝分かれは rimFinishOutcome が抽選、ミドル/3P は THREE_DIST 境界で分ける。
 // ブザービーターは横断的な修飾(buzzer フラグ)、フリースローは別フェーズ。
 export type ShotType = "dunk" | "layup" | "midrange" | "three";
-
-// ジャンパーの距離種別。リム下フィニッシュは finishAtRim が別途 dunk/layup を決める。
-function jumperType(dHoop: number): ShotType {
-  return dHoop > THREE_DIST ? "three" : "midrange";
-}
 
 // 種別ごとの実行パラメータ。apex(弾道頂点m)/dur(飛翔s)は far(=THREE_DIST からの
 // 超過m、ミドル/リムは0)で可変。
@@ -328,7 +323,9 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
     const prepShort = Math.max(0, req - done);
     const prepExtra = Math.max(0, done - req);
     game.pendingAssist = assistCreditFor(game, h);
-    const shotType = jumperType(dHoop);   // "midrange" | "three"（距離で使い分け）
+    // ⚠️ 2P/3P は**描いている線と同じ形**で判定する。半径だけだとコーナーで食い違う。
+    const rimF = game.attackFloor(h.team);
+    const shotType: ShotType = beyondArc(h.pos.x, h.pos.z, rimF.z) ? "three" : "midrange";
     const isThree = shotType === "three";
     game.shotPoints = SHOT_PARAMS[shotType].points;
     game.shotWasDunk = false;   // ダンクでなくジャンプショット
@@ -342,6 +339,7 @@ export function releaseShot(game: Game, h: Player, dHoop: number, dDef: number, 
     const dDefLive = game.chargeDDefLift >= 0 ? game.chargeDDefLift
       : cn ? dist2D(h.pos, cn.pos) : dDef;
     const p = jumpShotMakeProbability(h, dHoop, dDefLive, {
+      isThree,   // ⚠️ 距離から再計算させない。コーナーは直線判定なので半径と一致しない
       nearestDef: cn,
       helpCount: game.defendersWithin(h, 2.4),
       clutch: game.clutchFactor(h),
@@ -703,6 +701,8 @@ export function resolveShot(game: Game, ): void {
       if (sh) {
         sh.stats.pts += game.shotPoints; sh.stats.fgm++;
         if (game.shotPoints === 3) sh.stats.tpm++;
+        // ゴール下で量産されているかの判断材料（守備のダブルチーム発動に使う）
+        if (dist2D(sh.pos, game.attackFloor(sh.team)) < RIM_PTS_R) sh.rimPts += game.shotPoints;
       }
       if (game.pendingAssist) game.pendingAssist.stats.ast++;
       game.setEvent(andOne ? "AND-1" : game.shotPoints === 3 ? "3 POINTS!" : "2 POINTS",

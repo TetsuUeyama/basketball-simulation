@@ -18,7 +18,12 @@ import { perimContest, palmRadius, rimProtect } from "../../eval";
  *      95→23本  90→43本  85→64本  80→84本  75→105本  70→125本  65→146本
  *    上に行くほど差が詰まり、下に行くほど開く。単調増加は全域で保証される。
  */
-const THREE_TOP = 0.55;
+/** 3Pのコンテストが届く距離の上乗せ(m)。守備1.8mがフリーと同値にならないようにする。 */
+const THREE_CONTEST_REACH = 0.6;
+// ⚠️ お膳立て（良いパサーから貰った時の +最大0.28）を廃止したぶん、全体が落ちた
+//    （実測: 3P 29.0% → 21.6% / FG 46.3% → 45.0%）。パサー依存を外すのが目的で
+//    成功率を下げるのが目的ではないので、**素の基準値を一律 +0.05 して戻す**。
+const THREE_TOP = 0.60;
 const THREE_FALL = 2.05;
 function threeSkillTerm(acc: number): number {
   const miss = 1 - clamp(acc, 0, 100) / 100;
@@ -30,6 +35,7 @@ function threeSkillTerm(acc: number): number {
 export function jumpShotMakeProbability(
   h: Player, dHoop: number, dDef: number,
   ctx: {
+    isThree: boolean;            // 3P か（⚠️ コーナーは直線判定なので距離からは決められない）
     nearestDef: Player | null;   // 最寄り守備者（クローズアウトの質とリーチに使用）
     helpCount: number;           // 2.4m以内の守備人数（isoShooter 判定用）
     clutch: number;              // clutchFactor(h)：精神×プレッシャー
@@ -38,11 +44,11 @@ export function jumpShotMakeProbability(
     palmHitbox: boolean;         // 手のひら当たり判定モデルの有効/無効
   },
 ): number {
-  const isThree = dHoop > THREE_DIST;
+  const isThree = ctx.isThree;
   // make % = この距離での選手の技量から、距離とコンテストを差し引く
   const skill = rate(isThree ? h.attr.threeAcc : h.attr.midAcc);
   // ⚠️ 3P の基準値。実測で 3P が 43% 入っていた（実際のバスケットは約36%）。
-  const baseLine = 0.30;   // ミドル用。3Pは threeSkillTerm を使う
+  const baseLine = 0.35;   // ミドル用。3Pは threeSkillTerm を使う（お膳立て廃止ぶんの +0.05 込み）
   const distRef = isThree ? THREE_DIST : 1.5;
   // L速度は深い3Pの減衰を緩め、特能ミドルは全距離で緩める
   let falloff = isThree ? 0.05 - rate(h.attr.threeRange) * 0.035 : 0.03;
@@ -54,8 +60,12 @@ export function jumpShotMakeProbability(
     - over * falloff - heaveDrop;
   // ダイレクトプレイ: キャッチ&シュートのリズム
   if (h.quickT > 0 && h.has("oneTouch")) p += 0.05;
-  // お膳立て: 良いパスからオープンで受けた膳立て
-  if (h.setupT > 0) p += h.setupBonus;
+  // ⚠️ お膳立て（良いパサーから貰った）の **成功率への上乗せは廃止**。
+  //    最大 +0.28 あり、ミドルの精度依存の幅(0.42)に対して大きすぎた
+  //    （＝シュートが上手いかより、誰から貰ったかで決まっていた）。
+  //    いまは setupQuick として「捕球の硬直が短い / リリースが速い」に効かせている
+  //    （passing.ts の gather と eval.ts の shotWindupFor）。速く打てれば守備が
+  //    詰める前に放てるので結果は良くなるが、**確率を直接足してはいない**。
   // コンテスト — S威力は接触を突いて打つ。1対1シュート特化は単独守備をほぼ感じない。
   // 係数0.45: S威力の実分布は68..97(中央74)なので、0.78ではスケールが0.24..0.47まで
   // 縮んでコンテストがほぼ効かなくなっていた。
@@ -65,7 +75,12 @@ export function jumpShotMakeProbability(
   const cn = ctx.nearestDef;
   const perimQ = cn ? clamp(1 + perimContest(cn, h), 0.6, 1.5) : 1;
   // コンテストのリーチ = 手のひら当たり判定（有効時 def−off でサイズ可変、無効時は固定1.8m）。
-  const cReach = ctx.palmHitbox && cn ? palmRadius(cn, h) : 1.8;
+  // ⚠️ 3P限定で、伸ばした手の届く距離を広げる。打点が高く溜めも長いぶん、
+  //    寄せている守備は遠くからでも視界とリリースを乱せる。
+  //    ⚠️ `palmRadius` 自体を上げてミドルやリム下まで一律に伸ばすと、全体の FG が
+  //    　 46.7% → 42.3% まで落ちた（実際は約47%）。**3Pだけに効かせること。**
+  const cReach = (ctx.palmHitbox && cn ? palmRadius(cn, h) : 1.8)
+    + (isThree ? THREE_CONTEST_REACH : 0);
   p -= clamp(cReach - dDef, 0, cReach) * 0.24 * contestScale * perimQ;
   // 目の前で跳んで手をシュートコースに入れてくる守備者は、視界とリリースを乱して精度を大きく削る。
   // (今までは水平距離だけでコンテストを測っていた — 跳んだ手のコンテストを make% に反映)
@@ -110,7 +125,10 @@ export function rimFinishOutcome(
   //        「フリーなのに外す」絵になっていた。
   //   ・**ダンク能力 = 競られても決め切る強さ**。下の接触の罰をここで減らす（ダンカーの優位性）。
   //   ダンクは構えが要らないぶん素の決定力が少し高く、精度の効きは小さい。
-  let p = (dunk ? 0.78 : 0.62) + rate(h.attr.midAcc) * (dunk ? 0.20 : 0.33);
+  // ⚠️ ドリブルから持ち込んだフィニッシュは、お膳立てのボーナスを一度も受けていない
+  //    （rimFinishOutcome はこの値を読んでいない）。それでも全体を +0.05 揃えるので
+  //    ここも同じだけ上げる。
+  let p = (dunk ? 0.83 : 0.67) + rate(h.attr.midAcc) * (dunk ? 0.20 : 0.33);
   // 逆サイドのレイアップは逆手フィニッシュ — 逆手精度(2..8)で綺麗に、片手選手は落とす（ダンクは両手で対象外）
   if (!dunk && h.driveSide === -h.strongSide()) {
     p -= (1 - h.offhandAcc / 8) * 0.1;

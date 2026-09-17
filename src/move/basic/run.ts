@@ -86,6 +86,7 @@ Player.prototype.tickCooldown = function(dt: number): void {
   if (this.justPassedT > 0) this.justPassedT = Math.max(0, this.justPassedT - dt);
   if (this.trappedT > 0) this.trappedT = Math.max(0, this.trappedT - dt);
   if (this.keepShieldT > 0) this.keepShieldT = Math.max(0, this.keepShieldT - dt);
+  if (this.protectT > 0) this.protectT = Math.max(0, this.protectT - dt);
   if (this.wallT > 0) this.wallT = Math.max(0, this.wallT - dt);
   if (this.gatherT > 0) this.gatherT = Math.max(0, this.gatherT - dt);
   if (this.pickupT > 0) this.pickupT = Math.max(0, this.pickupT - dt);

@@ -1,7 +1,7 @@
 // オフボールの立ち位置: フォーメーションスポットの選定(bestOpenSpot)と、味方/ボール
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
-import { LANE_W, THREE_DIST } from "../../../config";
+import { arcOutward, arcSlack, LANE_W, THREE_DIST } from "../../../config";
 import { clamp, dist2D, dist2DTo, moveToward2D, segPerp } from "../../../util";
 import type { Game } from "../../../game";
 import { arcCap } from "../reads";
@@ -61,12 +61,16 @@ function noInward(game: Game, p: Player, rx: number, rz: number): [number, numbe
   if (!game.frontT || p === game.handler || p.cutting || p.screening) return [rx, rz];
   if (p.spotIdx >= 5) return [rx, rz];                 // ポスト役は対象外
   const rim = game.attackFloor(p.team);
-  const ox = p.pos.x - rim.x, oz = p.pos.z - rim.z;
-  const d = Math.hypot(ox, oz);
-  if (d < THREE_DIST || d > THREE_DIST + ARC_KEEP || d < 1e-4) return [rx, rz];
-  const inward = -(rx * ox + rz * oz) / d;             // 押し出しのうち内向きの成分
+  // ⚠️ 以前は「リムからの半径」で内外を測っていたが、**コーナーのラインは直線**なので
+  //    半径とは一致しない。コーナーで線の外に立っている選手が保護されず、内側へ
+  //    押し込まれていた（実測: 持ち場に着いているペリメーターの 23.0% が線の内側）。
+  //    描いた線からの符号付き距離(arcSlack)と、その点の外向き法線(arcOutward)で測る。
+  const slack = arcSlack(p.pos.x, p.pos.z, rim.z);
+  if (slack < 0 || slack > ARC_KEEP) return [rx, rz];  // 内側に居る／十分外に居る
+  const [nx, nz] = arcOutward(p.pos.x, p.pos.z, rim.z);
+  const inward = -(rx * nx + rz * nz);                 // 押し出しのうち内向きの成分
   if (inward <= 0) return [rx, rz];
-  return [rx + (ox / d) * inward, rz + (oz / d) * inward];   // 横（接線）へ逃がす
+  return [rx + nx * inward, rz + nz * inward];         // 線に沿って（接線へ）逃がす
 }
 /** ラインの外側この範囲に居る間だけ、内向きの押し出しを抜く。 */
 const ARC_KEEP = 1.2;

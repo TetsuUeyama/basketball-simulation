@@ -31,7 +31,9 @@ for (let gi = 0; gi < NG; gi++) {
     if (sh && sh !== lastShooter) {
       lastShooter = sh;
       const d = dist2D(sh.pos, game.attackFloor(sh.team));
-      if (d > THREE_DIST) {
+      // ⚠️ 距離で3Pを判定すると、リリース後に動いた分で2Pを拾ってしまう。
+      //    エンジンが決めた shotPoints で数える。
+      if (game.shotPoints === 3) {
         const nd = game.nearestDefender(sh);
         const gap = nd ? dist2D(sh.pos, nd.pos) : 9;
         tot++; sumGap += gap; if (game.shotMade) made++;

@@ -57,6 +57,14 @@ export function resolveScreenCoverage(game: Game, handler: Player, screener: Pla
 
 // スクリーナーの守備者がどのカバレッジを取るか(重み付き抽選): 遅いビッグはドロップ、
 // 攻撃的/速いビッグはショー、同格ならスイッチ。
+/**
+ * チェンジングの効き。
+ *  lo/hi … 相手の3P力(L精度0.6 + L速度0.4)をこの範囲で 0..1 に正規化
+ *  cut   … ドロップをどれだけ削るか
+ *  show/swap … ショーとスイッチをどれだけ増やすか
+ */
+const CHANGE = { lo: 0.76, hi: 0.90, cut: 0.85, show: 1.3, swap: 0.9 };
+
 function chooseCoverage(game: Game, hDef: Player, sDef: Player): "drop" | "show" | "switch" {
   const press = TACTICS[sDef.team].defense.pressure;
   const sAgi = rate(sDef.attr.agility);
@@ -69,10 +77,20 @@ function chooseCoverage(game: Game, hDef: Player, sDef: Player): "drop" | "show"
   const sizeGap = Math.abs(sDef.height - hDef.height);
   const wSwitch = 0.15 + sAgi * 0.4 + clamp(1 - sizeGap * 2.5, 0, 1) * 0.5
     + (game.teamHas(sDef.team, "manMark") ? 0.15 : 0);   // ロックダウン型は自信を持ってスイッチ
-  const total = wDrop + wShow + wSwitch;
+  // ⚠️ チェンジング: **超一流のシューター相手にドロップは致命的**。ビッグが下がるので
+  //    スクリーン直後に即3Pを打たれる。L精度とL速度が高い相手にはドロップを外し、
+  //    ショー(ヘッジ = 一瞬前に出て妨害)やスイッチ(マーク交代)へ寄せる。
+  //    ⚠️ 下げるだけでなく他を上げる。合計が痩せるとドロップが相対的に残ってしまう。
+  const hh = game.handler;
+  const shoot = hh ? rate(hh.attr.threeAcc) * 0.6 + rate(hh.attr.threeRange) * 0.4 : 0;
+  const pull = clamp((shoot - CHANGE.lo) / (CHANGE.hi - CHANGE.lo), 0, 1);
+  const dW = wDrop * (1 - pull * CHANGE.cut);
+  const sW = wShow * (1 + pull * CHANGE.show);
+  const swW = wSwitch * (1 + pull * CHANGE.swap);
+  const total = dW + sW + swW;
   let r = rand(0, total);
-  if ((r -= wDrop) < 0) return "drop";
-  if ((r -= wShow) < 0) return "show";
+  if ((r -= dW) < 0) return "drop";
+  if ((r -= sW) < 0) return "show";
   return "switch";
 }
 

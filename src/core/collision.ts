@@ -2,7 +2,7 @@
 // (holdWeight: ボール保持者やパサーは踏ん張る)。毎フレーム updateLive から呼ぶ。
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../objects/player/player";
-import { BENCH, BODY_MIN_DIST } from "../config";
+import { BENCH, BODY_MIN_DIST, POST_SEAL_R } from "../config";
 import { rate, rand } from "../util";
 import type { Game } from "../game";
 
@@ -96,10 +96,25 @@ export function resolveCollisions(game: Game, ): void {
             const edge = Math.abs(diff) * BODY_PUSH.gain;          // 0..~1
             if (edge > 0.06) {
               const loser = diff > 0 ? b : a;
+              const winner = diff > 0 ? a : b;
               const sgn = diff > 0 ? 1 : -1;                        // 勝者→敗者の向き
+              // ⚠️ 押し勝った側が常に「勝者→敗者」の向きへ弾き飛ばすのは、**守備側では逆効果**。
+              //    ボディバランスの強い守備者が弱い攻撃者を吹き飛ばすと、攻撃者はゴール下の
+              //    離れた場所に**フリーで解放される**（守備が自分から引き剥がしている）。
+              //    実際のポストディフェンスは弾かずに、体を当てて**ゴールから遠ざける**。
+              //    そこで、ゴール下(POST_SEAL_R 以内)で守備側が押し勝った時だけ、押す向きを
+              //    「リムから見て外向き」に差し替える。攻撃側が押し勝った時は今まで通り
+              //    弾き飛ばす（ゴール下でフリーに貰うことを優先する）。
+              let px = nx * sgn, pz = nz * sgn;
+              if (winner.team === 1 - game.possession) {
+                const rimF = game.attackFloor(loser.team);          // 敗者(攻撃側)が攻めるリム
+                const ox = loser.pos.x - rimF.x, oz = loser.pos.z - rimF.z;
+                const od = Math.hypot(ox, oz);
+                if (od > 1e-4 && od < POST_SEAL_R) { px = ox / od; pz = oz / od; }
+              }
               const push = Math.min(BODY_PUSH.max, edge * BODY_PUSH.dist);
-              loser.pos.x += nx * push * sgn;
-              loser.pos.z += nz * push * sgn;
+              loser.pos.x += px * push;
+              loser.pos.z += pz * push;
               // 体勢を崩した側は次の動きに入れない
               loser.shovedT = Math.max(loser.shovedT,
                 Math.min(BODY_PUSH.stunMax, edge * BODY_PUSH.stun));
@@ -107,7 +122,7 @@ export function resolveCollisions(game: Game, ): void {
               //    崩れた姿勢のまま数歩たたらを踏み、立て直してから動き出す。
               //    数字の上でだけ止めても画面では何も起きない（実測: スタン中央 0.06秒）。
               if (edge > BODY_PUSH.stagger && loser.foulReactT <= 0 && !loser.airborne) {
-                loser.foulReaction("hurt", nx * sgn, nz * sgn,
+                loser.foulReaction("hurt", px, pz,
                   Math.min(0.9, 0.3 + edge * 0.6));
               }
             }

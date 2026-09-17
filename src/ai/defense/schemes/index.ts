@@ -1,5 +1,6 @@
 // スキーム選択: この停止/ポゼッションで守備が man / zone / press のどれを敷くかを決める。
-import { chance, rate, clamp } from "../../../util";
+import { chance, rate, clamp, dist2D } from "../../../util";
+import { DOUBLE_TEAM_PTS } from "../../../config";
 import { TACTICS } from "../../../attributes";
 import { scoringPower } from "../../../roles";
 import { Player } from "../../../objects/player/player";
@@ -55,6 +56,62 @@ export function applyDefScheme(game: Game, defTeam: number): void {
       d.dropBig = d === anchor;
     }
   }
+
+  // ⚠️ ゴール下の1対1を噛み合わせる。既定の index 一致だと、守備のリムアンカー
+  //    （身長×ブロック力で選ぶ）と、攻撃のポストアンカー（3Pが最も低いビッグ）の
+  //    **スロットが一致しない**。その結果ゴール下で相手ビッグを誰も見ておらず、
+  //    実測で「ポストの相手の最寄りが守備のドロップ役だった」のは 31.8% しか無かった。
+  //    アンカー同士を当て、玉突きで空く枠は相手の元の担当と交換して1対1を保つ。
+  if (scheme !== "boxOne" && anchor && !anchor.defModeUser) {
+    const oppPost = game.postAnchor(off);
+    if (oppPost) {
+      const mine = anchor.markSlot ?? anchor.slot;
+      const want = oppPost.slot;
+      if (mine !== want) {
+        for (const q of game.teamPlayers(defTeam)) {
+          if (q === anchor || q.defModeUser) continue;
+          if ((q.markSlot ?? q.slot) === want) { q.markSlot = mine; break; }
+        }
+        anchor.markSlot = want;
+      }
+    }
+  }
+
+  // ⚠️ 担当（markSlot）が確定してから決める。2人目は「担当が3Pを打てない守備者」を
+  //    選ぶので、上の入れ替えより先に決めると古い担当で選んでしまう。
+  pickDoubleTeam(game, defTeam);
+}
+
+/**
+ * ゴール下で量産されている相手を、ダブルチームで抑えるか決める。
+ * ⚠️ 1人で抑え切れているうちは行かない。ダブルに行けば必ずどこかが空くので、
+ *    **実際に決められた点数**（rimPts）を根拠にする。
+ * ⚠️ 2人目は「自分の担当が3Pを最も打てない守備者」から選ぶ。ダブルで空くのは
+ *    その担当なので、空けて一番痛くない相手を空ける。
+ */
+function pickDoubleTeam(game: Game, defTeam: number): void {
+  game.doubleTarget = null;
+  game.doubler = null;
+  const off = 1 - defTeam;
+  let worst: Player | null = null;
+  for (const p of game.teamPlayers(off)) {
+    if (p.rimPts < DOUBLE_TEAM_PTS) continue;
+    if (!worst || p.rimPts > worst.rimPts) worst = p;
+  }
+  if (!worst) return;
+  const anchor = rimAnchorOf(game, defTeam);
+  let best: Player | null = null, bv = -Infinity;
+  for (const d of game.teamPlayers(defTeam)) {
+    if (d === anchor || d.defModeUser) continue;         // リムアンカーは1人目なので残す
+    const mine = game.teamPlayers(off)[d.markSlot ?? d.slot];
+    // 担当の3Pが低いほど、そして相手ポストに近いほど寄せやすい
+    const v = (mine ? 1 - rate(mine.attr.threeAcc) : 0.5) * 1.6
+      - dist2D(d.pos, worst.pos) * 0.12;
+    if (v > bv) { bv = v; best = d; }
+  }
+  if (!best) return;
+  game.doubleTarget = worst;
+  game.doubler = best;
 }
 
 /** リムを守る1人（ビッグのうち、身長＋ブロック力が最も高い者）。 */

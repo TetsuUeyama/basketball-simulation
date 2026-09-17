@@ -1,5 +1,5 @@
 import { Scene, MeshBuilder, StandardMaterial, Color3, DynamicTexture, Mesh } from "@babylonjs/core";
-import { BENCH, COURT, RIM, THREE_DIST } from "../config";
+import { BENCH, COURT, RIM, THREE_DIST, THREE_CORNER_X } from "../config";
 import { makeMat } from "./materials";
 
 // フロア（ライン付き）、周囲のエプロン、両フープを構築する。
@@ -125,7 +125,7 @@ function makeCourtTexture(scene: Scene): DynamicTexture {
     // THREE_DIST)がその x と交わる点までちょうど伸びる。これでアークと直線が隙間なく
     // つながる。
     const r3 = THREE_DIST;
-    const cornerX = 6.6;
+    const cornerX = THREE_CORNER_X;   // ⚠️ 判定(config.beyondArc)と同じ値を使う
     const tMax = Math.asin(cornerX / r3);                         // x = ±cornerX となるアークの角度
     const meetZ = rimZ - end * Math.sqrt(r3 * r3 - cornerX * cornerX); // 両者が接続する z
     ctx.beginPath();

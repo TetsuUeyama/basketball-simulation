@@ -4,7 +4,7 @@ import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { rate, clamp, chance, dist2D, dist2DTo, moveToward2D, towardPoint } from "../../../util";
 import { twWeight, leapHeight } from "../../../eval";
-import { defEffort, denyIntensity, getBackOnDefense } from "../shared";
+import { defEffort, defenderOf, denyIntensity, getBackOnDefense } from "../shared";
 import { attnTo } from "../../attention";
 import { THREE_DIST } from "../../../config";
 import { TACTICS } from "../../../attributes";
@@ -34,7 +34,22 @@ const SHELL_SHOOTER = THREE_DIST + 1.6;
 /** ドロップ役のビッグが担当を捕まえに行く半径。ここから外へは出ない（ゴール下の危険域）。 */
 const DROP_IN = 4.6;
 /** 3Pの上手さで間合いをどれだけ詰めるか。lo〜hi の L精度を 0..1 に正規化し、cut の割合まで縮める。 */
-const THREE_TIGHT = { lo: 0.62, hi: 0.90, cut: 0.55 };
+/**
+ * シュートの上手さで間合いを変える。lo〜hi の精度を 0..1 に正規化し、
+ *   上手い相手 → 間合いを cut の割合まで詰める
+ *   打てない相手 → loose の割合だけ**さらに離れて**中を厚くする（打たせて良い）
+ * ⚠️ 以前は cut しか無く、「上手い相手に詰める」だけだった。打てない相手からも
+ *    同じ距離で守っていたので、脅威でない選手に人数を使っていた。
+ */
+const THREE_TIGHT = { lo: 0.62, hi: 0.90, cut: 0.55, loose: 0.40 };
+/** ダブルチームに行く範囲（守るリムからの距離 m）。ここより外へは2人目を出さない。 */
+const DOUBLE_IN = 5.2;
+/** ヘルプサグで担当から離れられる上限(m)。 */
+const SAG_MAX = 3.4;
+/** 挟みに行く時、相手の何m先に立つか。1人目の反対側から詰める。 */
+const DOUBLE_GAP = 0.9;
+/** ボールが来る前に睨む位置。対象からボール側へこの距離だけ出た所に立つ。 */
+const DOUBLE_DIG = 1.7;
 
 function shellSpot(game: Game, d: Player, protect: Vector3, defTeam: number): [number, number] {
   const dir = game.attackSign(defTeam);   // 守るリムからミッドコートへ向かう向き
@@ -48,6 +63,43 @@ export function defendOffBall(
   game: Game, dt: number, d: Player, man: Player, protect: Vector3,
   defTeam: number, anchor: Player | null,
 ): void {
+  // ダブルチーム: ゴール下で量産されている相手がボールを持ったら、決めておいた2人目が挟む。
+  // ⚠️ 行くのは**相手が捕ってから**。持たれる前から2人で囲んでも、そこへ入れずに
+  //    外が空くだけになる（ダブルは必ずどこかを空ける手なので、代償を最小にする）。
+  // ⚠️ 1人目（担当の守備者）と**同じ側**に立っても壁が厚くなるだけで抜け道は塞がらない。
+  //    1人目の反対側に回り込んで、左右から挟む。
+  // ⚠️ 「捕ってから挟む」だけでは**間に合わない**。実測(48試合ずつ)で、挟めているのは
+  //    ライブフレームの 0.40% しかなく、ゴール下最多得点の平均は 4.08 → 4.04点と
+  //    まったく変わらなかった。ポストは触る回数自体が少ないので、捕ってから寄っても
+  //    もう打たれている。**ボールが来る前から寄せておく**2段構えにする。
+  //      ディグ: 対象がゴール下に居る間、担当を離れて中を睨む位置に立つ
+  //      ピンチ: 対象が捕ったら、1人目の反対側へ回り込んで左右から挟む
+  const dbl = game.doubleTarget;
+  if (dbl && d === game.doubler && game.frontT && dist2D(dbl.pos, protect) < DOUBLE_IN) {
+    const prim = defenderOf(game, dbl);
+    let tx: number, tz: number;
+    if (game.handler === dbl) {
+      // ピンチ: 1人目と**同じ側**では壁が厚くなるだけ。反対側から挟む。
+      const ax = dbl.pos.x - (prim ? prim.pos.x : protect.x);
+      const az = dbl.pos.z - (prim ? prim.pos.z : protect.z);
+      const al = Math.hypot(ax, az) || 1;
+      tx = dbl.pos.x + (ax / al) * DOUBLE_GAP;
+      tz = dbl.pos.z + (az / al) * DOUBLE_GAP;
+    } else {
+      // ディグ: 対象とボールを結ぶ線の途中に立ち、エントリーパスを睨む。
+      // 担当を完全に見捨てないよう、自分の担当側へ少しだけ寄せた位置にする。
+      const bx = game.handler ? game.handler.pos.x : protect.x;
+      const bz = game.handler ? game.handler.pos.z : protect.z;
+      const ex = bx - dbl.pos.x, ez = bz - dbl.pos.z;
+      const el = Math.hypot(ex, ez) || 1;
+      tx = dbl.pos.x + (ex / el) * DOUBLE_DIG + (man.pos.x - dbl.pos.x) * 0.18;
+      tz = dbl.pos.z + (ez / el) * DOUBLE_DIG + (man.pos.z - dbl.pos.z) * 0.18;
+    }
+    moveToward2D(d.pos, tx, tz, d.accelToward(dt, tx, tz, 1.15) * dt);
+    game.clampCourt(d.pos);
+    return;
+  }
+
   // カバーリング: ボール守備が抜かれたら、カバー守備者が担当を捨ててドライブレーンへ
   if (game.handler && game.handler.beatenT > 0 && d.has("covering")) {
     const hx = game.handler.pos.x, hz = game.handler.pos.z;
@@ -64,7 +116,12 @@ const ANCHOR_RATE = 0.75;
 
   // リムアンカー: 常時ペイントに残る壁役。ハンドラーがリムへ迫れば飛んでコンテスト、
   // 遠ければゴール下(リムと担当の間・リム寄り)に常駐してゴール下を空けない。
-  if (d === anchor && game.handler) {
+  // ⚠️ ドロップ役は**自分の担当（相手のビッグ）との1対1に集中**する。
+  //    リムのフリーセーフティ役に入ると、担当を離れてボールとリムの間に立つため、
+  //    ゴール下で相手ビッグが空く（実測: ポストの相手が2m超フリー 33.8%）。
+  //    担当がゴール下の危険域に居る間は、この分岐へ入れない。
+  const postDuel = d.dropBig && dist2DTo(protect, man.pos.x, man.pos.z) < DROP_IN;
+  if (d === anchor && game.handler && !postDuel) {
     const hx = game.handler.pos.x, hz = game.handler.pos.z;
     const dRim = dist2DTo(game.handler.pos, protect.x, protect.z);
     // リムプロテクターは飛ぶタイミングを計る
@@ -148,7 +205,12 @@ const ANCHOR_RATE = 0.75;
   }
   let stx: number, stz: number;
   let denying = false;
-  if (game.handler && !driveLive && ballSide && ballGap < 6.5 && ballGap > 0.8 && !man.airborne && pickup) {
+  // ⚠️ ゴール下の1対1は、ボールが遠くても**エントリーパスを消しに行く**。
+  //    以前は ballGap < 6.5 が条件だったので、ハンドラーがトップに居るとポストの
+  //    守備者は消しに行かず、実測で「パスコースを消しに来ている」のは 5.9% だけだった。
+  const postDeny = d.dropBig && mRim < DROP_IN && !man.airborne;
+  if (game.handler && !driveLive && !man.airborne && pickup
+      && (postDeny || (ballSide && ballGap < 6.5 && ballGap > 0.8))) {
     denying = true;
     // DENY: マークとボールの間のパスコースへ割って入り消す。ボール→マーク線上の、マークから
     // ボール側へ laneStep 出た点（レーンに体を入れる）。密着度＝守備+敏捷（振り切られない能力）。
@@ -182,10 +244,17 @@ const ANCHOR_RATE = 0.75;
     //    見ておらず、実測で3Pを打たれた時の守備距離が L精度 78未満 2.61m /
     //    85以上 2.39m と**ほぼ差が無かった**＝名手をフリーにしていた。
     //    アークの外に居る相手に対して、L精度に比例して間合いを詰める。
-    if (mRim > THREE_DIST - 0.8) {
-      const th = clamp((rate(man.attr.threeAcc) - THREE_TIGHT.lo) / (THREE_TIGHT.hi - THREE_TIGHT.lo), 0, 1);
-      sag *= 1 - th * THREE_TIGHT.cut;
+    // ⚠️ 見るのは**その距離帯の精度**。アークの外なら L精度、内側ならミドル精度。
+    //    以前はミドルの間合いが精度を一切見ておらず、ミドルを打てないビッグにも
+    //    打てるガードにも同じ距離で付いていた。
+    {
+      const acc = mRim > THREE_DIST - 0.4 ? rate(man.attr.threeAcc) : rate(man.attr.midAcc);
+      const th = clamp((acc - THREE_TIGHT.lo) / (THREE_TIGHT.hi - THREE_TIGHT.lo), 0, 1);
+      sag *= 1 - th * THREE_TIGHT.cut + (1 - th) * THREE_TIGHT.loose;
     }
+    // ⚠️ 緩める側には上限を置く。打たせて良い相手でも**担当を見捨てはしない**
+    //    （リムへ切られた時に誰も居ない、という絵になる）。
+    sag = Math.min(sag, SAG_MAX);
     const st = towardPoint(seenX, seenZ, protect.x, protect.z, sag);
     stx = st.x; stz = st.z;
     // ⚠️ 旧「非脅威は半径5mまで」のクランプは削除。陣形へ入っていない担当は上で

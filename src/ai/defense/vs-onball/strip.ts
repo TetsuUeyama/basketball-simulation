@@ -3,7 +3,7 @@
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { rate, clamp, chance, rand, dist2D, moveToward2D } from "../../../util";
-import { stripEdge } from "../../../eval";
+import { shieldMul, stripEdge } from "../../../eval";
 import { flashBall } from "../../../core/visuals";
 import type { Game } from "../../../game";
 
@@ -19,7 +19,7 @@ export function swarmStrips(game: Game, dt: number): void {
       const gap = dist2D(d.pos, h.pos);
       if (gap > 1.5) continue;
       const close = 1 - gap / 1.5;
-      const p = Math.max(0, 0.02 + stripEdge(d, h) * 0.55);
+      const p = Math.max(0, 0.02 + stripEdge(d, h) * 0.55) * shieldMul(h);
       if (chance(p * close * exposed * dt)) { game.steal(d); return; }
     }
   }
@@ -58,7 +58,7 @@ export function catchStrips(game: Game, dt: number): void {
       const close = 1 - clamp(gap / 1.8, 0, 1);
       // ⚠️ 下駄(旧 0.18)が大きいと、能力に関係なく一定割合で剥がされる。下げて
       //    stripEdge の効きを相対的に上げる。
-      const edge = 0.09 + stripEdge(d, h) * 0.65;     // 守備者の手 vs ハンドラーの安全性
+      const edge = (0.09 + stripEdge(d, h) * 0.65) * shieldMul(h);   // 守備者の手 vs ハンドラーの安全性
       if (chance(Math.max(0, edge) * close * bobble * exposed * dt)) { deflectCatch(game, h, d); return; }
     }
   }

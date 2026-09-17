@@ -4,7 +4,7 @@ import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { PALM_HITBOX, THREE_DIST, BODY_MIN_DIST } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D, dirTo2D, towardPoint } from "../../../util";
-import { twWeight, palmRadius, effShootRange, shotThreat, defHands, ballSecurity, leapHeight } from "../../../eval";
+import { twWeight, palmRadius, effShootRange, shotThreat, defHands, ballSecurity, leapHeight, shieldMul } from "../../../eval";
 import { reachInFoulRate } from "../../../move/reaction/foul";
 import { defensiveFoul } from "../../../core/deadball";
 import { defEffort, denyIntensity, getBackOnDefense } from "../shared";
@@ -206,7 +206,8 @@ export function defendHandler(
     // クロスオーバー中はボールが露出。守備のクイックネスが上回った時だけ突ける。
     const exposed = man.jukeT > 0
       ? 1 + Math.max(0, rate(d.attr.agility) * 0.6 + rate(d.attr.reaction) * 0.4 - resist) * 2.2 : 1;
-    const pPoke = Math.max(0.005, (STEAL.base + stl * STEAL.hands - resist * 0.06 + press * 0.05) * exposed);
+    const pPoke = Math.max(0.005, (STEAL.base + stl * STEAL.hands - resist * 0.06 + press * 0.05) * exposed)
+      * shieldMul(man);   // 体を回してボールを遠い手に置いていれば突けない
     // キャリー位置: 守備のボールへの距離 vs 男への距離で突けるか決まる。
     const dBall = dist2DTo(d.pos, game.ball.pos.x, game.ball.pos.z);
     const carryMod = clamp(1 + (gap - dBall) * 1.2, 0.55, 1.6)

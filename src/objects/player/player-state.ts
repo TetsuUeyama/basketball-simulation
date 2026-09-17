@@ -22,6 +22,7 @@ Player.prototype.resetStats = function(): void {
   this.fatigue = 0;
   this.curSpd = 0;
   this.stintT = 0;
+  this.rimPts = 0;
 };
 
 /** アクション/アニメの一時状態を全て初期化し、直立の休めポーズへ戻す（試合開始/リスタート時）。
@@ -41,7 +42,7 @@ Player.prototype.resetPose = function(): void {
   this.pickupT = 0; this.quickT = 0; this.baitT = 0; this.wallT = 0;
   this.reboundGo = false; this.reboundPutback = false; this.grabTwoHand = true;
   this.postT = 0;
-  this.keepShieldT = 0; this.lean = 0;
+  this.keepShieldT = 0; this.protectT = 0; this.lean = 0;
   this.cutting = false; this.screening = false; this.benchClapT = 0;
   this.shakeOpenT = 0; this.shakeT = 0; this.shakeCurve = 0;
   this.trackOn = false;

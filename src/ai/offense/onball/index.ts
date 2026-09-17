@@ -2,7 +2,12 @@
 // 展開（抜き去り/押し込み/ピック使い/探りドリブル）を進める。
 import { rate, clamp, chance, rand, dist2D, moveToward2D, dirTo2D } from "../../../util";
 import { PALM_HITBOX, AIR_OUTLET_RANGE } from "../../../config";
-import { palmRadius } from "../../../eval";
+import { palmRadius, shieldMul } from "../../../eval";
+/**
+ * 守って持つ（プロテクト）の条件と引き換え。
+ *   range: この距離まで詰められたら構える / cap: 構えている間の速度上限
+ */
+const PROTECT = { range: 1.6, cap: 0.7 };
 import { Player } from "../../../objects/player/player";
 import { finishAtRim } from "../../../move/action/shooting";
 import { passToReceiver, chooseReceiver } from "../../../move/action/passing";
@@ -25,6 +30,17 @@ export function runOffense(game: Game, dt: number, h: Player): void {
     const rimFloor = game.attackFloor(team);
     const dHoop = dist2D(h.pos, rimFloor);
     const dDef = game.nearestDefenderDist(h);
+
+    // 守って持つ（プロテクト）: 詰められていて、**まだ仕掛けていない**なら、上半身を
+    // 相手と反対へ回してボールを遠い手で構える。前へは出にくくなるが奪われにくい。
+    // ⚠️ 抜き去り(beatenT)/押し込み(powerT)/クロスオーバー(jukeT)の最中は入らない。
+    //    仕掛けているのに勝手に減速させてはいけない。仕掛けに入れば 0.25秒で切れる。
+    // ⚠️ これは「抜けないが取られない」という選択肢を成立させるためのもの。
+    //    以前は keepShieldT が速度を落とすだけでボールの安全性に効いておらず、
+    //    キープしている選手がそのまま突かれて失っていた（実測 TOV 6.2本/チーム）。
+    if (dDef < PROTECT.range && h.beatenT <= 0 && h.powerT <= 0 && h.jukeT <= 0) {
+      h.protectT = Math.max(h.protectT, 0.25);
+    }
 
     // オフボールの選手はモーションを走る(カット/ギブ&ゴー/ペリメーターの動き)
     updateOffBallMotion(game, dt, team, h);
@@ -139,6 +155,8 @@ export function runOffense(game: Game, dt: number, h: Player): void {
       }
       // キープドリブル: マークされた下手なハンドラーはじりじりとしか進めない
       if (h.keepShieldT > 0) mult = Math.min(mult, 0.28);
+      // 守って持つ: 体を回している間はスピードが出ない（これが引き換え）
+      else if (h.protectT > 0) mult = Math.min(mult, PROTECT.cap);
       moveToward2D(h.pos, tx, tz, h.accelToward(dt, tx, tz, mult) * dt);
     }
     game.clampCourt(h.pos);
@@ -180,8 +198,8 @@ export function powerShove(game: Game, h: Player, dt: number): void {
     for (const dd of game.teamPlayers(1 - h.team)) {
       if (dd === dm || dd.airborne || dd.landT > 0) continue;
       if (dist2D(dd.pos, h.pos) > 1.3) continue;
-      const swipe = 0.30 + rate(dd.attr.defense) * 0.75 + rate(dd.attr.reaction) * 0.55
-        - rate(h.attr.handling) * 1.35;                  // 技術が高いほどかわす
+      const swipe = (0.30 + rate(dd.attr.defense) * 0.75 + rate(dd.attr.reaction) * 0.55
+        - rate(h.attr.handling) * 1.35) * shieldMul(h);  // 技術が高いほどかわす
       if (chance(clamp(swipe, 0.05, 1.2) * dt)) { game.steal(dd); return; }
     }
   }

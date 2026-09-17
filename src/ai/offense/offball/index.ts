@@ -22,11 +22,13 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
   const rim = game.attackFloor(team);
   for (const p of game.teamPlayers(team)) {
     if (p === exclude) continue;
+    p.offBranch = "none";   // 計測用（どの分岐も通らなかった場合）
     if (p.rooted) continue;   // パス/シュートのフォロースルー中 — 保持
 
     // スローイン後の前進(トラップ救済より優先): 非PMビッグの投げ手はバックコートに
     // 残らず、自分側のフロントコート(ローブロック)へ全力で抜ける。ガードが降りて組み立てる。
     if (p.frontRunT > 0) {
+      p.offBranch = "frontRun";
       if (game.frontT) { p.frontRunT = 0; }   // フロントコート確立で解除→通常のポスト play
       else {
         p.frontRunT = Math.max(0, p.frontRunT - dt);
@@ -43,6 +45,7 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
     // トラップ救済(最優先): ハンドラーがダブルチーム時、味方1人がボールへフラッシュしアウトレットを作る。
     if (game.handler && game.handler !== p && tightlyTrapped(game, game.handler)
         && p === trapReliever(game, team)) {
+      p.offBranch = "trapRelief";
       const t = trapReliefSpot(game, game.handler);
       moveToward2D(p.pos, t.x, t.z, p.accelToward(dt, t.x, t.z, 1.2) * dt);
       spacingNudge(game, dt, p, 1.6);
@@ -58,6 +61,7 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
         .filter((q) => q !== game.handler && !game.isBig(q) && q.frontRunT <= 0)
         .sort((a, b) => b.playmaking - a.playmaking)[0];
       if (p === outlet) {
+        p.offBranch = "outlet";
         const s = game.attackSign(team);
         const bx = game.handler.pos.x, bz = game.handler.pos.z;
         const pressed = game.isBig(game.handler)
@@ -85,6 +89,7 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
     //    レーン埋めは終わり。持ち場へ移る。
     if (game.pushT > 0 && game.handler && p !== game.handler && !game.isBig(p)
         && !(game.frontT && game.handler.stillT > 0.6)) {
+      p.offBranch = "laneFill";
       const eager = clamp((rate(p.attr.aggression) - 0.55) / 0.40, 0, 1);
       const s = game.attackSign(team);
       const side = p.pos.x >= 0 ? 1 : -1;
@@ -123,8 +128,10 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
     p.offTimer -= dt * tick;
 
     if (p.screening) {
+      p.offBranch = "screen";
       updateScreen(game, dt, p);
     } else if (p.cutting) {
+      p.offBranch = "cut";
       // カットに沿って走る(スポットより少し速い)。走路の守備を避けて曲がる。
       const ct = game.steerAround(p, p.offTarget.x, p.offTarget.z, true);
       moveToward2D(p.pos, ct.x, ct.z,
@@ -141,15 +148,16 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
           p.offTimer = rand(2.5, 4.5);
         }
       }
-    } else if (clearDriveLane(game, dt, p)) {
+    } else if ((p.offBranch = "clearLane", clearDriveLane(game, dt, p))) {
       // このフレームはハンドラーのドライブレーンから退いた
-    } else if (isoHandler(game)) {
+    } else if ((p.offBranch = "iso", isoHandler(game))) {
       // 釣り出し: スターがボール — 自分の守備を外へ広く釘付け
       const t2 = isoSpreadTarget(game, p, isoHandler(game)!);
       moveToward2D(p.pos, t2.x, t2.z, p.accelToward(dt, t2.x, t2.z) * dt);
       spacingNudge(game, dt, p, 1.7);
       game.clampCourt(p.pos);
     } else if (p.shakeOpenT > 0) {
+      p.offBranch = "shake";
       // マーク外し中: 分離方向へバーストして空きを作る（クイックは離れる、パワーはシールを押し込む）。
       // ⚠️ クイックは**直線ではなく曲げる**。切り返し／円を描く動きで、付いてくる守備の
       //    足を止めさせる。曲がりの速さは敏捷で決まる（shakeCurve）。
@@ -170,6 +178,7 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
       spacingNudge(game, dt, p, 3.2);
       game.clampCourt(p.pos);
     } else {
+      p.offBranch = "spot";
       let spot = spots[p.spotIdx];
       const atPost = p.spotIdx >= 5;
       // ダンカースライド: ハンドラーがペイントへドライブしたら、ブロックのビッグはベース
@@ -180,16 +189,29 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
               || dist2D(game.handler.pos, p.pos) < 3.2)) {
         const s = game.attackSign(team);
         const sx = (spot.x || p.pos.x) > 0 ? 1 : -1;
+        p.offBranch = "dunkerSlide";
         const tx = sx * 4.8, tz = s * (RIM.z - 0.9);
         moveToward2D(p.pos, tx, tz, p.accelToward(dt, tx, tz, 1.1) * dt);
         spacingNudge(game, dt, p, 1.6);
         game.clampCourt(p.pos);
         continue;
       }
-      // スポットが混んだら再配置(ハンドラー/味方が近づいた)。ボールのトリガは広め(4.8m)、
-      // 味方が近い(過密)なら空きスペースへ移す。
-      if ((game.handler && dist2DTo(game.handler.pos, spot.x, spot.z) < 4.8)
-          || nearestTeammateDist(game, p) < (atPost ? 2.3 : 3.8)) {
+      // スポットが混んだら再配置。
+      // ⚠️ 以前は「ハンドラーがスポットの 4.8m 以内」か「味方が**自分の** 3.8m 以内」で
+      //    毎フレーム選び直していた。後者は**移動中に味方の横を通っただけ**で行き先が
+      //    変わるということで、遠いコーナーには永久に辿り着かない
+      //    （実測: 持ち場の割り当て 440回のうち到着は 23.4%、残り 6.77m を残して
+      //    　2.23秒で放棄。コーナーに誰かが立っているフレームは 14.0% しかなかった）。
+      //    付け替える理由は **その持ち場が実際に埋まった** か、
+      //    **着いた上で** ボールが来た/味方と近すぎる、のどちらかに限る。
+      //    移動中の混雑は spacingNudge が横へ逃がすので、行き先を変える必要はない。
+      const spotTaken = game.teamPlayers(team).some((q) =>
+        q !== p && q !== game.handler && !q.cutting && !q.screening
+        && dist2DTo(q.pos, spot.x, spot.z) < 2.2);
+      const atSpot = dist2DTo(p.pos, spot.x, spot.z) < 1.8;
+      if (spotTaken
+          || (atSpot && ((game.handler && dist2DTo(game.handler.pos, spot.x, spot.z) < 4.8)
+                         || nearestTeammateDist(game, p) < (atPost ? 2.3 : 3.8)))) {
         p.spotIdx = bestOpenSpot(game, team, spots, p);
         spot = spots[p.spotIdx];
       }
@@ -218,6 +240,10 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
         spx2 = spx + Math.sin(p.freePhase) * r;
         spz2 = spz + Math.cos(p.freePhase) * r * 0.6;        // 横に広く、縦は控えめ
       }
+      // ⚠️ 却下した案: ここで周回の目標点を pushOutsideArc で3Pラインの外へ固定すると、
+      //    「線の内側に居る」割合は 23.0% → 17.8% に下がるが、足を作る周回が線に
+      //    張り付いて潰れ、得点 19.6 → 14.9 / 3P成功率 40.5% → 23.4% /
+      //    コーナー占有 30.8% → 22.7% と全指標が悪化した。**周回は内側へ入って良い**。
       // ⚠️ 持ち場が遠いとき、目標へ一直線に向かうと全員がコート中央を通る
       //    （実測: ウイングの持ち場は |x|=5.66m なのに実際は 3.48m、コーナーは
       //    　6.80m に対し 3.72m と、2〜3m 内側に寄っていた。ワイドレーン(|x|>4m)に
@@ -315,8 +341,13 @@ function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player
   //    膠着が**見えている**選手は、今のスポットを外して別の空きへ動き直す。
   const stalled = !!game.handler && game.handler !== p && game.handler.stillT > 0.8
     && attnTo(p, game.handler) > 0.55;
-  if (stalled || chance(game.teamHas(team, "general") ? 0.7 : 0.5)) {
-    const cur = p.spotIdx;
+  // ⚠️ **まだ持ち場へ向かっている途中なら行き先を変えない**。ここは 2〜4秒ごとに
+  //    走るので、コート反対側のコーナー（9m前後＝走って約3秒）は着く前に必ず
+  //    振り直されていた（実測: 持ち場の保持時間の中央値が 2.5秒＝このタイマーと同じ）。
+  //    膠着（stalled）が見えている時だけは、着いていなくても動き直させる。
+  const cur = p.spotIdx;
+  const enRoute = dist2DTo(p.pos, spots[cur].x, spots[cur].z) > 2.5;
+  if (stalled || (!enRoute && chance(game.teamHas(team, "general") ? 0.7 : 0.5))) {
     p.spotIdx = bestOpenSpot(game, team, spots, p, stalled ? cur : -1);
   }
 }
@@ -366,7 +397,10 @@ function tryShake(game: Game, dt: number, p: Player): void {
   // 走り続ける選手は、少し離されていても動き直してスペースを作る
   const reach = 2.2 + rate(p.attr.agility) * 1.0;
   if (dist2D(d.pos, p.pos) > reach && !fronted) return; // 十分空いている → 不要
-  if (dist2D(p.pos, game.handler.pos) > 7) return;   // ウィークサイドは対象外
+  // ⚠️ ゴール下のポストは例外。エントリーパスの第一候補なので、ボールが遠くても
+  //    先に位置を取り合う（実測: ポストが「マークを外しに動いている」のは 5.6% だけだった）。
+  const postSpot = p.spotIdx >= 5 || dist2D(p.pos, game.attackFloor(p.team)) < 4.5;
+  if (!postSpot && dist2D(p.pos, game.handler.pos) > 7) return;   // ウィークサイドは対象外
   // ⚠️ 走り続けてスペースを作る選手（フリーランニング）は、1回外して終わりではなく
   //    **連続して**仕掛ける。クイックネスと持久力で次の仕掛けまでの間隔が縮む。
   const runner = rate(p.attr.agility) * 0.45 + rate(p.attr.speed) * 0.3

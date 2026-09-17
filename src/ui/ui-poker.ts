@@ -198,6 +198,10 @@ UI.prototype.renderPoker = function(): void {
 
   // ---- 盤（試合盤 ⇄ 攻撃/守備の配置ボード） ----
   p.appendChild(boardToggle(this, view, opp));
+  // 守備タブでだけ、守備の型を選べるようにする（盤のすぐ上）。
+  if (this.pokerBoard === "def") {
+    p.appendChild(defSchemeRow(this, watching ? side : view));
+  }
   p.appendChild(this.pokerBoard === "match"
     ? courtBoard(this, m, view)
     : formationBoard(this, watching ? side : view, this.pokerBoard));
@@ -1456,4 +1460,47 @@ function cpuAssignDefense(ui: UI, cpu: number): void {
       d.markSlot = ui.game?.roster[opp][o]?.slot ?? o;
     }
   }
+}
+
+/**
+ * 守備の型を選ぶ。守備タブでだけ出す。
+ * ⚠️ 型は `TACTICS[team].scheme` に持ち、ポゼッションごとに `applyDefScheme` が
+ *    各守備者の役割（マン / ゾーン / ドロップ役）へ落とす。
+ * ⚠️ 配置ボードで手動指定した「ゾーン/マン」は型より優先されるので、ここを変えても
+ *    手で決めた選手は動かない。
+ */
+function defSchemeRow(ui: UI, team: number): HTMLDivElement {
+  const row = document.createElement("div");
+  Object.assign(row.style, {
+    display: "flex", gap: "5px", justifyContent: "center", alignItems: "center",
+    flexWrap: "wrap", margin: "2px 0",
+  } as Partial<CSSStyleDeclaration>);
+  const label = document.createElement("span");
+  label.textContent = "守備の型";
+  Object.assign(label.style, { fontSize: "10px", opacity: "0.55", fontWeight: "700" });
+  row.appendChild(label);
+
+  const on = POKER_OPTS.userTeam !== null && team === POKER_OPTS.userTeam;
+  const opts: { key: "drop" | "boxOne" | "matchup"; label: string; tip: string }[] = [
+    { key: "drop", label: "ドロップ", tip: "全員マンマーク。ビッグはゴール下から出ず、ガードが中へ誘導する" },
+    { key: "boxOne", label: "ボックス1", tip: "1人が相手エースへ完全マンマーク、残り4人はゾーンでゴール下を固める" },
+    { key: "matchup", label: "マッチアップ", tip: "外はマンマークで圧、ビッグは自分のゾーンに入った相手だけ守る" },
+  ];
+  const cur = TACTICS[team].scheme ?? "drop";
+  for (const o of opts) {
+    const b = document.createElement("button");
+    b.textContent = o.label;
+    b.title = o.tip;
+    const act = cur === o.key;
+    Object.assign(b.style, {
+      padding: "3px 10px", borderRadius: "8px", cursor: on ? "pointer" : "default",
+      fontSize: "10px", fontWeight: act ? "800" : "600", whiteSpace: "nowrap",
+      background: act ? colorOf(team) : BTN_BG, color: act ? INK : "#fff",
+      border: act ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.18)",
+      opacity: on ? (act ? "1" : "0.7") : "0.45",
+    } as Partial<CSSStyleDeclaration>);
+    if (on) b.onclick = () => { TACTICS[team].scheme = o.key; ui.renderPoker(); };
+    row.appendChild(b);
+  }
+  return row;
 }

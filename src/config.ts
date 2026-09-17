@@ -37,7 +37,81 @@ export const RIM = {
 };
 
 export const SHOOT_RANGE = 7.6;   // 選手が通常シュートを打つ最大距離
-export const THREE_DIST = 6.75;   // これより遠いと3Pとして数える
+/** ゴール下の押し合いとみなす、リムからの距離(m)。この内側では守備は弾かず押し込む（0で無効）。 */
+export const POST_SEAL_R = 5.0;
+/** 「ゴール下で決めた得点」に数える、リムからの距離(m)。 */
+export const RIM_PTS_R = 3.0;
+/**
+ * この得点をゴール下で許したら、その相手にはダブルチームで行く。
+ * ⚠️ 実測（12試合）: 1チームの中で「ゴール下で最も点を取った選手」の得点は
+ *    中央 4点 / 最大 6点で、**8点に達したチームは 0%** だった。8ではダブルは
+ *    一度も発動しない。6 にすると上位 33% の試合だけで発動する＝
+ *    「1人で抑え切れずに量産されている」場面に限られる。
+ *    ⚠️ 試合時間（1試合8分）に対する値なので、試合時間を変えたら見直すこと。
+ */
+export const DOUBLE_TEAM_PTS = 6;
+export const THREE_DIST = 6.75;   // アーク部の半径（リム中心から）
+/**
+ * 3Pラインのコーナー部の直線の x 座標。
+ * ⚠️ コートの描画（objects/court.ts）と**必ず同じ値**を使うこと。
+ */
+export const THREE_CORNER_X = 6.6;
+
+/**
+ * その位置が3Pラインの外か。
+ * ⚠️ 描いている線と**同じ形**で判定する。描画はコーナーが x=±THREE_CORNER_X の直線で、
+ *    そこから先がリム中心・半径 THREE_DIST のアーク。半径だけで判定すると、コーナーの
+ *    ベースライン寄りで「線の外に見えるのに2P」になる
+ *    （例: x=6.70 / リムから0.5m は半径6.72m で2P判定だが、見た目は完全にライン外）。
+ *    コーナーの3Pが2Pになる、という不具合の原因。
+ */
+/**
+ * 描いた3Pラインからの符号付き距離(m)。正=ラインの外側、負=内側。
+ * ⚠️ コーナーは直線なので、半径（リムからの距離）では測れない。
+ */
+export function arcSlack(x: number, z: number, rimZ: number): number {
+  const dz = z - rimZ;
+  const meet = Math.sqrt(THREE_DIST * THREE_DIST - THREE_CORNER_X * THREE_CORNER_X);
+  if (Math.abs(dz) < meet) return Math.abs(x) - THREE_CORNER_X;   // コーナーの直線区間
+  return Math.hypot(x, dz) - THREE_DIST;                          // アーク区間
+}
+
+/** その点での3Pラインの外向き法線（単位ベクトル）。コーナーは真横、アークはリムの逆向き。 */
+export function arcOutward(x: number, z: number, rimZ: number): [number, number] {
+  const dz = z - rimZ;
+  const meet = Math.sqrt(THREE_DIST * THREE_DIST - THREE_CORNER_X * THREE_CORNER_X);
+  if (Math.abs(dz) < meet) return [x >= 0 ? 1 : -1, 0];
+  const d = Math.hypot(x, dz) || 1;
+  return [x / d, dz / d];
+}
+
+/**
+ * 点(x,z)を3Pラインの **margin だけ外側** へ押し出した座標を返す（既に外なら素通し）。
+ * ⚠️ これは**目標点**を直すための関数。選手の座標を直接書き換えてはいけない
+ *    （ワープになる）。必ず moveToward2D の行き先として使うこと。
+ * ⚠️ 形は beyondArc と同じ（コーナーは直線、それ以外はアーク）。
+ */
+export function pushOutsideArc(x: number, z: number, rimZ: number, margin: number): [number, number] {
+  const dz = z - rimZ;
+  const meet = Math.sqrt(THREE_DIST * THREE_DIST - THREE_CORNER_X * THREE_CORNER_X);
+  if (Math.abs(dz) < meet) {                       // コーナーの直線区間
+    const want = THREE_CORNER_X + margin;
+    return [Math.abs(x) >= want ? x : Math.sign(x || 1) * want, z];
+  }
+  const d = Math.hypot(x, dz);
+  const want = THREE_DIST + margin;
+  if (d >= want || d < 1e-4) return [x, z];
+  const k = want / d;
+  return [x * k, rimZ + dz * k];
+}
+
+export function beyondArc(x: number, z: number, rimZ: number): boolean {
+  const dx = Math.abs(x);
+  const dz = Math.abs(z - rimZ);
+  const meet = Math.sqrt(THREE_DIST * THREE_DIST - THREE_CORNER_X * THREE_CORNER_X);
+  if (dz < meet) return dx >= THREE_CORNER_X;   // コーナーの直線区間
+  return Math.hypot(dx, dz) > THREE_DIST;       // アーク区間
+}
 
 // シュートモーションのボール高さ（ロード頂点＝頭上／ギャザー開始＝胸元）
 export const SHOT_SET_Y = 2.1;    // ロード頂点での頭上のボール高さ

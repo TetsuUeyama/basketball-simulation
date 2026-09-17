@@ -165,11 +165,15 @@ export function threePrepFor(h: Player, dHoop: number): number {
 
 // この選手がこのシュートで要する溜め時間(リリース前のオーバーヘッドの構え)。
 // 3PはL速度+距離ベース(threePrepFor)、ミドルは従来のS技術ベース。
+/** お膳立ての質が最大の時、シュートの溜めをどれだけ縮めるか。 */
+const SETUP_RELEASE = 0.45;
 export function shotWindupFor(h: Player, dHoop: number): number {
   let w = dHoop > THREE_DIST
     ? threePrepFor(h, dHoop)
     : 0.16 + gatherFor(h, dHoop) + (1 - rate(h.attr.shotTech)) * 0.12;
   if (h.quickT > 0 && h.has("oneTouch")) w *= 0.55;   // ダイレクト: クイックリリース
+  // お膳立て: 良いパスをリズムよく受けた窓の間はリリースが速い（成功率は足さない）
+  if (h.setupT > 0) w *= 1 - h.setupQuick * SETUP_RELEASE;
   return w;
 }
 
@@ -250,6 +254,22 @@ export function leapHeight(d: Player): number {
  *    差を STRIP_GAIN 倍に広げ、能力差が結果に出るようにする。守備側にも同じだけ効く。
  */
 const STRIP_GAIN = 1.6;   // 曲線側で差が付くので倍率は控えめに
+/**
+ * 守って持っている時、奪われる確率に掛ける倍率（1 = 守っていない）。
+ * ⚠️ これまで keepShieldT は**速度を落とすだけ**で、ボールの安全性には一切
+ *    効いていなかった。「抜けないが奪われない」という選択肢が成立しておらず、
+ *    キープしている選手がそのまま突かれて失っていた。
+ * ⚠️ 守りの巧さはハンドリングで決まる。下手な選手が構えても半分程度しか守れない。
+ */
+export const SHIELD = { keep: 0.30, protect: 0.55, skill: 0.5 };
+export function shieldMul(h: Player): number {
+  const base = h.keepShieldT > 0 ? SHIELD.keep : h.protectT > 0 ? SHIELD.protect : 1;
+  if (base >= 1) return 1;
+  // 上手い選手ほど設計値どおりに守れる。下手な選手は守り切れない（1 側へ戻る）。
+  const skill = SHIELD.skill + rate(h.attr.handling) * (1 - SHIELD.skill);
+  return 1 - (1 - base) * skill;
+}
+
 export function stripEdge(d: Player, h: Player): number {
   return (defHands(d) - ballSecurity(h)) * STRIP_GAIN;
 }

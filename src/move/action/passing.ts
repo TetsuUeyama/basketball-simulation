@@ -278,6 +278,9 @@ export function passToReceiver(
   return true;
 }
 
+/** お膳立ての質が最大の時、捕球の硬直をどれだけ縮めるか。 */
+const SETUP_GATHER = 0.4;
+
 export function updatePass(game: Game, dt: number): void {
   // パス中もオフボール+守備は動き続ける
   runDefenseDuringDeadish(game, dt);
@@ -439,6 +442,26 @@ export function updatePass(game: Game, dt: number): void {
     const catchBase = 0.3 + (1 - tech) * 1.5;
     const missPen = game.passMiss * (0.3 + (1 - tech) * 0.6);
     let gather = clamp((catchBase + missPen) * rand(0.9, 1.1), 0.3, 2.5) * 0.3;
+    // お膳立て: 良いパサーが、フリーの味方へ速い球を「打てる形」で通すと、受け手は
+    // 持ち替えに手間取らず次の動作へ移れる。
+    // ⚠️ これは以前**シュートの成功率に直接 +最大0.28** していたものの置き換え。
+    //    確率を足すのではなく、捕球の硬直(gather)とシュートの溜め(shotWindupFor)を
+    //    縮める形にした。速く動ければ守備が詰める前に打て／仕掛けられるが、
+    //    「上手いパサーから貰うと下手なシューターでも入る」ということは起きない。
+    {
+      const passer0 = game.passer;
+      if (passer0) {
+        const openC = game.nearestDefenderDist(receiver);
+        const vision0 = rate(passer0.attr.passAcc) * 0.6 + rate(passer0.attr.offense) * 0.4;
+        const zip0 = rate(passer0.attr.passSpd);
+        receiver.setupQuick = clamp((vision0 - 0.4) * 1.3
+          + clamp(openC - 1.3, 0, 2) * 0.18
+          + zip0 * 0.36, 0, 1) * game.passQ;
+        gather *= 1 - receiver.setupQuick * SETUP_GATHER;
+      } else {
+        receiver.setupQuick = 0;
+      }
+    }
     // ダイレクトプレイ: ワンタッチで捌く
     receiver.decisionT = (receiver.has("oneTouch") ? 0.08 : 0.25) + gather;
     // ゴール付近でフリー: 硬直を詰め、即リムへスクエア、ドライブ先をリムへ
@@ -466,19 +489,16 @@ export function updatePass(game: Game, dt: number): void {
         : (inRange && canShoot && dDefC > 1.9) ? "shoot" : "drive";
     }
     receiver.quickT = Math.max(0.15, 0.6 - gather);   // ジャストほどワンタッチの窓が広い
-    // お膳立て: 良いパサーはリズムでオープンマンを打たせる。速いパスは窓を長く保つ。
+    // お膳立ての窓。この間はリリースが速い（成功率は足さない）。
     const passer = game.passer;
     if (passer) {
-      const openAtCatch = game.nearestDefenderDist(receiver);
-      const vision = rate(passer.attr.passAcc) * 0.6 + rate(passer.attr.offense) * 0.4;
       const zip = rate(passer.attr.passSpd);   // 0（ロブ）.. 1（弾丸）
-      receiver.setupBonus = clamp((vision - 0.4) * 0.36
-        + clamp(openAtCatch - 1.3, 0, 2) * 0.05
-        + zip * 0.10, 0, 0.28) * game.passQ;
-      receiver.setupT = 0.8 + zip * 1.3;         // 速いパス=長いオープン窓
+      receiver.setupT = 0.8 + zip * 1.3;         // 速いパス=長い窓
       // 守備を振る: 速いパスは相手のローテを上回りクローズアウトが遅れる(reactT)
       const rd = game.onBallDefender(receiver);
       if (rd) rd.reactT = Math.max(rd.reactT, (0.15 + zip * 0.7) * reactionLag(rd));
+    } else {
+      receiver.setupT = 0;
     }
     // 通ったパスは投げた者のアシストの布石
     game.assistFrom = game.passer;
