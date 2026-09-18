@@ -116,6 +116,11 @@ for (const [lo, hi, nm] of [[0, 2.5, "正面"], [2.5, 4.5, "やや斜め"], [4.5
   const a = t3.filter((s) => s.x >= lo && s.x < hi);
   console.log(`    ${nm.padEnd(7)} ${mk(a).padEnd(16)} ラインからの距離 中央 ${med(a.map((s) => s.slack))}m / 守備 ${med(a.map((s) => s.def))}m`);
 }
+console.log(`  守備との距離（リリース時）`);
+for (const [lo, hi, nm] of [[0, 1.0, "密着(1m内)"], [1.0, 1.6, "寄せている"], [1.6, 2.2, "やや遠い"], [2.2, 99, "フリー(2.2m超)"]] as [number, number, string][]) {
+  const a2 = t3.filter((s2) => s2.def >= lo && s2.def < hi);
+  console.log(`    ${nm.padEnd(12)} ${mk(a2).padEnd(16)} ラインから ${med(a2.map((s2) => s2.slack))}m`);
+}
 console.log(`  ラインからどれだけ外で打っているか`);
 for (const [lo, hi] of [[0, 0.3], [0.3, 0.8], [0.8, 1.5], [1.5, 99]]) {
   const a = t3.filter((s) => s.slack >= lo && s.slack < hi);

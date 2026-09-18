@@ -33,10 +33,12 @@ const THREE_VALUE = 0.55;
 const SHOOTER_GATE = { lo: 0.62, hi: 0.85, floor: 0.25 };
 /**
  * 3Pラインより外へ下がって打つことへの罰。
- *   pen  … 超過1mあたりの減点
- *   ease … 射程(L速度)が長い選手をどれだけ緩めるか（1.0で射程100なら罰ゼロ）
+ *   pen    … 超過1mあたりの減点
+ *   press  … 「邪魔されている」とみなす守備との距離(m)
+ *   relief … 邪魔されている時にどれだけ罰を緩めるか
+ * ⚠️ 射程(L速度)では緩めない。射程は「打てる限界」であって「そこから打つべき」ではない。
  */
-const DEEP_THREE = { pen: 0.22, ease: 0.5 };
+const DEEP_THREE = { pen: 0.30, press: 1.6, relief: 0.8 };
 /** 打てない選手が、リムの近く(この距離内)に居る時どれだけリムへ向かうか。 */
 const RIM_PREF = { range: 5.0, gain: 0.35 };
 import { Vector3 } from "@babylonjs/core";
@@ -434,9 +436,13 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       //    119本中80本が正面から**ラインの 2.49m 外**、成功率 18〜27% という深い放り投げに
       //    なっていた（コーナーの近い3Pは 66.7% 決まっているのに、そちらは撃たない）。
       //    射程(L速度)は「打てる限界」であって「そこから打つべき距離」ではない。
-      //    ラインを超えた分に改めて罰を掛ける。射程の長い選手ほど緩くする。
+      // ⚠️ **射程の長さで罰を緩めてはいけない**（前の実装の誤り）。射程が長い選手も、
+      //    成功率を少しでも上げるために**ラインぎりぎりから打つのが基本**。
+      //    遠くから打つのは「相手が邪魔をしていて下がらざるを得ない」時だけ。
+      //    なので緩めるのは**守備が近い時**にする。
+      const pressed = clamp((DEEP_THREE.press - dDef) / DEEP_THREE.press, 0, 1);
       const deepPen = Math.max(0, dHoop - THREE_DIST) * DEEP_THREE.pen
-        * (1 - rate(h.attr.threeRange) * DEEP_THREE.ease);
+        * (1 - pressed * DEEP_THREE.relief);
       // ⚠️ この距離帯のシュート精度で意欲を削る。3Pは threeAcc、ミドルは midAcc。
       //    クロックに追われた分(push)だけは削らない＝下手でも仕方なく打つ。
       const gate = SHOOTER_GATE.floor
@@ -446,6 +452,10 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       if (isThree) pShoot += tac.threeBias * 0.22 * tw + (rate(h.attr.threeAcc) - 0.55) * THREE_VALUE;
       pShoot = clamp(pShoot, 0.03, 0.96);
       if (open && chance(pShoot)) {
+        // ⚠️ 却下した案: ここで `stepToArc`（ラインまで詰めてから打つ）を挟むと、
+        //    正面の3Pがラインの 1.74m外 → **2.20m外** とかえって深くなった。
+        //    ジューク機構(jukeT/jukeTarget)で位置を直そうとしたが移動が起きず、
+        //    判断を遅らせるだけだったと思われる。**位置を直すなら別の仕組みが要る。**
         // ⚠️ ラインの**手前**で構えていて、下がれば3Pになるなら一歩退がる。
         //    実測でシュートが 6.0〜6.75m に固まり、3Pの試投が全体の 9.4% しか無かった。
         //    条件: オープンで、3Pを狙う価値がある射手で、足が止まっていないこと。

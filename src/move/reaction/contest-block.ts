@@ -17,9 +17,16 @@ function reachTop(p: Player, shooter: boolean): number {
 /** シューターがリリース時に使えるジャンプの割合。 */
 const SHOOTER_LIFT = 0.55;
 /** 到達点の差 1m あたり、ブロック確率へどれだけ効かせるか。 */
-const REACH_GAIN = 0.95;
+/**
+ * 到達点（跳んで届く高さ）の差をブロック確率へ変換する係数。
+ * ⚠️ 実測（守備1.1m以内）: 高さの差が結果に出ていなかった。
+ *    「守備が勝っている(0.15〜0.35m)」58.1% に対し「守備が圧倒(0.35m超)」56.5% と、
+ *    **圧倒していても差が無い**。gain 0.95 / 上限 0.60 では、圧倒している場面でも
+ *    上限で頭打ちになり、その後 evade でもう一度かわされて結果まで届かない。
+ */
+const REACH_GAIN = 1.6;
 /** 到達点の差で足せる/引ける上限。 */
-const REACH_CAP = { lo: -0.30, hi: 0.60 };
+const REACH_CAP = { lo: -0.30, hi: 1.10 };
 
 /**
  * 背後（追走）からのブロック。
@@ -125,7 +132,9 @@ export function evadeBlockProbability(shooter: Player, blocker: Player): number 
   return clamp(
     rate(shooter.attr.shotTech) * 0.5 + rate(shooter.attr.agility) * 0.25
     - rate(blocker.attr.dunk) * 0.2
-    - Math.max(0, blocker.height - shooter.height) * 0.5
+    // ⚠️ 身長で圧倒している相手はかわせない。0.5 では 20cm 差でも 0.10 しか引けず、
+    //    「圧倒的な高さ」が結果に出なかった。
+    - Math.max(0, blocker.height - shooter.height) * 1.2
     - 0.12,
     0.03, 0.7);
 }

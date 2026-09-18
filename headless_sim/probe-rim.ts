@@ -8,6 +8,7 @@ import { Game } from "../src/game";
 import { Player } from "../src/objects/player/player";
 import { buildCourt } from "../src/objects/court";
 import { dist2D } from "../src/util";
+import { leapHeight } from "../src/eval";
 Player.HEADLESS = true;
 import { clubTeam } from "../src/roster";
 const scene = new Scene(new NullEngine());
@@ -20,6 +21,7 @@ const NG = Number(process.env.NG ?? 8);
 type Row = { free: boolean; made: boolean; dunk: boolean; acc: number; d: number; name: string;
   swat: boolean; graze: boolean; dunkAttr: number; jumpAttr: number };
 const rows: Row[] = [];
+const over: { over: number; made: boolean; d: number }[] = [];
 const jump: { made: boolean; d: number; acc: number; dh: number }[] = [];
 let lastShooter: Player | null = null;
 
@@ -47,6 +49,11 @@ for (let gi = 0; gi < NG; gi++) {
       if (dHoop < 4.0 && (isFinish || dHoop < 2.2)) {
         const nd = game.nearestDefender(sh);
         const dDef = nd ? dist2D(sh.pos, nd.pos) : 9;
+        // ⚠️ 「高さで勝っている守備者が勝てているか」を直接見る。
+        //    到達点 = 身長×1.35 + 跳べる高さ（contest-block の reachTop と同じ考え方）。
+        const topD = nd ? nd.height * 1.35 + leapHeight(nd) : 0;
+        const topO = sh.height * 1.35 + leapHeight(sh) * 0.55;
+        over.push({ over: nd ? topD - topO : -9, made: game.shotMade, d: dDef });
         rows.push({
           free: dDef > 1.5, made: game.shotMade, dunk: game.shotWasDunk,
           acc: sh.attr.midAcc, d: dDef, name: sh.name,
@@ -108,4 +115,14 @@ console.log("フリー(1.5m超)の成功率を 中距離精度 別に:");
 for (const [lo, hi] of [[0, 65], [65, 80], [80, 101]]) {
   const a = rows.filter((r) => r.d > 1.5 && r.acc >= lo && r.acc < hi);
   console.log("  精度 " + lo + "〜" + hi + ": " + pc(a));
+}
+
+console.log("\n■ 跳んで届く高さの差（守備 − 攻撃）別の成功率  ※守備1.1m以内のみ");
+const near2 = over.filter((r) => r.d < 1.1);
+for (const [lo, hi, nm] of [[-9, 0, "守備が負けている"], [0, 0.15, "ほぼ互角"],
+  [0.15, 0.35, "守備が勝っている"], [0.35, 9, "守備が圧倒"]] as [number, number, string][]) {
+  const a = near2.filter((r) => r.over >= lo && r.over < hi);
+  if (!a.length) { console.log("  " + nm + ": -"); continue; }
+  console.log("  " + nm.padEnd(12) + " 成功率 "
+    + (a.filter((r) => r.made).length / a.length * 100).toFixed(1) + "%（" + a.length + "本）");
 }

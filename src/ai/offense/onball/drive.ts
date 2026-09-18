@@ -240,3 +240,21 @@ export function stepBehindArc(game: Game, h: Player): void {
 }
 /** ラインの外側にどれだけ余裕を持って下がるか(m)。踏んでいると2P扱いになる。 */
 const ARC_MARGIN = 0.35;
+
+/**
+ * ラインのはるか外に居る時、**ラインぎりぎりまで詰めてから**打つ。
+ * ⚠️ `stepBehindArc`（内側から下がる）はあったが、**外から詰める動きが無かった**。
+ *    そのため、トップでドリブルしているハンドラーはリムから 8.5m のまま打っていた
+ *    （実測: 正面の3Pがラインの 1.74m 外、成功率 24.5%）。
+ *    「打つかどうかの罰」では位置は直らない。**動かす処理**が要る。
+ * ⚠️ 邪魔されている時は詰めない（下がって打つのが正しい場面）。
+ */
+export function stepToArc(game: Game, h: Player): void {
+  const rim = game.attackFloor(h.team);
+  const toward = dirTo2D(h.pos.x, h.pos.z, rim.x, rim.z);   // リムへ向かう方向
+  const over = dist2D(h.pos, rim) - (THREE_DIST + ARC_MARGIN);
+  if (over <= 0) return;
+  h.jukeT = rand(0.18, 0.30);
+  h.jukeTarget.set(h.pos.x + toward.ux * over, 0, h.pos.z + toward.uz * over);
+  game.clampCourt(h.jukeTarget);
+}
