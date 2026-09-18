@@ -103,6 +103,9 @@ export function jumpShotMakeProbability(
 
 // リング下のフィニッシュ（レイアップ/ダンク）の効果。ダンクにするか(dunk)を抽選し、
 // 成功率(p, 0.05〜0.97)とともに返す。
+/** 重心を崩された状態でのフィニッシュの落ち幅（offBalT 1秒あたり）。 */
+const OFF_BALANCE_FINISH = 0.45;
+
 export function rimFinishOutcome(
   h: Player, dDef: number,
   ctx: {
@@ -148,5 +151,7 @@ export function rimFinishOutcome(
   // リム付近の人だかりは壁 — 2-3人へ突っ込むのは低確率。
   if (ctx.crowd >= 2) p -= (ctx.crowd - 1) * 0.23 * (1 - strong * 0.2);
   p -= ctx.clutch * 0.1;
+  // 体を当てられて重心が崩れている: 強い守備者に押し負けた分だけ決まらなくなる。
+  if (h.offBalT > 0) p -= clamp(h.offBalT, 0, 0.7) * OFF_BALANCE_FINISH;
   return { dunk, p: clamp(p, 0.05, 0.97) };
 }

@@ -65,7 +65,8 @@ const rushTail = (p: Player): number => RUSH_TAIL - rate(p.attr.shotTech) * 0.04
 const SHOT_RELEASE_Y = 2.05;
 
 // 体を当ててブロッカーを跳ばせなくする間合い(m)と、押しのける距離(m)。
-export const CLEAR_OUT = { range: 1.35, push: 0.16 };
+// hold は「守備が押し勝って攻撃側を崩す」側の効き。
+export const CLEAR_OUT = { range: 1.35, push: 0.16, hold: 1.1 };
 
 /** シュートに入る前に、寄っている守備者へ体を当てて重心を崩す。
  *  ボディバランス(attr.balance)が高いほど押し勝ち、崩れた相手はその間**跳べない**。
@@ -76,7 +77,19 @@ export function clearOut(game: Game, h: Player): void {
       const gap = dist2D(d.pos, h.pos);
       if (gap > CLEAR_OUT.range) continue;
       const edge = rate(h.attr.balance) - rate(d.attr.balance);
-      if (!chance(clamp(0.24 + edge * 1.2, 0.03, 0.85))) continue;
+      if (!chance(clamp(0.24 + edge * 1.2, 0.03, 0.85))) {
+        // ⚠️ 以前はここで continue するだけで、**守備が押し勝っても何も起きなかった**。
+        //    体の強い守備者は「崩されない」だけで、相手を崩すことができない。
+        //    押し負けた側が崩れるのは攻守どちらも同じなので、逆方向を入れる。
+        //    崩された攻撃側はフィニッシュの確率が落ちる（shot-outcome が offBalT を見る）。
+        if (edge < 0 && d.shovedT <= 0 && chance(clamp(-edge * CLEAR_OUT.hold, 0, 0.7))) {
+          h.offBalT = clamp(0.25 - edge * 0.5, 0.15, 0.7);
+          const bx = (h.pos.x - d.pos.x) / (gap || 1), bz = (h.pos.z - d.pos.z) / (gap || 1);
+          h.leanAxisX = bx; h.leanAxisZ = bz;
+          h.lean = clamp(h.lean + 0.5, -1, 1);
+        }
+        continue;
+      }
       d.offBalT = clamp(0.32 + edge * 0.5, 0.18, 0.80);
       d.shovedT = Math.max(d.shovedT, d.offBalT);
       // 半歩押しのける。重心も崩す(次の一歩が出ない)。
@@ -412,6 +425,10 @@ export function finishAtRim(game: Game, h: Player, dDef: number): void {
     game.shooter = h;   // 今シュートを所有する — ブロックが彼のフォロースルーを固める
     game.lastTouch = h;   // シューターが最後に触れた(エアボールで外へ → 相手ボール)
     game.evadedFinish = false;
+    // ⚠️ 守備が**跳んでいなかった**。tryBlock はブロックの抽選をするだけで、
+    //    jump() を呼ぶのは「かわされた」分岐だけ。通常は立ったまま見ている絵になる。
+    //    間合いに居て体勢が崩れていない守備者は、決まるかどうかに関係なく競りに跳ぶ。
+    contestRim(game, h);
     const blocker = tryBlock(game, h, true);
     // 完全に叩き落とせた時だけスワット。届いただけの手はコースを乱す(リムに嫌われて外れる)。
     if (blocker?.clean) { swatShot(game, h, blocker.def); return; }
@@ -490,6 +507,26 @@ export function contestJump(game: Game, shooter: Player): void {
   // 守判断 で挑まれる。跳ぶのは最も止められるショットブロッカー。
   // evadeOK: シューターが S技術 でブロックをかわせるか(ダブルクラッチ)。
   // フィニッシュとアーク内のジャンプショットは可能、3Pは不可。
+/**
+ * リムのフィニッシュに対して、間合いの守備者を競りに跳ばせる。
+ * ⚠️ ブロックが成立するかとは別。**跳ぶこと自体**が抜けていた。
+ * ⚠️ 崩されている(offBalT/shovedT)、着地硬直中、既に空中の選手は跳べない。
+ */
+export function contestRim(game: Game, h: Player): void {
+  for (const d of game.teamPlayers(1 - h.team)) {
+    if (d.airborne || d.landT > 0 || d.offBalT > 0 || d.shovedT > 0) continue;
+    const gap = dist2D(d.pos, h.pos);
+    if (gap > RIM_CONTEST.range) continue;
+    // 近いほど、そして守備判断と反応が良いほど跳ぶ
+    const near = 1 - gap / RIM_CONTEST.range;
+    const read = rate(d.attr.defense) * 0.5 + rate(d.attr.reaction) * 0.5;
+    if (!chance(clamp(RIM_CONTEST.base + near * 0.5 + read * 0.35, 0, 0.95))) continue;
+    game.contestLeap(d, h.pos, leapHeight(d), RIM_CONTEST.lead);
+  }
+}
+/** リムの競りに跳ぶ間合い(m)と、跳ぶ確率の下駄、踏み切りの先読み(s)。 */
+const RIM_CONTEST = { range: 1.9, base: 0.15, lead: 0.5 };
+
 export function tryBlock(game: Game, shooter: Player, isFinish: boolean, evadeOK = isFinish): BlockHit | null {
     // ブロック確率の算出は効果層(resolution/contest-block)へ分離。ここでは最も
     // 止められる守備者と確率を受け取り、抽選と状態変更(evade/jump/shotMade)を行う。

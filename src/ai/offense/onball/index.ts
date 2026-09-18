@@ -3,6 +3,8 @@
 import { rate, clamp, chance, rand, dist2D, moveToward2D, dirTo2D } from "../../../util";
 import { PALM_HITBOX, AIR_OUTLET_RANGE } from "../../../config";
 import { palmRadius, shieldMul } from "../../../eval";
+/** 遅攻でボールを運ぶ時の速度倍率。 */
+const SETTLE_PACE = 0.62;
 /**
  * 守って持つ（プロテクト）の条件と引き換え。
  *   range: この距離まで詰められたら構える / cap: 構えている間の速度上限
@@ -62,6 +64,9 @@ export function runOffense(game: Game, dt: number, h: Player): void {
     // 移動: 仕掛けた1対1の move の展開。D速度 が最高速の保持率を決め、
     // 前に押し出したボールは少し加える。
     let mult = 0.84 + rate(h.attr.dribbleSpd) * 0.18;
+    // 遅攻: バックコートでは運びを緩め、味方が攻撃の持ち場へ揃う時間を作る。
+    // ⚠️ フロントコートへ入ったら通常速度へ戻す（そこからは普通に組み立てる）。
+    if (!game.frontT && game.tempo === 0 && game.possession === h.team) mult *= SETTLE_PACE;
     // 床のボールをすくい上げている間は屈んでいる — 滑って移動しない
     if (h.scoopLoad > 0.05) mult *= clamp(1 - h.scoopLoad * 1.3, 0, 1);
     if (dHoop > 0.5) {

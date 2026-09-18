@@ -78,6 +78,11 @@ const STRETCH_THREE = 0.80;
  * ⚠️ 3Pの下手さ(inside)だけで決めない。身長と体格、そして役割Cであることを見る。
  */
 const POST_PICK = { height: 2.0, inside: 0.8, body: 0.5, center: 0.6 };
+/**
+ * 速攻を選ぶ確率の重み（合計でおよそ 0..1）。
+ *   numbers … 相手の戻りの遅れ（数的優位）/ pace … チーム戦術 / legs … 運ぶ選手の脚
+ */
+const TEMPO = { numbers: 0.5, pace: 0.3, legs: 0.2 };
 export const OFF_BASE_DEFAULT: { x: number; d: number }[] = [
   // ⚠️ ペリメーターの4人は **3Pラインの外で待つ**。以前は 6.95〜7.00m とラインの
   //    0.20〜0.25m 外で、スペーシングの押し出しやパスへの寄りで簡単に内側へ落ちていた
@@ -160,6 +165,13 @@ export class Game {
   frontT = false;
   // 速攻ウィンドウ: ライブでのポゼッション交代後の数秒間 >0（ボールがバックコートにある間）
   pushT = 0;
+  /**
+   * このポゼッションを速攻で行くか（1）遅攻で組み立てるか（0）。ポゼッション交代時に決める。
+   * ⚠️ 以前は常に全力で運んでいたため、得点直後のスローインでも味方が攻撃の持ち場に
+   *    揃う前に攻め始めていた。速攻は「相手の戻りが遅れている」「走れる選手が持っている」
+   *    「速いチーム戦術」が揃った時にやるもの。
+   */
+  tempo = 1;
 
   // パスのアニメ
   passFrom = new Vector3();
@@ -780,10 +792,35 @@ export class Game {
     return this.teamPlayers(1 - h.team)[h.slot];
   }
 
+  /**
+   * このポゼッションの緩急を決める。
+   *   ①相手の戻りの遅れ（自陣に戻れていない守備者の数）＝数的優位
+   *   ②チーム戦術のペース
+   *   ③運ぶ選手の脚と判断
+   * ⚠️ 遅攻を選んだら運びを緩め、味方が持ち場へ揃う時間を作る（onball 側で速度を落とす）。
+   */
+pickTempo(): void {
+    const h = this.handler;
+    if (!h) { this.tempo = 1; return; }
+    const off = h.team;
+    const rim = this.attackFloor(off);
+    // 攻めるリムより手前に戻れている守備者の数（少ないほど速攻の価値が高い）
+    let backCount = 0;
+    for (const d of this.teamPlayers(1 - off)) {
+      if (dist2D(d.pos, rim) < dist2D(h.pos, rim)) backCount++;
+    }
+    const numbers = clamp((3 - backCount) / 3, 0, 1);        // 0=全員戻っている .. 1=がら空き
+    const pace = this.tactics[off].offense.pace;
+    const legs = rate(h.attr.speed) * 0.5 + rate(h.attr.dribbleSpd) * 0.3
+      + rate(h.attr.offense) * 0.2;
+    const want = numbers * TEMPO.numbers + pace * TEMPO.pace + legs * TEMPO.legs;
+    this.tempo = chance(clamp(want, 0.05, 0.95)) ? 1 : 0;
+  }
+
   // ライブでのポゼッション交代後、ボールがバックコートなら速攻ウィンドウを開く。
   maybeStartPush(): void {
     const h = this.handler;
-    if (h && !this.frontT && this.attackSign(h.team) * h.pos.z < 6) this.pushT = 4.5;
+    if (h && !this.frontT && this.attackSign(h.team) * h.pos.z < 6 && this.tempo > 0) this.pushT = 4.5;
   }
 
   // 攻撃サイドを選ぶ: 利き手が主導、逆手頻度で反対側も選ぶ。
@@ -1198,6 +1235,7 @@ export class Game {
     this.assistFrom = this.assistTo = null;
     this.frontT = false;
     this.pushT = 0;   // 新しいポゼッションは以前の速攻ウィンドウをクリア
+    this.pickTempo();
     this.screen.clear();  // ライブのピック&ロールのカバレッジはポゼッションとともに終わる
   }
 

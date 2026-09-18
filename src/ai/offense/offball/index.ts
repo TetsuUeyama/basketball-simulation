@@ -289,6 +289,11 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
  *  ⚠️ 0.55 では中に人が居るだけでカットがほぼ止まっていた。空いている側から入る
  *     ようにしたので、抑える必要は小さい。 */
 const POST_HOME_CUT = 0.85;
+/**
+ * マーク外し1回あたりのスタミナ消費。
+ *   base … 基本の消費 / mark … マーカーの質でどれだけ増えるか
+ */
+const SHAKE_DRAIN = { base: 0.012, mark: 1.2 };
 /** 決定力はあるが仕掛けない選手の、カット頻度への加算。 */
 const CUT_OBS = 0.30;
 
@@ -412,6 +417,17 @@ function tryShake(game: Game, dt: number, p: Player): void {
   const runner = rate(p.attr.agility) * 0.45 + rate(p.attr.speed) * 0.3
     + rate(p.attr.stamina) * 0.25;
   p.shakeT = rand(1.4, 2.8) * (1 - runner * 0.62);   // 試行クールダウン（速い選手ほど短い）
+  // マークを外す動きはスタミナを使う。**良いマーカーほど相手を余計に走らせる**ので、
+  // 付かれている相手の質で消費が増える。自分のスタミナが高ければ減る。
+  // ⚠️ 疲労は移動速度からしか増えていなかった（run.ts）。「外す/外される」の
+  //    駆け引き自体が体力を削る、という要素が無かった。
+  {
+    const markQ = rate(d.attr.defense) * 0.40 + rate(d.attr.agility) * 0.35
+      + rate(d.attr.stamina) * 0.25;
+    p.fatigue = clamp(p.fatigue
+      + SHAKE_DRAIN.base * (1 + markQ * SHAKE_DRAIN.mark) * (1.3 - rate(p.attr.stamina)),
+      0, 1);
+  }
   // どちらで勝負するかは、まず**その場所でなければ困るか**で決まる。
   //   ・場所が入れ替わってよい（アークで受けて撃つ/そこから突く）→ スピードで空きへ走る
   //   ・その場所でないと意味が無い（ゴール下の位置取り、リバウンド前）→ 押して無力化する
