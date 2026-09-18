@@ -29,8 +29,6 @@ export const DEF_BASE_DEFAULT: { x: number; d: number }[] = [
 ];
 /** 守備フォーメーション内と見なす半径。ここへ相手が入ってきたらマンマークへ切り替える。 */
 const SHELL_IN = THREE_DIST + 0.6;
-/** 本物の3Pシューターだけは、これだけ外まで捕まえに出る。 */
-const SHELL_SHOOTER = THREE_DIST + 1.6;
 /** ドロップ役のビッグが担当を捕まえに行く半径。ここから外へは出ない（ゴール下の危険域）。 */
 const DROP_IN = 4.6;
 /** 3Pの上手さで間合いをどれだけ詰めるか。lo〜hi の L精度を 0..1 に正規化し、cut の割合まで縮める。 */
@@ -38,10 +36,26 @@ const DROP_IN = 4.6;
  * シュートの上手さで間合いを変える。lo〜hi の精度を 0..1 に正規化し、
  *   上手い相手 → 間合いを cut の割合まで詰める
  *   打てない相手 → loose の割合だけ**さらに離れて**中を厚くする（打たせて良い）
- * ⚠️ 以前は cut しか無く、「上手い相手に詰める」だけだった。打てない相手からも
- *    同じ距離で守っていたので、脅威でない選手に人数を使っていた。
+ * ⚠️ 境目は **70**。3P/ミドルが 70以下はノンシューターなので放置してよく、
+ *    それより上は高いほどマーカーを外さない、という設計。
  */
-const THREE_TIGHT = { lo: 0.62, hi: 0.90, cut: 0.55, loose: 0.40 };
+const THREE_TIGHT = { lo: 0.70, hi: 0.92, cut: 0.62, loose: 0.55 };
+/**
+ * シュートが上手い相手を、シェルより **どれだけ外まで** 捕まえに出るか(m)。
+ * ⚠️ 守備の持ち場（シェル）はリムから 1.0〜5.2m ＝**全部アークの内側**にある。
+ *    担当が SHELL_IN より外に居ると守備者はシェルへ戻るので、相手がアークの外に
+ *    立っているだけで守備が5人ともアークの内側に固まる（＝ハンドラーへの密集）。
+ *    以前は「L精度82以上」の二値でしか外へ出ていなかったので、80の選手も放置していた。
+ */
+const SHELL_STRETCH = 2.0;
+/**
+ * 「打てない相手は放置してよい」を適用し始める、リムからの距離(m)。
+ * ⚠️ 放置してよいのは**ジャンパー**の話で、ゴール下の相手はシュート精度に関係なく守る
+ *    （放置すればレイアップになる）。実測: 緩めをリム下にも掛けた結果、マンマークの
+ *    リム下(0〜3m)の間合いが 1.28m → 3.10m、リム下に守備が0人のフレームが
+ *    34.6% → 40.0% と悪化した。ここより内側では緩めない。
+ */
+const LOOSE_IN = 4.0;
 /** ダブルチームに行く範囲（守るリムからの距離 m）。ここより外へは2人目を出さない。 */
 const DOUBLE_IN = 5.2;
 /** ヘルプサグで担当から離れられる上限(m)。 */
@@ -183,7 +197,10 @@ const ANCHOR_RATE = 0.75;
   // 周辺(アーク付近含む)の非シューターは脅威でないので付かず deny もせず、3Pラインの内側へ深く
   // サグしてゾーン/リムを守る(釣り出されない)。
   const mRim = dist2DTo(protect, seenX, seenZ);
-  const shooter3 = rate(man.attr.threeAcc) >= 0.82;   // 上位1割の3Pシューターのみ外まで付く
+  // ⚠️ 見るのは**その距離帯の精度**。アークの外なら L精度、内側ならミドル精度。
+  const manAcc = mRim > THREE_DIST - 0.4 ? rate(man.attr.threeAcc) : rate(man.attr.midAcc);
+  // 0 = 放置してよいノンシューター(70以下) .. 1 = 絶対に外さないシューター(92以上)
+  const manSkill = clamp((manAcc - THREE_TIGHT.lo) / (THREE_TIGHT.hi - THREE_TIGHT.lo), 0, 1);
   // ⚠️ 以前は 4.5m。3Pラインが 6.75m なので、アークの内側に立っている相手に**誰も付かない**
   //    状態だった（実測: マンがリムから 4.8〜7.35m に居るとき、守備との距離は中央 2.87m・
   //    47% が 3m 超）。3Pラインの内側へ入ってきた相手は必ず捕まえる。
@@ -192,9 +209,10 @@ const ANCHOR_RATE = 0.75;
   // ⚠️ ドロップ役のビッグは**外へ出ない**。担当がゴール下の危険域へ入ってきた時だけ付く。
   //    これがドロップディフェンスの肝で、スクリーンで釣り出されずリムを守り続ける。
   //    代償としてミドルのプルアップとピック&ポップは空く（設計どおりの弱点）。
-  const inR = d.dropBig ? DROP_IN : SHELL_IN;
-  const pickup = d.defMode === "zone" ? false
-    : mRim < inR || (shooter3 && !d.dropBig && mRim < SHELL_SHOOTER);
+  // ⚠️ 捕まえに出る距離を**シュート力に比例**させる。70以下はシェル優先で放置してよいが、
+  //    そこから上は高いほど遠くまで付いて出る（旧: L精度82以上の二値）。
+  const inR = d.dropBig ? DROP_IN : SHELL_IN + manSkill * SHELL_STRETCH;
+  const pickup = d.defMode === "zone" ? false : mRim < inR;
   if (!pickup) {
     // 担当はまだ遠い — 追いかけず、自分の持ち場（シェル）を埋める。
     const [fx, fz] = shellSpot(game, d, protect, defTeam);
@@ -247,11 +265,9 @@ const ANCHOR_RATE = 0.75;
     // ⚠️ 見るのは**その距離帯の精度**。アークの外なら L精度、内側ならミドル精度。
     //    以前はミドルの間合いが精度を一切見ておらず、ミドルを打てないビッグにも
     //    打てるガードにも同じ距離で付いていた。
-    {
-      const acc = mRim > THREE_DIST - 0.4 ? rate(man.attr.threeAcc) : rate(man.attr.midAcc);
-      const th = clamp((acc - THREE_TIGHT.lo) / (THREE_TIGHT.hi - THREE_TIGHT.lo), 0, 1);
-      sag *= 1 - th * THREE_TIGHT.cut + (1 - th) * THREE_TIGHT.loose;
-    }
+    // 詰める側(cut)は全域で効かせ、**緩める側(loose)はリムから離れている時だけ**効かせる。
+    const looseOK = clamp((mRim - LOOSE_IN) / 2.0, 0, 1);
+    sag *= 1 - manSkill * THREE_TIGHT.cut + (1 - manSkill) * THREE_TIGHT.loose * looseOK;
     // ⚠️ 緩める側には上限を置く。打たせて良い相手でも**担当を見捨てはしない**
     //    （リムへ切られた時に誰も居ない、という絵になる）。
     sag = Math.min(sag, SAG_MAX);

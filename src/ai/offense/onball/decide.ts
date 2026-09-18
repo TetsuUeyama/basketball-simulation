@@ -43,6 +43,7 @@ import { shoot, finishAtRim, tryShotFake } from "../../../move/action/shooting";
 import { denySmother } from "../../defense/shared";
 import { doubleTeamApproaching, betterOptionAvailable, laneClear } from "../reads";
 import { canIso, postMove, pushBreak, driveDecision, stepBack, stepBehindArc } from "./drive";
+import { driveKicker } from "../../../eval";
 import {
   mustKeepDribble, keepDribbleDecide, trapKickOut, retreatFromTrap,
   bringUpLane, outletTo, advanceSafely,
@@ -61,6 +62,8 @@ function clockPush(game: Game, frac: number): number {
   // ボールハンドラーの選択 — シュート/ドライブ/パス/リセット — 選手自身の
   // 傾向とスキルを、チームの戦術的ゲームプランと融合させる。
 /** 背の高い守備者の圧を見る距離(m)。 */
+/** ヘルプが寄っている時、ドライブから配りへ抜ける1tickあたりの確率係数。 */
+const KICK_OUT = 0.55;
 const TALL_PRESS_RANGE = 2.2;
 /** 圧を受けたときシュート意欲をどれだけ削るか。 */
 const TALL_PRESS_SHOOT = 0.55;
@@ -142,8 +145,17 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
     // 低 D精度、マークされている: キープしかできない(渡す/じりじり前進/保持)。
     if (mustKeepDribble(game, h, dDef)) { keepDribbleDecide(game, h, dHoop, dDef, rimFloor); return; }
 
-    // 仕掛けた1対1の move が進行中 — 毎tick再決定せず最後まで見届ける。
-    if (h.beatenT > 0 || h.powerT > 0 || h.jukeT > 0) return;
+    // ドライブ&キック: 仕掛けは最後まで見届けるのが原則だが、**ヘルプが寄った瞬間だけ**
+    // は配れる選手に抜け道を作る。引きつけて空いた味方へラストパスを出すのが、
+    // ドリブルもパスも高い選手（C・ロナウド型）の一番の活かし方。
+    // ⚠️ 誰にでも許すと「仕掛けたのにすぐ手放す」になるので、driveKicker が高い選手だけ。
+    // ⚠️ ヘルプが来ていない時は配らない（引きつけていないのにキックしても意味が無い）。
+    if (h.beatenT > 0 || h.powerT > 0 || h.jukeT > 0) {
+      const kick = driveKicker(h);
+      if (kick > 0 && game.defendersWithin(h, 2.4) >= 2 && game.shotClock > 1
+          && chance(kick * KICK_OUT) && pass(game, h)) return;
+      return;
+    }
     // 壁で止められた: より良い形へキックアウト、さもなければ引き戻して再アタック。
     if (h.stalledT > 0) { if (chance(0.5) && pass(game, h)) return; return; }
 

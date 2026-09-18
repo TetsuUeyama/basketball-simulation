@@ -196,6 +196,30 @@ export function jukeDiscipline(d: Player): number {
 }
 
 // シュート脅威: 3Pとミドルのうち高いほうのS精度係数(0..1)。
+/**
+ * **決定力はあるが自分からは仕掛けない**選手の度合い（0..1）。
+ * ⚠️ 打つかどうかは `shootDesire = 攻撃性×0.4 + オフェンス順位×0.4 + ペース×0.2` で決まる。
+ *    攻撃性が低いと、チームの第1オプションでも試投が伸びない（例: C・ロナウドは
+ *    レアルで得点力1位だが攻撃性74）。そういう選手は**オフボールで空いて貰う**方向で
+ *    活かす。＝カットの頻度とマーク外しを上げ、ゴール下でパスを引き出させる。
+ */
+export function offBallScorer(p: Player): number {
+  const acc = Math.max(rate(p.attr.midAcc), rate(p.attr.threeAcc));
+  const quiet = 1 - rate(p.attr.aggression);
+  return clamp((acc - 0.70) / 0.20, 0, 1) * clamp((quiet - 0.10) / 0.25, 0, 1);
+}
+
+/**
+ * **ドライブで引きつけてラストパスを出せる**選手の度合い（0..1）。
+ * ドリブルで入れる（ハンドリング/D精度）かつ配れる（P精度）の両方が要る。
+ * ⚠️ 片方だけでは成立しない。突けないとヘルプが寄らないし、配れないとキックが通らない。
+ */
+export function driveKicker(p: Player): number {
+  const v = rate(p.attr.handling) * 0.35 + rate(p.attr.dribbleAcc) * 0.20
+    + rate(p.attr.passAcc) * 0.30 + rate(p.attr.offense) * 0.15;
+  return clamp((v - 0.72) / 0.16, 0, 1);
+}
+
 export function shotThreat(p: Player): number {
   return Math.max(rate(p.attr.threeAcc), rate(p.attr.midAcc));
 }

@@ -8,6 +8,7 @@ import { twWeight, effShootRange, reactionLag, shotThreat, passZip, passReleaseY
 import { laneVetoed, bestPassStyle, passRisk, evalInterception, longBallRead } from "../reaction/pass-risk";
 import { runDefenseDuringDeadish } from "../../ai/defense";
 import { updateOffBallMotion } from "../../ai/offense/offball";
+import { offBallScorer } from "../../eval";
 import { bestOpenSpot } from "../../ai/offense/offball/spots";
 import { backcourtViolation } from "../../core/deadball";
 import { flashBall } from "../../core/visuals";
@@ -84,6 +85,11 @@ export function chooseReceiver(game: Game, h: Player): Player | null {
       value += RIM_FEED;
     }
     if (atRimCutter) value += 1.5;          // …特にリムで空いている者
+    // ⚠️ 却下した案: ここで `offBallScorer(p) * 1.6 * clamp(open/2,0,1)` を足して
+    //    「決め切れる選手へ優先して配る」ようにすると、その選手の試投は 1.38 → 1.74 に
+    //    増えるが、**オープンなシューターへのパスが押しのけられて** 3P成功率が
+    //    38.4% → 25.3%、得点が 17.3 → 15.3 まで落ちた。受け手評価はオープン度で
+    //    決めるべきで、ここに得点力を混ぜてはいけない。
     if (p.openRollT > 0) value += 2.0;      // 守備が空けたローラーへのポケットパス
     // お膳立て: 良いパサーはオープンシューターを狩る(P精度が高いほど優先)
     if (open > 1.8 && dist2D(p.pos, rimFloor) <= effShootRange(p) + 0.3) {
@@ -263,8 +269,12 @@ export function passToReceiver(
     h.cutting = false;
     h.offTimer = rand(0.8, 1.6);
     h.spotIdx = bestOpenSpot(game, h.team, game.formationSpots(h.team), h);
-  } else if (chance(0.28)) {
-    // ギブ&ゴーは時々(毎回だとピンポン)。通常は再配置。
+  } else if (chance(clamp(GIVE_GO.base + offBallScorer(h) * GIVE_GO.obs
+      + rate(h.attr.offense) * GIVE_GO.off, 0.08, 0.7))) {
+    // ギブ&ゴー: 出してすぐ動き直してラストパスを受け直す。
+    // ⚠️ 以前は一律 28%。**誰が出しても同じ**だったので、「配ってから自分が空く」という
+    //    良いパサー/良いフィニッシャーの持ち味が出ていなかった。
+    //    決定力はあるが自分から仕掛けない選手(offBallScorer)ほど、出した後に走る。
     const rim = game.attackFloor(h.team);
     h.cutting = true;
     h.justPassedT = 0;                     // 本物のギブ&ゴーカッターは的
@@ -280,6 +290,9 @@ export function passToReceiver(
 
 /** お膳立ての質が最大の時、捕球の硬直をどれだけ縮めるか。 */
 const SETUP_GATHER = 0.4;
+
+/** パス後のギブ&ゴーの起こりやすさ。obs/off を 0 にすると旧来の一律に戻る。 */
+const GIVE_GO = { base: 0.28, obs: 0.34, off: 0.18 };
 
 export function updatePass(game: Game, dt: number): void {
   // パス中もオフボール+守備は動き続ける

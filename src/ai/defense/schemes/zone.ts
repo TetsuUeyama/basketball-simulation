@@ -1,7 +1,7 @@
 // ハーフコートゾーン(2-3 / 3-2)。man-match も PnR スイッチもせず、区域とボールを守る。
 import { Player } from "../../../objects/player/player";
 import { RIM } from "../../../config";
-import { clamp, chance, dist2D, moveToward2D } from "../../../util";
+import { clamp, chance, dist2D, moveToward2D, rate } from "../../../util";
 import { defHands, ballSecurity } from "../../../eval";
 import { defEffort, getBackOnDefense } from "../shared";
 import { defendOnBall } from "../vs-onball";
@@ -24,12 +24,38 @@ function zoneHomes(game: Game, defTeam: number, s: number): Map<Player, { x: num
   // 左右順を安定させ守備者が交差しないように
   top.sort((a, b) => a.pos.x - b.pos.x).forEach((d, i) =>
     m.set(d, { x: topXs[i], z: rimZ + dir * topDepth }));
-  back.sort((a, b) => a.pos.x - b.pos.x).forEach((d, i) => {
+  // ⚠️ **リムアンカーを必ず中央後方（リム上）に置く**。x順に並べるだけだと、リムを守る
+  //    役が左右のベースラインへ流れてゴール下の正面が空く。
+  const anc = back.length === 3 ? zoneRimAnchor(game, defTeam) : null;
+  const rest = back.filter((d) => d !== anc).sort((a, b) => a.pos.x - b.pos.x);
+  const order2 = anc && back.includes(anc) ? [rest[0], anc, rest[1]] : back.slice().sort((a, b) => a.pos.x - b.pos.x);
+  order2.forEach((d, i) => {
+    if (!d) return;
     const mid = back.length === 3 && i === 1;   // 中央後方はリム上
     m.set(d, { x: backXs[i], z: rimZ + dir * (mid ? 1.1 : 2.1) });
   });
   return m;
 }
+
+/**
+ * ゾーンで**リムに残す1人**（区域内の相手にもボールにも釣り出されない）。
+ * ⚠️ 以前は誰も固定されておらず、後ろの3人も区域内の相手へ 45〜60% 引っ張られていた。
+ *    実測(36試合): ゾーンだとリム下(0〜3m)の攻撃選手への最寄り守備が **5.79m**
+ *    （マンマークは 1.28m）、**リム下に守備が0人のフレームが 51.1%**（マンは 34.6%）。
+ *    ゾーンなのにゴール下が無人、という状態だった。
+ */
+function zoneRimAnchor(game: Game, defTeam: number): Player | null {
+  let best: Player | null = null, bv = -Infinity;
+  for (const p of game.teamPlayers(defTeam)) {
+    const v = (p.height - 1.9) * 2 + rate(p.attr.jump) * 0.6 + rate(p.attr.defense) * 0.4;
+    if (v > bv) { bv = v; best = p; }
+  }
+  return best;
+}
+/** リムアンカーがボールへ出て良い距離（ハンドラーがこれより近ければ自分で守る）。 */
+const ANCHOR_BALL_IN = 4.0;
+/** リムアンカーが区域内の相手へ寄れる上限（これ以上はリムを離れない）。 */
+const ANCHOR_CLAIM = 0.22;
 
 export function runZoneDefense(game: Game, dt: number): void {
   const defTeam = 1 - game.possession;
@@ -43,10 +69,16 @@ export function runZoneDefense(game: Game, dt: number): void {
   const shiftX = clamp(b.x * 0.4, -2.8, 2.8);        // ゾーン全体がボール側へスライド
 
   // ボールがある区域の守備者が前に出て圧力
+  const anchor = zoneRimAnchor(game, defTeam);
   let ballDef: Player | null = null;
   if (h) {
+    // ⚠️ リムアンカーは**ボールへ釣り出さない**。ハンドラーがペイントまで入って来た時だけ
+    //    自分で守る。以前は「ハンドラーに最も近い守備者」で選んでいたので、後方のビッグが
+    //    外のボールへ引き出されてリムが空いていた。
+    const hRim = dist2D(h.pos, rim);
     let best = Infinity;
     for (const d of defenders) {
+      if (d === anchor && hRim > ANCHOR_BALL_IN) continue;
       const dd = dist2D(d.pos, h.pos);
       if (dd < best) { best = dd; ballDef = d; }
     }
@@ -72,7 +104,8 @@ export function runZoneDefense(game: Game, dt: number): void {
     const home = homes.get(d)!;
     let tx = home.x + shiftX, tz = home.z;
     // マッチアップ風味: 区域内のオフェンスを拾う。後方ビッグはアークの外まで追わない。
-    const reach = game.isBig(d) ? 3.0 : 3.8;
+    // ⚠️ リムアンカーはゴール下の相手しか見ない（外の相手を拾いに行かない）。
+    const reach = d === anchor ? 2.2 : game.isBig(d) ? 3.0 : 3.8;
     let claim: Player | null = null;
     let bestD = reach;
     for (const o of offense) {
@@ -82,8 +115,11 @@ export function runZoneDefense(game: Game, dt: number): void {
     }
     if (claim) {
       // 区域内の男へクローズアウトしつつゾーンの深さを保つ(ペイントを空けない)
-      tx = claim.pos.x * 0.6 + (home.x + shiftX) * 0.4;
-      tz = claim.pos.z * 0.45 + home.z * 0.55;
+      // ⚠️ リムアンカーだけは**ほとんど動かない**。ここを普通に引っ張ると、後ろの3人が
+      //    同時に外を向いてゴール下が無人になる。
+      const pull = d === anchor ? ANCHOR_CLAIM : 1;
+      tx = home.x + shiftX + (claim.pos.x - (home.x + shiftX)) * 0.6 * pull;
+      tz = home.z + (claim.pos.z - home.z) * 0.45 * pull;
     }
     // ボールがペイントへドライブしてきたらリムをヘルプ
     if (h && (h.beatenT > 0 || h.powerT > 0) && game.isBig(d) && dist2D(h.pos, rim) < 6) {

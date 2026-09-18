@@ -4,7 +4,7 @@ import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { RIM, THREE_DIST } from "../../../config";
 import { rate, clamp, chance, rand, dist2D, dist2DTo, moveToward2D, dirTo2D, segPerp } from "../../../util";
-import { deepThreeOK, ballSecurity } from "../../../eval";
+import { deepThreeOK, ballSecurity, offBallScorer } from "../../../eval";
 /** ハンドラーのキープ力が、味方の動き直しの速さをどれだけ押し上げるか。 */
 const KEEP_TIME = { lo: 0.6, hi: 0.8 };
 import { laneBlock } from "../../../move/reaction/pass-risk";
@@ -289,6 +289,8 @@ export function updateOffBallMotion(game: Game, dt: number, team: number, exclud
  *  ⚠️ 0.55 では中に人が居るだけでカットがほぼ止まっていた。空いている側から入る
  *     ようにしたので、抑える必要は小さい。 */
 const POST_HOME_CUT = 0.85;
+/** 決定力はあるが仕掛けない選手の、カット頻度への加算。 */
+const CUT_OBS = 0.30;
 
 function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player): void {
   const rim = game.attackFloor(team);
@@ -307,7 +309,11 @@ function pickOffBallAction(game: Game, team: number, spots: Vector3[], p: Player
   if (countCutting(game, team) <= (stalledCut ? 1 : 0)
       && !(game.handler && (game.handler.beatenT > 0 || game.handler.powerT > 0
         || game.handler.jukeT > 0))
+      // ⚠️ 攻撃性が低いと、ここも `rate(aggression)` で下がる。だが**決定力はある**選手は
+      //    自分で仕掛けない代わりに**動いて空いて貰う**のが活かし方なので、
+      //    offBallScorer のぶんを足して埋める（C・ロナウド型: 得点力は最上位だが攻撃性74）。
       && chance((0.2 + p.offPriority * 0.25 + rate(p.attr.aggression) * 0.15
+        + offBallScorer(p) * CUT_OBS
         + (p.has("lineMove") ? 0.15 : 0)) * (postHome ? POST_HOME_CUT : 1))) {
     p.cutting = true;
     // ポストが占有していればエルボーへ、空いていればリムまで
