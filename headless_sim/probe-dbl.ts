@@ -21,6 +21,10 @@ const SEEDS = (process.env.SEEDS ?? "0x9e3779b9,0x2545f491,0x85ebca6b").split(",
 
 const maxRim: number[] = [];      // 各試合・各チームの「ゴール下得点」の最大値
 let armed = 0, engaged = 0, live = 0;
+// 空けた担当のシュート精度（ノンシューターを選べているかの確認）
+const leftAcc: number[] = [];
+// 対象がゴール下でボールを持った時、ダブルが間に合っているか
+let touch = 0, touchDbl = 0;
 for (const seed of SEEDS) {
   for (let gi = 0; gi < NG; gi++) {
     setSeed((seed + gi * 0x9e3779b1) >>> 0);
@@ -33,6 +37,15 @@ for (const seed of SEEDS) {
       if (game.doubleTarget) armed++;
       if (game.doubleTarget && game.doubler && game.handler === game.doubleTarget
           && dist2D(game.doubler.pos, game.doubleTarget.pos) < 1.8) engaged++;
+      if (game.doubler) {
+        const off2 = game.possession;
+        const mine = game.teamPlayers(off2)[game.doubler.markSlot ?? game.doubler.slot];
+        if (mine) leftAcc.push(Math.max(mine.attr.threeAcc, mine.attr.midAcc));
+      }
+      if (game.doubleTarget && game.handler === game.doubleTarget) {
+        touch++;
+        if (game.doubler && dist2D(game.doubler.pos, game.doubleTarget.pos) < 2.2) touchDbl++;
+      }
     }
     for (const t of [0, 1]) {
       let m = 0;
@@ -54,3 +67,12 @@ for (const th of [4, 6, 8, 10, 12]) {
   console.log(`  ${th}点以上に達したチーム: ${pc(maxRim.filter((v) => v >= th).length, maxRim.length)}`);
 }
 console.log(`\n■ ダブルチーム  対象が決まっているフレーム ${pc(armed, live)} / 実際に挟んだ ${pc(engaged, live)}`);
+
+const av2 = (a: number[]): string => a.length
+  ? (a.reduce((s2, v) => s2 + v, 0) / a.length).toFixed(1) : "-";
+console.log("\n■ 2人目の選び方（担当を空ける相手）");
+console.log("  空けた担当のシュート精度（高い方）平均 " + av2(leftAcc)
+  + " / 70以下だった割合 " + pc(leftAcc.filter((v) => v <= 70).length, leftAcc.length)
+  + " / 80以上だった割合 " + pc(leftAcc.filter((v) => v >= 80).length, leftAcc.length));
+console.log("  対象がゴール下でボールを持ったフレームのうち、2人目が2.2m以内に居た割合 "
+  + pc(touchDbl, touch) + "（" + touch + "フレーム中）");

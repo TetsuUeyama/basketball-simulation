@@ -89,6 +89,23 @@ export function applyDefScheme(game: Game, defTeam: number): void {
  * ⚠️ 2人目は「自分の担当が3Pを最も打てない守備者」から選ぶ。ダブルで空くのは
  *    その担当なので、空けて一番痛くない相手を空ける。
  */
+/**
+ * ダブルチームで担当を空ける相手の見極め。
+ *   lo..hi … シュート精度を 0..1 に正規化する範囲
+ *   weight … 脅威の低さをどれだけ重く見るか
+ *   floor  … これを下回るなら**ダブルに行かない**（空けて良い相手が居ない）
+ *
+ * ⚠️ ここだけ 70/92 ではなく **72/86**。見ているのが max(L精度, ミドル精度) で、
+ *    分布が別物だから。選手DB全4015人の max は 中央74 / 25%点72 / 90%点82 で、
+ *    **70以下は全体の18.6%しかいない**。先発は総合値で選ばれるのでさらに上に寄る。
+ *    70を境目にすると誰も該当せず、実測で「空けた担当の精度 平均76.2 / 70以下 0.00%」
+ *    という結果になった（＝しきい値が効いていなかった）。実際の分布の中で
+ *    「相対的に一番痛くない相手」を選ばせる。
+ * ⚠️ floor を上げて、**候補が本物のシューターしか居ないならダブルに行かない**。
+ *    以前は 27.5% の頻度で精度80以上の相手を空けていた。
+ */
+const DOUBLE_LEAVE = { lo: 0.72, hi: 0.86, weight: 2.0, floor: 0.60 };
+
 function pickDoubleTeam(game: Game, defTeam: number): void {
   game.doubleTarget = null;
   game.doubler = null;
@@ -104,12 +121,21 @@ function pickDoubleTeam(game: Game, defTeam: number): void {
   for (const d of game.teamPlayers(defTeam)) {
     if (d === anchor || d.defModeUser) continue;         // リムアンカーは1人目なので残す
     const mine = game.teamPlayers(off)[d.markSlot ?? d.slot];
-    // 担当の3Pが低いほど、そして相手ポストに近いほど寄せやすい
-    const v = (mine ? 1 - rate(mine.attr.threeAcc) : 0.5) * 1.6
-      - dist2D(d.pos, worst.pos) * 0.12;
+    if (!mine) continue;
+    // ⚠️ 2人目は「**放置しても問題ない相手を担当している守備者**」から選ぶ。
+    //    ダブルに行けば必ずその担当が空くので、空けて一番痛くない所を空ける。
+    //    ⚠️ 以前は L精度しか見ておらず、**ミドルが上手い相手を放置**していた。
+    //    　 3Pもミドルも打てる方（高い方）で判断する。守備の他の判断と同じく
+    //    　 境目は 70（これ以下はノンシューター）、92 で上限。
+    const acc = Math.max(rate(mine.attr.threeAcc), rate(mine.attr.midAcc));
+    const threat = clamp((acc - DOUBLE_LEAVE.lo) / (DOUBLE_LEAVE.hi - DOUBLE_LEAVE.lo), 0, 1);
+    // 脅威が低いほど寄せやすい。相手ポストに近いほど間に合う。
+    const v = (1 - threat) * DOUBLE_LEAVE.weight - dist2D(d.pos, worst.pos) * 0.12;
     if (v > bv) { bv = v; best = d; }
   }
-  if (!best) return;
+  // ⚠️ 全員がシューターなら**ダブルに行かない**。誰かを空ければ必ずそこを撃たれるので、
+  //    1人で守り切れなくてもダブルより痛い、という判断。
+  if (!best || bv < DOUBLE_LEAVE.floor) return;
   game.doubleTarget = worst;
   game.doubler = best;
 }
