@@ -23,6 +23,7 @@ const SEEDS = (process.env.SEEDS ?? "0x9e3779b9,0x2545f491,0x85ebca6b,0xc2b2ae35
 type Shot = { x: number; dz: number; r: number; slack: number; pts: number; made: boolean;
   arc: boolean; acc: number; def: number };
 const shots: Shot[] = [];
+const deep: { slack: number; wasHandler: boolean; spotRim: number; spotIdx: number; acc: number; made: boolean; pts: number }[] = [];
 // スペーシング
 let frames = 0, oneSide = 0, bothSides = 0, clump = 0, driveClump = 0, driveFrames = 0;
 const minGaps: number[] = [];
@@ -51,6 +52,15 @@ for (const seed of SEEDS) {
         lastShooter = sh;
         const rim = game.attackFloor(sh.team);
         const nd = game.nearestDefender(sh);
+        deep.push({
+          slack: arcSlack(sh.pos.x, sh.pos.z, rim.z),
+          wasHandler: sh === game.handler,
+          spotRim: sh.spotRim,
+          spotIdx: sh.spotIdx,
+          acc: sh.attr.threeAcc,
+          made: game.shotMade,
+          pts: game.shotPoints,
+        });
         shots.push({ x: Math.abs(sh.pos.x), dz: Math.abs(sh.pos.z - rim.z),
           r: dist2D(sh.pos, rim), slack: arcSlack(sh.pos.x, sh.pos.z, rim.z),
           pts: game.shotPoints, made: game.shotMade,
@@ -147,3 +157,29 @@ console.log(`
 console.log(`  左の帯 平均 ${avg2(widthL)}人 / 0人 ${pc(widthL.filter((v) => v === 0).length, widthL.length)}`);
 console.log(`  右の帯 平均 ${avg2(widthR)}人 / 0人 ${pc(widthR.filter((v) => v === 0).length, widthR.length)}`);
 console.log(`  どちらかの帯が0人 ${pc(widthL.map((v, i) => v === 0 || widthR[i] === 0 ? 1 : 0).reduce((s2: number, v) => s2 + v, 0), widthL.length)}`);
+
+{
+  const t = deep.filter((r) => r.pts === 3);
+  const far = t.filter((r) => r.slack > 1.2);
+  const pc2 = (a: number, b: number) => (a / Math.max(1, b) * 100).toFixed(1) + "%";
+  const md = (a: number[]) => a.length
+    ? a.slice().sort((x, y) => x - y)[Math.floor((a.length - 1) / 2)].toFixed(2) : "-";
+  console.log("");
+  console.log("■ 深い3P（ラインから1.2m超）を打っているのは誰か  " + far.length + "本 / 全3P " + t.length + "本");
+  console.log("  ハンドラーだった: " + pc2(far.filter((r) => r.wasHandler).length, far.length));
+  console.log("  その時の持ち場のリムからの距離 中央: " + md(far.map((r) => r.spotRim)) + "m");
+  console.log("  持ち場の内訳:");
+  const byS: Record<number, number> = {};
+  for (const r of far) byS[r.spotIdx] = (byS[r.spotIdx] ?? 0) + 1;
+  for (const k of Object.keys(byS).sort()) {
+    console.log("    spot " + k + ": " + pc2(byS[Number(k)], far.length));
+  }
+  console.log("");
+  console.log("■ L精度帯ごとの3P成功率");
+  for (const [lo, hi] of [[0, 70], [70, 75], [75, 80], [80, 85], [85, 101]]) {
+    const a = t.filter((r) => r.acc >= lo && r.acc < hi);
+    if (!a.length) continue;
+    console.log("  " + lo + "-" + hi + ": " + pc2(a.filter((r) => r.made).length, a.length)
+      + "（" + a.length + "本） ラインから " + md(a.map((r) => r.slack)) + "m");
+  }
+}
