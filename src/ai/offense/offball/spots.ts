@@ -2,7 +2,7 @@
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../../../objects/player/player";
 import { arcOutward, arcSlack, LANE_W, THREE_DIST } from "../../../config";
-import { clamp, dist2D, dist2DTo, moveToward2D, segPerp } from "../../../util";
+import { clamp, dist2D, dist2DTo, moveToward2D, rate, segPerp } from "../../../util";
 import type { Game } from "../../../game";
 import { arcCap } from "../reads";
 import { deepThreeOK } from "../../../eval";
@@ -74,6 +74,25 @@ function noInward(game: Game, p: Player, rx: number, rz: number): [number, numbe
 }
 /** ラインの外側この範囲に居る間だけ、内向きの押し出しを抜く。 */
 const ARC_KEEP = 1.2;
+/**
+ * ベース（ボードで決めた自分の位置）への寄り。
+ *   stay  … 自分のベースを選んだ時の加点
+ *   cross … 逆サイドのスポットを選んだ時の減点
+ * ⚠️ 固定ではない。近傍へのスライドやカットは従来どおり自由で、
+ *    「コートの反対側へ移らない」ことだけを担保する。
+ * ⚠️ **値の桁に注意**。このスコアで支配的なのはオープン度の項で、
+ *    `open * 1.6` は 0〜16 まで伸びる。ベースへの寄りを 3.0 程度にすると
+ *    完全に押し流され、実測でも効果ゼロだった（左右どちらかが無人のフレームが
+ *    34.4% → 34.2%、コーナーの L精度も 76 → 77 でほぼ不変）。
+ *    「ボードの位置をベースにする」を成立させるには、オープン度の差を
+ *    上回る桁にする必要がある。
+ */
+const SPOT_HOME = { stay: 10.0, cross: 14.0 };
+/**
+ * ワイド（コーナー）への好みを決める3Pの上手さの範囲。
+ * ⚠️ コーナーは3Pの持ち場。上手い選手ほど外へ、下手な選手は中や上へ。
+ */
+const WIDE_SHOOT = { lo: 0.68, hi: 0.88, gain: 1.4 };
 
 export function spacingNudge(game: Game, dt: number, p: Player, min = 3.5): void {
   const MIN = min;
@@ -116,6 +135,10 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
   avoid = -1,   // この番号は選ばない（膠着時に「同じ場所」を選び直して動かないのを防ぐ）
 ): number {
   const rimFloor = game.attackFloor(team);
+  // その選手のベース（ボードで指定した自分の位置）
+  const homeIdx = game.homeSpotIdx(self);
+  const homeSpot = spots[homeIdx];
+  const homeX = homeSpot && Math.abs(homeSpot.x) > 1.5 ? homeSpot.x : 0;
   let bestI = self.spotIdx;
   let bestScore = -Infinity;
   for (let i = 0; i < spots.length; i++) {
@@ -156,8 +179,13 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
       // オフェンスのポジション優先度: ①相手がいない(オープン)を最重視 ②密集回避＝スペーシング
       // ③フリーの味方を作るパスコース ④相手ゴールに近い得点圏 ⑤ボールから適度に離れる。
       const rimDist = dist2DTo(rimFloor, s.x, s.z);
-      // スペーシング役(優先度低い/3&D/スポットアップ)ほどワイド(コーナー)を強く好み中央へ寄らない。
-      const spaceRole = clamp(1 - self.offPriority, 0, 1)
+      // ⚠️ コーナーは**3Pを打つための持ち場**。ここを「オフェンス優先度の低さ」で
+      //    決めていたため、攻撃で頼られていない＝シュートも下手な選手ほどコーナーへ
+      //    送られていた（実測: L精度の中央値が トップ82 / ウイング80〜81 に対し
+      //    コーナー76〜80 と、**外側ほど下手**という逆転が起きていた。右コーナーには
+      //    センターが12%居た）。ワイドへの好みは**3Pの上手さ**で決める。
+      const spaceRole = clamp((rate(self.attr.threeAcc) - WIDE_SHOOT.lo)
+        / (WIDE_SHOOT.hi - WIDE_SHOOT.lo), 0, 1) * WIDE_SHOOT.gain
         + (self.evalRole === "3&D" || self.evalRole === "スポットアップ" ? 0.4 : 0);
       score = open * (self.has("positioning") ? 1.35 : 1) * 1.6    // ①オープン(相手がいない)を最重視=価値UP
         + Math.min(mate, 7) * 1.05              // ②密集回避=スペーシング(味方から離れた空きへ)
@@ -169,6 +197,17 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
         - clog * 2.5                            // ドライブレーンを塞がない
         - dist2DTo(self.pos, s.x, s.z) * 0.1;   // 移動コスト
       if (self.has("sideSpot") && (i === 3 || i === 4)) score += 1.5;
+      // ⚠️ ボード（攻撃フォーメーション）で決めた位置は**各選手のベース**。
+      //    瞬間の位置はAIが決めてよいが、「ベースを無視してコートの反対側のスポットへ
+      //    移ってよい」という意味ではない。ここは7スポットから各自が独立に選ぶので、
+      //    同じ側が2つ空いていれば2人ともそちらへ行き、逆サイドが無人になる
+      //    （実測: 左右どちらかが0人のフレーム 34.4% / 味方が2m未満の団子 51.5%）。
+      //    自分のベースに留まる加点と、逆サイドへ渡る減点で、**自分の持ち場の周辺で**
+      //    動かす。近傍のスポットへのスライドは従来どおり自由。
+      if (i === homeIdx) score += SPOT_HOME.stay;
+      if (homeX !== 0 && Math.abs(s.x) > 1.5 && Math.sign(s.x) !== Math.sign(homeX)) {
+        score -= SPOT_HOME.cross;
+      }
       // ⚠️ 以前はここで減点するだけで、結局**取れてしまって**いた（実測: PF の 43.1% /
       //    C の 36.6% が 3Pラインより外）。上のループ冒頭で弾くように変更済み。
     }

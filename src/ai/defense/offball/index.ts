@@ -48,6 +48,8 @@ const THREE_TIGHT = { lo: 0.70, hi: 0.92, cut: 0.62, loose: 0.55 };
  *    以前は「L精度82以上」の二値でしか外へ出ていなかったので、80の選手も放置していた。
  */
 const SHELL_STRETCH = 2.0;
+/** ビッグが外へ追う距離の倍率（1 = ガードと同じ）。 */
+const BIG_CHASE = 0.35;
 /**
  * 「打てない相手は放置してよい」を適用し始める、リムからの距離(m)。
  * ⚠️ 放置してよいのは**ジャンパー**の話で、ゴール下の相手はシュート精度に関係なく守る
@@ -211,7 +213,11 @@ const ANCHOR_RATE = 0.75;
   //    代償としてミドルのプルアップとピック&ポップは空く（設計どおりの弱点）。
   // ⚠️ 捕まえに出る距離を**シュート力に比例**させる。70以下はシェル優先で放置してよいが、
   //    そこから上は高いほど遠くまで付いて出る（旧: L精度82以上の二値）。
-  const inR = d.dropBig ? DROP_IN : SHELL_IN + manSkill * SHELL_STRETCH;
+  // ⚠️ ビッグは**外まで追い切らない**。ゴール下を空けてコーナーの3Pをブロックしに行く、
+  //    という絵になる。追える距離を小さくして、リムの近くに留まらせる。
+  //    （ドロップ役はもともと DROP_IN で内側に固定されている）
+  const stretch = SHELL_STRETCH * (game.isBig(d) ? BIG_CHASE : 1);
+  const inR = d.dropBig ? DROP_IN : SHELL_IN + manSkill * stretch;
   const pickup = d.defMode === "zone" ? false : mRim < inR;
   if (!pickup) {
     // 担当はまだ遠い — 追いかけず、自分の持ち場（シェル）を埋める。
