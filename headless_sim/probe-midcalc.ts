@@ -32,17 +32,21 @@ const calc = (acc: number, dHoop: number, dDef: number): number => {
 };
 const pc = (v: number) => (v * 100).toFixed(1) + "%";
 console.log("守備者は能力75の中庸。S威力75 / S技術75。クラッチ・溜め不足なしの条件。");
-console.log("\n■ 守備との距離 1.2m（試合中の中央値）");
-console.log("  精度\距離   3m      4m      5m      6m");
-for (const acc of [60, 65, 70, 75, 80, 85, 90]) {
-  const row = [3, 4, 5, 6].map((d) => pc(calc(acc, d, 1.2)).padEnd(8)).join("");
-  console.log(`  ${String(acc).padEnd(11)}${row}`);
+for (const acc of [65, 80]) {
+  console.log("");
+  console.log("=== S精度 " + acc + " ===");
+  console.log("  距離      フリー   守備2.0m 守備1.5m 守備1.2m 守備1.0m 守備0.8m 守備0.5m");
+  for (const d of [2, 3, 4, 5, 6, 7]) {
+    const row = [9, 2.0, 1.5, 1.2, 1.0, 0.8, 0.5]
+      .map((dd) => pc(calc(acc, d, dd)).padEnd(9)).join("");
+    console.log("  " + (d + "m").padEnd(10) + row);
+  }
 }
-console.log("\n■ 精度70の選手を、守備との距離別に（距離は試合中の中央値 4.94m）");
-for (const dd of [0.5, 0.8, 1.2, 1.5, 1.8, 2.5, 4.0]) {
-  console.log(`  守備 ${dd}m: ${pc(calc(70, 4.94, dd))}`);
-}
-console.log("\n■ 精度70以下を、試合中の中央値の条件（4.94m / 守備1.2m）で");
-for (const acc of [50, 55, 60, 65, 70]) {
-  console.log(`  精度 ${acc}: ${pc(calc(acc, 4.94, 1.2))}`);
+console.log("");
+console.log("=== コンテストの減点だけを取り出す（S精度80・5m を基準に） ===");
+const base80 = calc(80, 5, 9);
+for (const dd of [2.0, 1.5, 1.2, 1.0, 0.8, 0.5]) {
+  const v = calc(80, 5, dd);
+  console.log("  守備 " + dd + "m: " + pc(v) + "  （フリー " + pc(base80) + " から "
+    + ((v - base80) * 100).toFixed(1) + "pt）");
 }

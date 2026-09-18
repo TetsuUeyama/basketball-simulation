@@ -20,9 +20,29 @@ import { perimContest, palmRadius, rimProtect } from "../../eval";
  */
 /** 3Pのコンテストが届く距離の上乗せ(m)。守備1.8mがフリーと同値にならないようにする。 */
 const THREE_CONTEST_REACH = 0.6;
+/** 同じくミドルの上乗せ。守備1.5mがフリーと同値になるのを防ぐ。 */
+const MID_CONTEST_REACH = 0.6;
 // ⚠️ お膳立て（良いパサーから貰った時の +最大0.28）を廃止したぶん、全体が落ちた
 //    （実測: 3P 29.0% → 21.6% / FG 46.3% → 45.0%）。パサー依存を外すのが目的で
 //    成功率を下げるのが目的ではないので、**素の基準値を一律 +0.05 して戻す**。
+/**
+ * ミドルの「素の」成功率。
+ * ⚠️ 旧: `0.35 + S精度/100 * 0.42` の**線形**。S精度60と90の差が 12.6ポイントしかなく、
+ *    「ミドルが下手な選手」が事実上存在しなかった（実測: S精度70が5m・守備1.2mで 52.1%、
+ *    最高の95でも 59.6% で差は 7.5ポイント）。3Pと同じく**不足分の二乗**で落とす形にし、
+ *    下を沈めて能力差を出す。
+ * 設計の基準点（この2点から TOP/FALL/MID_DIST を逆算した）:
+ *    S精度95・2m → 75% / S精度65・6m → 25%
+ * 距離の減衰は 1mあたり 4.5ポイント（旧 3.0）。
+ */
+const MID_TOP = 0.7792;
+const MID_FALL = 2.6667;
+const MID_DIST = 0.045;
+function midSkillTerm(acc: number): number {
+  const miss = 1 - clamp(acc, 0, 100) / 100;
+  return MID_TOP - MID_FALL * miss * miss;
+}
+
 const THREE_TOP = 0.60;
 const THREE_FALL = 2.05;
 function threeSkillTerm(acc: number): number {
@@ -48,15 +68,15 @@ export function jumpShotMakeProbability(
   // make % = この距離での選手の技量から、距離とコンテストを差し引く
   const skill = rate(isThree ? h.attr.threeAcc : h.attr.midAcc);
   // ⚠️ 3P の基準値。実測で 3P が 43% 入っていた（実際のバスケットは約36%）。
-  const baseLine = 0.35;   // ミドル用。3Pは threeSkillTerm を使う（お膳立て廃止ぶんの +0.05 込み）
+  // ミドルは midSkillTerm を使う（旧: baseLine + skill * 0.42 の線形）
   const distRef = isThree ? THREE_DIST : 1.5;
   // L速度は深い3Pの減衰を緩め、特能ミドルは全距離で緩める
-  let falloff = isThree ? 0.05 - rate(h.attr.threeRange) * 0.035 : 0.03;
+  let falloff = isThree ? 0.05 - rate(h.attr.threeRange) * 0.035 : MID_DIST;
   if (h.has("range")) falloff *= 0.65;
   const over = Math.max(0, dHoop - distRef);
   // 遠投は二次で崩れる。L速度が崩れを少し緩める。
   const heaveDrop = isThree ? over * over * 0.011 * (1 - rate(h.attr.threeRange) * 0.33) : 0;
-  let p = (isThree ? threeSkillTerm(h.attr.threeAcc) : baseLine + skill * 0.42)
+  let p = (isThree ? threeSkillTerm(h.attr.threeAcc) : midSkillTerm(h.attr.midAcc))
     - over * falloff - heaveDrop;
   // ダイレクトプレイ: キャッチ&シュートのリズム
   if (h.quickT > 0 && h.has("oneTouch")) p += 0.05;
@@ -79,8 +99,12 @@ export function jumpShotMakeProbability(
   //    寄せている守備は遠くからでも視界とリリースを乱せる。
   //    ⚠️ `palmRadius` 自体を上げてミドルやリム下まで一律に伸ばすと、全体の FG が
   //    　 46.7% → 42.3% まで落ちた（実際は約47%）。**3Pだけに効かせること。**
+  // ⚠️ ミドルにもリーチの上乗せを足す。素の `palmRadius` は中庸の組み合わせで約1.5mなので、
+  //    **守備が1.5m離れると5m放置と完全に同値**になっていた（実測: S精度80・5mで
+  //    守備1.5m も 2.0m も 51.5% で減点0）。1.5mのクローズアウトは実際には圧力になる。
+  //    3Pには THREE_CONTEST_REACH で対処済みだったが、ミドルは手つかずだった。
   const cReach = (ctx.palmHitbox && cn ? palmRadius(cn, h) : 1.8)
-    + (isThree ? THREE_CONTEST_REACH : 0);
+    + (isThree ? THREE_CONTEST_REACH : MID_CONTEST_REACH);
   p -= clamp(cReach - dDef, 0, cReach) * 0.24 * contestScale * perimQ;
   // 目の前で跳んで手をシュートコースに入れてくる守備者は、視界とリリースを乱して精度を大きく削る。
   // (今までは水平距離だけでコンテストを測っていた — 跳んだ手のコンテストを make% に反映)
