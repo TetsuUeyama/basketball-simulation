@@ -73,6 +73,11 @@ const REB_OUT = 2.4;
 /** これ以上の3P精度があるビッグだけを外へ広げる（ストレッチビッグの線引き）。 */
 const STRETCH_THREE = 0.80;
 
+/**
+ * ゴール下に住む1人（postAnchor）の選び方の重み。
+ * ⚠️ 3Pの下手さ(inside)だけで決めない。身長と体格、そして役割Cであることを見る。
+ */
+const POST_PICK = { height: 2.0, inside: 0.8, body: 0.5, center: 0.6 };
 export const OFF_BASE_DEFAULT: { x: number; d: number }[] = [
   // ⚠️ ペリメーターの4人は **3Pラインの外で待つ**。以前は 6.95〜7.00m とラインの
   //    0.20〜0.25m 外で、スペーシングの押し出しやパスへの寄りで簡単に内側へ落ちていた
@@ -386,6 +391,11 @@ export class Game {
     //    （フォーメーションボードで編集した「各選手のベース位置」）。
     //    保持形式は攻めるリムから見た {x, d} なので、ここで世界座標へ直す。
     const base = TACTICS[team].offBase ?? OFF_BASE_DEFAULT;
+    // ⚠️ 却下した案: ポストの2か所（5/6）をボール側へペアごと左右反転させると、
+    //    ポゼッション中にハンドラーが中央を越えるたびにビッグ2人がペイントを横切り、
+    //    48試合で 得点 17.0 → 15.9 / FG 50.3% → 46.1% / 3P 34.0% → 27.3% と悪化した。
+    //    しかも**狙いだった左右の偏りは直らなかった**（左の帯 0.91 → 0.88人、
+    //    どちらかの帯が0人 49.6% → 48.9%）。偏りの原因はポストの左右固定ではない。
     return base.map((b: { x: number; d: number }) => new Vector3(b.x, 0, hz + dir * b.d));
   }
 
@@ -1017,10 +1027,19 @@ export class Game {
 
   /** ゴール下に住む1人（チームのビッグのうち最も3Pが低い"内寄り"）。 */
   postAnchor(team: number): Player | null {
-    let anchor: Player | null = null;
+    // ⚠️ 以前は **L精度が最も低いビッグ** だけで決めていた。ゴール下に住むのが誰かは
+    //    3Pの下手さより**身長・体格・ポジション**で決まる。PFの方が3Pが下手なだけで
+    //    主役になり、センターが**ショートコーナー**（x=3.4・ベースライン際）へ回されていた
+    //    （実測: 役割Cが postAnchor に選ばれるのは 63.9% だけで、43.2% は
+    //    　ショートコーナーに立っていた。見た目は「コーナー待機」になる）。
+    let anchor: Player | null = null, bv = -Infinity;
     for (const b of this.teamPlayers(team)) {
       if (!this.isBig(b)) continue;
-      if (!anchor || rate(b.attr.threeAcc) < rate(anchor.attr.threeAcc)) anchor = b;
+      const v = (b.height - 1.9) * POST_PICK.height
+        + (1 - rate(b.attr.threeAcc)) * POST_PICK.inside
+        + rate(b.attr.balance) * POST_PICK.body
+        + (b.role === "C" ? POST_PICK.center : 0);
+      if (v > bv) { bv = v; anchor = b; }
     }
     return anchor;
   }

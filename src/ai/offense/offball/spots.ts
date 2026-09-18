@@ -187,6 +187,14 @@ export function bestOpenSpot(game: Game, team: number, spots: Vector3[], self: P
       const spaceRole = clamp((rate(self.attr.threeAcc) - WIDE_SHOOT.lo)
         / (WIDE_SHOOT.hi - WIDE_SHOOT.lo), 0, 1) * WIDE_SHOOT.gain
         + (self.evalRole === "3&D" || self.evalRole === "スポットアップ" ? 0.4 : 0);
+      // ⚠️ `open` は 1〜10m まで伸びるので、この項だけ 0〜16 と他より一桁大きい
+      //    （味方からの距離 最大7.4 / ワイド選好 最大6.6 / ベースへの寄り 10）。
+      //    ⚠️ **却下した案**: 4m で頭打ちにして他の項を効かせようとしたら、
+      //    　 48試合で 得点 16.2 → 15.2 / FG 49.5% → 46.2% / 3P 33.1% → 25.5% と悪化した。
+      //    　 コーナーの3Pは 13 → 19本に増えたが成功率は 76.9% → 52.6% に落ちており、
+      //    　 **空いていない場所で打つようになっただけ**だった。
+      //    　 オープン度が支配的なのは設計として正しい。押し流されている他の項のほうが
+      //    　 重要度が低い、というのが実態。ここは触らないこと。
       score = open * (self.has("positioning") ? 1.35 : 1) * 1.6    // ①オープン(相手がいない)を最重視=価値UP
         + Math.min(mate, 7) * 1.05              // ②密集回避=スペーシング(味方から離れた空きへ)
         + lane * 2.0                            // ③フリーの味方を作る(パスコースが通る位置)

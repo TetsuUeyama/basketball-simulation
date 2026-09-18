@@ -39,10 +39,15 @@ for (const seed of SEEDS) {
     clubTeam(0, gi % 8); clubTeam(1, (gi + 4) % 8);
     g.applyRoster(); g.reset();
     for (let i = 0; i < 60 * 60 * 8; i++) {
-      const before = game.shooter;
+      // ⚠️ `game.shooter` が変わったフレームは**構え始め**であって、リリースではない。
+      //    `shotPoints` / `shotMade` はリリース時（releaseShot）に設定されるので、
+      //    構え始めで読むと**1本前の値**を拾う。実測で「線の外なのに2P」が 22.3% も
+      //    出ていたのはこれが原因（大半の球が2Pなので、古い値を読むと2Pに偏る）。
+      //    ballMode が "shot" に変わったフレーム＝リリース時に読むこと。
+      const prevMode = game.ballMode;
       game.update(DT);
       const sh = game.shooter;
-      if (sh && sh !== before && sh !== lastShooter) {
+      if (sh && prevMode !== "shot" && game.ballMode === "shot") {
         lastShooter = sh;
         const rim = game.attackFloor(sh.team);
         const nd = game.nearestDefender(sh);
@@ -52,7 +57,6 @@ for (const seed of SEEDS) {
           arc: beyondArc(sh.pos.x, sh.pos.z, rim.z),
           acc: sh.attr.threeAcc, def: nd ? dist2D(sh.pos, nd.pos) : 9 });
       }
-      if (!sh) lastShooter = null;
       if (!game.frontT || i % 6) continue;
       frames++;
       const off = game.teamPlayers(game.possession);

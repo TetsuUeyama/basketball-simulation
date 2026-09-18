@@ -31,6 +31,12 @@ const THREE_VALUE = 0.55;
  *    それが「仕方なく」。
  */
 const SHOOTER_GATE = { lo: 0.62, hi: 0.85, floor: 0.25 };
+/**
+ * 3Pラインより外へ下がって打つことへの罰。
+ *   pen  … 超過1mあたりの減点
+ *   ease … 射程(L速度)が長い選手をどれだけ緩めるか（1.0で射程100なら罰ゼロ）
+ */
+const DEEP_THREE = { pen: 0.22, ease: 0.5 };
 /** 打てない選手が、リムの近く(この距離内)に居る時どれだけリムへ向かうか。 */
 const RIM_PREF = { range: 5.0, gain: 0.35 };
 import { Vector3 } from "@babylonjs/core";
@@ -423,12 +429,20 @@ export function decide(game: Game, h: Player, dHoop: number, dDef: number, rimFl
       //    3Pの試投が全体の 13% ほどしか出ていなかった（実際のNBAは約39%）。
       //    距離の罰はラインまでで頭打ちにし、3Pには射手の精度に応じた加点を与える。
       const dPen = Math.min(dHoop, THREE_DIST) - 2;
+      // ⚠️ 上の `Math.min` でラインより外の距離が切り捨てられるため、**「ラインの1m外」と
+      //    「3m外」が打つ判断としてまったく同じ魅力**になっていた。その結果、実測で3Pの
+      //    119本中80本が正面から**ラインの 2.49m 外**、成功率 18〜27% という深い放り投げに
+      //    なっていた（コーナーの近い3Pは 66.7% 決まっているのに、そちらは撃たない）。
+      //    射程(L速度)は「打てる限界」であって「そこから打つべき距離」ではない。
+      //    ラインを超えた分に改めて罰を掛ける。射程の長い選手ほど緩くする。
+      const deepPen = Math.max(0, dHoop - THREE_DIST) * DEEP_THREE.pen
+        * (1 - rate(h.attr.threeRange) * DEEP_THREE.ease);
       // ⚠️ この距離帯のシュート精度で意欲を削る。3Pは threeAcc、ミドルは midAcc。
       //    クロックに追われた分(push)だけは削らない＝下手でも仕方なく打つ。
       const gate = SHOOTER_GATE.floor
         + clamp(((isThree ? rate(h.attr.threeAcc) : rate(h.attr.midAcc)) - SHOOTER_GATE.lo)
                 / (SHOOTER_GATE.hi - SHOOTER_GATE.lo), 0, 1) * (1 - SHOOTER_GATE.floor);
-      let pShoot = (0.20 + shootDesire * 0.55 - dPen * 0.04 + (dDef - 1) * 0.3) * gate + push * 0.5;
+      let pShoot = (0.20 + shootDesire * 0.55 - dPen * 0.04 - deepPen + (dDef - 1) * 0.3) * gate + push * 0.5;
       if (isThree) pShoot += tac.threeBias * 0.22 * tw + (rate(h.attr.threeAcc) - 0.55) * THREE_VALUE;
       pShoot = clamp(pShoot, 0.03, 0.96);
       if (open && chance(pShoot)) {
