@@ -3,7 +3,7 @@
 import { Vector3 } from "@babylonjs/core";
 import { Player } from "../objects/player/player";
 import { BENCH, BODY_MIN_DIST, POST_SEAL_R } from "../config";
-import { rate, rand } from "../util";
+import { dist2D, rate, rand } from "../util";
 import type { Game } from "../game";
 
 // ベンチ(長椅子)の水平の占有範囲。座面の前縁から背もたれの後縁まで。
@@ -90,7 +90,16 @@ export function resolveCollisions(game: Game, ): void {
           const live = game.ballMode === "held" || game.ballMode === "pass"
             || game.ballMode === "loose" || game.ballMode === "shot"
             || game.ballMode === "charge";
-          if (live && !a.airborne && !b.airborne && game.handler !== a && game.handler !== b
+          // ⚠️ 以前はハンドラーを押し合いから**完全に除外**していた。ドライブして
+          //    ゴール下へ侵入するのはハンドラーなので、**侵入してきた相手との
+          //    ぶつかり合いが一切起きない**状態だった（シュート直前の clearOut だけ）。
+          //    ゴール下(POST_SEAL_R 以内)に限ってハンドラーも参加させ、
+          //    突っ込む側も守る側も体をぶつけられるようにする。
+          //    ⚠️ ペリメーターでは従来どおり除外する（運びやドリブルが乱れるため）。
+          const rimA = game.attackFloor(a.team === game.possession ? a.team : b.team);
+          const nearRim = dist2D(a.pos, rimA) < POST_SEAL_R || dist2D(b.pos, rimA) < POST_SEAL_R;
+          const handlerIn = game.handler === a || game.handler === b;
+          if (live && !a.airborne && !b.airborne && (!handlerIn || nearRim)
               && a.team !== b.team) {
             const diff = rate(a.attr.balance) - rate(b.attr.balance);
             const edge = Math.abs(diff) * BODY_PUSH.gain;          // 0..~1

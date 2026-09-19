@@ -10,6 +10,7 @@ import { Player } from "../src/objects/player/player";
 import { buildCourt } from "../src/objects/court";
 import { dist2D } from "../src/util";
 import { THREE_DIST, THREE_CORNER_X, beyondArc, arcSlack } from "../src/config";
+import { defenderOf } from "../src/ai/defense/shared";
 Player.HEADLESS = true;
 import { clubTeam } from "../src/roster";
 const scene = new Scene(new NullEngine());
@@ -23,6 +24,7 @@ const SEEDS = (process.env.SEEDS ?? "0x9e3779b9,0x2545f491,0x85ebca6b,0xc2b2ae35
 type Shot = { x: number; dz: number; r: number; slack: number; pts: number; made: boolean;
   arc: boolean; acc: number; def: number };
 const shots: Shot[] = [];
+const why: { ownGap: number; ownRim: number; nearGap: number; cns: boolean; trans: boolean; made: boolean; pts: number }[] = [];
 const deep: { slack: number; wasHandler: boolean; spotRim: number; spotIdx: number; acc: number; made: boolean; pts: number }[] = [];
 // スペーシング
 let frames = 0, oneSide = 0, bothSides = 0, clump = 0, driveClump = 0, driveFrames = 0;
@@ -52,6 +54,20 @@ for (const seed of SEEDS) {
         lastShooter = sh;
         const rim = game.attackFloor(sh.team);
         const nd = game.nearestDefender(sh);
+        // ⚠️ 「なぜフリーなのか」を切り分ける。担当守備者がどこに居るか、
+        //    キャッチ&シュート（パスを受けた直後＝クローズアウトが間に合わない）か。
+        {
+          const own = defenderOf(game, sh);
+          why.push({
+            ownGap: own ? dist2D(sh.pos, own.pos) : 99,
+            ownRim: own ? dist2D(own.pos, rim) : 99,
+            nearGap: nd ? dist2D(sh.pos, nd.pos) : 99,
+            cns: sh.setupT > 0,
+            trans: !game.frontT,
+            made: game.shotMade,
+            pts: game.shotPoints,
+          });
+        }
         deep.push({
           slack: arcSlack(sh.pos.x, sh.pos.z, rim.z),
           wasHandler: sh === game.handler,
@@ -182,4 +198,24 @@ console.log(`  どちらかの帯が0人 ${pc(widthL.map((v, i) => v === 0 || wi
     console.log("  " + lo + "-" + hi + ": " + pc2(a.filter((r) => r.made).length, a.length)
       + "（" + a.length + "本） ラインから " + md(a.map((r) => r.slack)) + "m");
   }
+}
+
+{
+  const t3b = why.filter((r) => r.pts === 3);
+  const free = t3b.filter((r) => r.nearGap > 2.2);
+  const pc4 = (a: number, b: number) => (a / Math.max(1, b) * 100).toFixed(1) + "%";
+  const md2 = (a: number[]) => a.length
+    ? a.slice().sort((x, y) => x - y)[Math.floor((a.length - 1) / 2)].toFixed(2) : "-";
+  console.log("");
+  console.log("■ フリー(2.2m超)の3P " + free.length + "本 / 全3P " + t3b.length + "本 の内訳");
+  console.log("  キャッチ&シュート(受けた直後): " + pc4(free.filter((r) => r.cns).length, free.length));
+  console.log("  トランジション中             : " + pc4(free.filter((r) => r.trans).length, free.length));
+  console.log("  担当守備者との距離 中央      : " + md2(free.map((r) => r.ownGap)) + "m");
+  console.log("  担当守備者のリムからの距離 中央: " + md2(free.map((r) => r.ownRim)) + "m");
+  console.log("  担当がペイント(4m内)に居た   : " + pc4(free.filter((r) => r.ownRim < 4).length, free.length));
+  console.log("");
+  console.log("■ 比較: 寄せられている3P(1.6m以内)の内訳");
+  const tight = t3b.filter((r) => r.nearGap <= 1.6);
+  console.log("  キャッチ&シュート: " + pc4(tight.filter((r) => r.cns).length, tight.length)
+    + " / 担当との距離 中央 " + md2(tight.map((r) => r.ownGap)) + "m");
 }

@@ -22,6 +22,7 @@ type Row = { free: boolean; made: boolean; dunk: boolean; acc: number; d: number
   swat: boolean; graze: boolean; dunkAttr: number; jumpAttr: number };
 const rows: Row[] = [];
 const over: { over: number; made: boolean; d: number }[] = [];
+const jumpRec: { near: boolean; air: boolean; able: boolean; made: boolean }[] = [];
 const jump: { made: boolean; d: number; acc: number; dh: number }[] = [];
 let lastShooter: Player | null = null;
 
@@ -53,6 +54,18 @@ for (let gi = 0; gi < NG; gi++) {
         //    到達点 = 身長×1.35 + 跳べる高さ（contest-block の reachTop と同じ考え方）。
         const topD = nd ? nd.height * 1.35 + leapHeight(nd) : 0;
         const topO = sh.height * 1.35 + leapHeight(sh) * 0.55;
+        // ⚠️ 「ブロックへ飛べているか」を直接測る。リリース時点で 2.5m 以内の守備者が
+        //    空中に居るか、跳べる状態（崩れていない/着地硬直でない）か。
+        {
+          let air = false, able = false, near3 = false;
+          for (const q of game.teamPlayers(1 - sh.team)) {
+            if (dist2D(q.pos, sh.pos) > 2.5) continue;
+            near3 = true;
+            if (q.airborne) air = true;
+            else if (q.landT <= 0 && q.offBalT <= 0 && q.shovedT <= 0) able = true;
+          }
+          jumpRec.push({ near: near3, air, able, made: game.shotMade });
+        }
         over.push({ over: nd ? topD - topO : -9, made: game.shotMade, d: dDef });
         rows.push({
           free: dDef > 1.5, made: game.shotMade, dunk: game.shotWasDunk,
@@ -125,4 +138,19 @@ for (const [lo, hi, nm] of [[-9, 0, "守備が負けている"], [0, 0.15, "ほ�
   if (!a.length) { console.log("  " + nm + ": -"); continue; }
   console.log("  " + nm.padEnd(12) + " 成功率 "
     + (a.filter((r) => r.made).length / a.length * 100).toFixed(1) + "%（" + a.length + "本）");
+}
+
+{
+  const pc3 = (a: number, b: number) => (a / Math.max(1, b) * 100).toFixed(1) + "%";
+  const near = jumpRec.filter((r) => r.near);
+  console.log("");
+  console.log("■ ブロックへ飛べているか（リリース時・2.5m以内の守備者）");
+  console.log("  2.5m以内に守備が居た: " + pc3(near.length, jumpRec.length)
+    + "（" + jumpRec.length + "本中）");
+  console.log("  うち 空中に居た      : " + pc3(near.filter((r) => r.air).length, near.length)
+    + "  成功率 " + pc3(near.filter((r) => r.air && r.made).length, near.filter((r) => r.air).length));
+  console.log("  うち 跳べる状態だった : " + pc3(near.filter((r) => !r.air && r.able).length, near.length)
+    + "  成功率 " + pc3(near.filter((r) => !r.air && r.able && r.made).length, near.filter((r) => !r.air && r.able).length));
+  console.log("  うち 跳べない状態     : " + pc3(near.filter((r) => !r.air && !r.able).length, near.length)
+    + "  成功率 " + pc3(near.filter((r) => !r.air && !r.able && r.made).length, near.filter((r) => !r.air && !r.able).length));
 }

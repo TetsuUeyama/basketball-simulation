@@ -43,7 +43,18 @@ const DROP_IN = 4.6;
  *    側に落ちていた（実測: 3P 279本のうち 114本=41% が守備2.2m超のフリーだった）。
  *    hi=84 なら 中央73→0.31 / 上位10%の81→0.81 / 85→1.0 と実際に差が付く。
  */
-const THREE_TIGHT = { lo: 0.68, hi: 0.84, cut: 0.62, loose: 0.55 };
+const THREE_TIGHT = { lo: 0.68, hi: 0.84 };
+/**
+ * マンマークの基本方針。**密着するか、放置してヘルプに行くか**の二択。
+ *   threat    … これ以上の脅威（manSkill）なら必ず付く
+ *   rimIn     … ゴール下のこの距離までは精度に関係なく付く(m)
+ *   stick     … 付く時の間合い(m)
+ *   help      … 放置してヘルプに下がる深さ(m)
+ *   weakExtra … ウィークサイドでさらに下がる分(m)
+ */
+const MARK = { threat: 0.35, rimIn: 4.0, stick: 0.75, help: 2.4, weakExtra: 0.8 };
+/** ウィークサイドで担当から離れられる上限(m)。 */
+const WEAK_SIDE_MAX = 1.2;
 /**
  * シュートが上手い相手を、シェルより **どれだけ外まで** 捕まえに出るか(m)。
  * ⚠️ 守備の持ち場（シェル）はリムから 1.0〜5.2m ＝**全部アークの内側**にある。
@@ -64,6 +75,13 @@ const BIG_CHASE = 0.35;
 const LOOSE_IN = 4.0;
 /** ダブルチームに行く範囲（守るリムからの距離 m）。ここより外へは2人目を出さない。 */
 const DOUBLE_IN = 5.2;
+/**
+ * ペイントへの侵入に迎えに出る設定。
+ *   zone   … 侵入とみなすリムからの距離(m)
+ *   gap    … 侵入者からどれだけリム寄りに入るか(m)。小さいほど密着
+ *   hustle … その時の移動の倍率
+ */
+const RIM_STEP = { zone: 3.2, gap: 0.8, hustle: 1.2 };
 /** ヘルプサグで担当から離れられる上限(m)。 */
 const SAG_MAX = 3.4;
 /** 挟みに行く時、相手の何m先に立つか。1人目の反対側から詰める。 */
@@ -153,6 +171,27 @@ const ANCHOR_RATE = 0.75;
       const timing = rate(d.attr.reaction) * 0.5 + rate(d.attr.defense) * 0.3;
       if (chance((0.35 + timing * 0.9) * dt * ANCHOR_RATE)) {
         game.contestLeap(d, game.handler.pos, leapHeight(d), 0.6);
+      }
+    }
+    // ⚠️ **ペイントへ侵入してきた相手には迎えに出る**。以前はリムから 2.0m の固定位置で
+    //    ハンドラー方向に構えて待つだけだったので、踏み切りの時点で相手と 2〜3m 離れており、
+    //    `contestRim` の間合い(1.9m)に入れず**跳べないまま決められていた**。
+    //    「自分からマークに行くのは速いが、ゾーンへの侵入への対応が遅い」状態。
+    //    侵入者とリムの間に、相手寄りで入る（壁を作ってから跳ぶ）。
+    {
+      let intruder: Player | null = null, iBest = RIM_STEP.zone;
+      for (const o of game.teamPlayers(1 - defTeam)) {
+        if (o.airborne) continue;
+        const orim = dist2DTo(protect, o.pos.x, o.pos.z);
+        if (orim < iBest) { iBest = orim; intruder = o; }
+      }
+      if (intruder) {
+        const met = towardPoint(intruder.pos.x, intruder.pos.z, protect.x, protect.z, RIM_STEP.gap);
+        moveToward2D(d.pos, met.x, met.z,
+          d.accelToward(dt, met.x, met.z, RIM_STEP.hustle
+            * Math.max(defEffort(game, d, protect), 0.95)) * dt);
+        game.clampCourt(d.pos);
+        return;
       }
     }
     if (dRim < 8) {
@@ -254,33 +293,26 @@ const ANCHOR_RATE = 0.75;
     // 攻撃側の「潰されている」判定に使う。
     d.denyT = 0.25;
   } else {
-    // ヘルプサグ: ウィークサイド/遠いほど深くリムへ寄る。クロック終盤の DENY 強化も反映。
-    const weak = !ballSide || ballGap > 6.5;
-    let sag = (1.2 + help * 1.4 + (weak ? 1.2 : 0)) * (game.teamHas(defTeam, "dfLine") ? 1.15 : 1)
-      * (1 - denyIntensity(game, defTeam) * 0.8);
-    // ⚠️ 3Pラインの内側へ入ってきた相手は**マンマーク**する。ここを緩めると、アークの
-    //    内側に立っているのに誰も付いていない絵になる（実測: 守備との距離 中央 2.84m・
-    //    45% が 3m 超）。ウィークサイドのヘルプだけは例外（付いて行くとリムが空く）。
-    // ⚠️ 境目は**攻撃が実際に立つ位置**まで広げること。スポットはリムから 6.95〜7.0m に
-    //    あるので、THREE_DIST+0.2(=6.95m) だと立ち位置がちょうど枠の外に落ち、
-    //    そこだけマークが緩む（実測: 6.4〜6.95m 帯は中央 2.35m なのに、
-    //    6.95〜7.5m 帯は 2.86m・46%が3m超と段差ができていた）。
-    // ⚠️ ボール側は**体が当たる間合い**まで詰める。1.05m では一度も触れず、
-    //    「マークの攻防」が画面に出ない（実測: 体が当たっている割合 0.2%、1.2m 未満 23.4%）。
-    if (mRim < THREE_DIST + 1.2) sag = Math.min(sag, ballSide ? 0.72 : 1.6);
-    // ⚠️ **3Pが上手い相手ほど近くで守る**。以前は shooter3(L精度82以上)の二値でしか
-    //    見ておらず、実測で3Pを打たれた時の守備距離が L精度 78未満 2.61m /
-    //    85以上 2.39m と**ほぼ差が無かった**＝名手をフリーにしていた。
-    //    アークの外に居る相手に対して、L精度に比例して間合いを詰める。
-    // ⚠️ 見るのは**その距離帯の精度**。アークの外なら L精度、内側ならミドル精度。
-    //    以前はミドルの間合いが精度を一切見ておらず、ミドルを打てないビッグにも
-    //    打てるガードにも同じ距離で付いていた。
-    // 詰める側(cut)は全域で効かせ、**緩める側(loose)はリムから離れている時だけ**効かせる。
-    const looseOK = clamp((mRim - LOOSE_IN) / 2.0, 0, 1);
-    sag *= 1 - manSkill * THREE_TIGHT.cut + (1 - manSkill) * THREE_TIGHT.loose * looseOK;
-    // ⚠️ 緩める側には上限を置く。打たせて良い相手でも**担当を見捨てはしない**
-    //    （リムへ切られた時に誰も居ない、という絵になる）。
-    sag = Math.min(sag, SAG_MAX);
+    // ⚠️ **マンマークの基本は密着**。以前は「どれだけ離れるか」を連続値で計算しており、
+    //    ほぼ全員が 1.2〜2m の中途半端な距離に立っていた。係数を3回調整しても
+    //    中途半端なままだったのはこの設計のため。
+    //    実測: フリー(2.2m超)で打たれた3Pの **83.2% がキャッチ&シュート**で、
+    //    その時の担当守備者との距離は中央 **3.69m**、ペイントに居たのは 15.0% だけ
+    //    ＝**ヘルプに行っていたのではなく、単に離れて立っていた**。
+    //    「付くか、放置してヘルプに行くか」を決める形にする。
+    const mustStick = manSkill >= MARK.threat   // 打てる相手には必ず付く
+      || mRim < MARK.rimIn                      // ゴール下は精度に関係なく付く
+      || (ballSide && ballGap < 5.0);           // ボール側の1パスアウェイも付く
+    let sag: number;
+    if (mustStick) {
+      sag = MARK.stick;
+    } else {
+      // 放置してよい相手 → リム寄りへ深く下がってヘルプに備える
+      const weak = !ballSide || ballGap > 6.5;
+      sag = (MARK.help + (weak ? MARK.weakExtra : 0)) * (0.7 + help * 0.6);
+      sag *= 1 - denyIntensity(game, defTeam) * 0.5;
+      sag = Math.min(sag, SAG_MAX);
+    }
     const st = towardPoint(seenX, seenZ, protect.x, protect.z, sag);
     stx = st.x; stz = st.z;
     // ⚠️ 旧「非脅威は半径5mまで」のクランプは削除。陣形へ入っていない担当は上で

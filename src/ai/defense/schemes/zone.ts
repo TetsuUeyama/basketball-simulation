@@ -52,8 +52,20 @@ function zoneRimAnchor(game: Game, defTeam: number): Player | null {
   }
   return best;
 }
-/** リムアンカーがボールへ出て良い距離（ハンドラーがこれより近ければ自分で守る）。 */
-const ANCHOR_BALL_IN = 4.0;
+/**
+ * リムアンカーがボールへ出て良い距離（ハンドラーがこれより近ければ自分で守る）。
+ * ⚠️ ゴール下を守る役は**ハンドラーへのマークに行かない**。実測で、リリース時点の
+ *    2.5m 以内に守備は 91.5% 居るのに空中に居るのは 17.8% で、跳ぶ前に決められていた。
+ *    ボールに出ると帰ってこられないので、ペイントに入られた時だけ自分で守る。
+ */
+const ANCHOR_BALL_IN = 2.5;
+/**
+ * ゴール下の備え。
+ *   watch … 侵入とみなすリムからの距離(m)
+ *   gate  … 侵入者とリムの間、相手からどれだけ離れて立つか(m)。小さいほど密着
+ *   rush  … 迎えに出る時の移動の倍率
+ */
+const ANCHOR_GUARD = { watch: 4.0, gate: 0.75, rush: 1.2 };
 /** リムアンカーが区域内の相手へ寄れる上限（これ以上はリムを離れない）。 */
 const ANCHOR_CLAIM = 0.22;
 
@@ -101,6 +113,30 @@ export function runZoneDefense(game: Game, dt: number): void {
       continue;
     }
 
+    // ⚠️ ゴール下を守る役は、**侵入してきた相手とゴールの間に入る**ことを最優先にする。
+    //    区域のホーム位置で待つのではなく、相手の進路に体を入れてから跳ぶ。
+    //    跳ぶこと自体は shooting.ts の contestRim が担当するので、ここでは
+    //    「間合いに入っておく」ことに集中する（1.9m 以内に居ないと跳べない）。
+    if (d === anchor) {
+      let target: Player | null = null, best2 = ANCHOR_GUARD.watch;
+      for (const o of offense) {
+        if (o.airborne) continue;
+        const orim = dist2D(o.pos, rim);
+        if (orim < best2) { best2 = orim; target = o; }
+      }
+      if (target) {
+        // 相手とリムを結ぶ線上、相手寄り（＝ゴール側に体を入れる）
+        const gx = target.pos.x - rim.x, gz = target.pos.z - rim.z;
+        const gl = Math.hypot(gx, gz) || 1;
+        const k = Math.max(0, gl - ANCHOR_GUARD.gate) / gl;
+        const tx2 = rim.x + gx * k, tz2 = rim.z + gz * k;
+        moveToward2D(d.pos, tx2, tz2,
+          d.accelToward(dt, tx2, tz2, ANCHOR_GUARD.rush
+            * Math.max(defEffort(game, d, rim), 0.95)) * dt);
+        game.clampCourt(d.pos);
+        continue;
+      }
+    }
     const home = homes.get(d)!;
     let tx = home.x + shiftX, tz = home.z;
     // マッチアップ風味: 区域内のオフェンスを拾う。後方ビッグはアークの外まで追わない。
